@@ -5,6 +5,9 @@ import { bboxOfContours } from '../src/geometry/transform'
 import {
   axisFactor,
   computeCutGeometry,
+  cornerFactor,
+  edgeFactor,
+  handleUsable,
   depthLevel,
   isMouseWheelDelta,
   textPillWidth,
@@ -89,6 +92,24 @@ describe('input helpers', () => {
     expect(axisFactor(50, 10, 10)).toBe(1)
     expect(axisFactor(20, 0, 10)).toBeCloseTo(2)
     expect(axisFactor(0, 0, 10)).toBe(1e-3)
+  })
+
+  it('anchor scaling: corner projects travel on the anchor-handle line, edges use one axis', () => {
+    // Centre anchor (50,50), corner handle at (100,100): +10,+10 travel grows 1.2x.
+    expect(cornerFactor({ x: 10, y: 10 }, { x: 50, y: 50 }, { x: 100, y: 100 })).toBeCloseTo(1.2)
+    // Anchor in the interior, handle up-left of it.
+    expect(cornerFactor({ x: -20, y: -20 }, { x: 20, y: 20 }, { x: 0, y: 0 })).toBeCloseTo(2)
+    expect(edgeFactor(25, 0, 100)).toBeCloseTo(1.25)
+    expect(edgeFactor(5, 10, 10)).toBe(1)
+  })
+
+  it('handles on the anchor row or column are unusable', () => {
+    const tl = { x: 0, y: 0 }
+    expect(handleUsable('tl', { x: 0, y: 0 }, tl)).toBe(false)
+    expect(handleUsable('tm', { x: 50, y: 0 }, tl)).toBe(false)
+    expect(handleUsable('lm', { x: 0, y: 50 }, tl)).toBe(false)
+    expect(handleUsable('br', { x: 100, y: 100 }, tl)).toBe(true)
+    expect(handleUsable('tm', { x: 50, y: 0 }, { x: 50, y: 50 })).toBe(true)
   })
 
   it('wheel heuristic treats trackpad-like deltas as pan', () => {

@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { hrefIsSafe, isBannedTag, lenMM, mmPerUserUnit, sanitizeCss, userLength } from '../src/io/svgImport'
+import { cutTypeFromPaint, hrefIsSafe, isBannedTag, lenMM, mmPerUserUnit, parseCutType, parseShaperLength, sanitizeCss, userLength } from '../src/io/svgImport'
 import { exportSVG } from '../src/io/svgExport'
 import { createAutosaver, parseDoc } from '../src/io/projectFile'
 import { newDoc } from '../src/state/store'
@@ -61,12 +62,12 @@ describe('svg export offsets', () => {
     shapeFromWorld('path', 'sq', rect(25.4, 25.4), { cut: { type, depth: 3, offset, bitDia: 3.175 } })
   const doc = (shapes: ReturnType<typeof sq>[]): StudioDoc => ({ ...newDoc('t'), shapes, groups: [] })
 
-  it('bakes an outside offset into the geometry and drops shaper:cutOffset', () => {
+  it('bakes an outside offset into the geometry and writes cutOffset 0', () => {
     const svg = exportSVG(doc([sq(2)]))
     expect(svg).toContain('width="29.4mm"')
     expect(svg).toContain('height="29.4mm"')
-    expect(svg).not.toContain('shaper:cutOffset')
-    expect(svg).toContain('shaper:cutDepth="3mm"')
+    expect(svg).toContain('shaper:cutOffset="0in"')
+    expect(svg).toContain('shaper:cutDepth="0.11811 in"')
   })
   it('inside offset shrinks the exported path', () => {
     expect(exportSVG(doc([sq(2, 'inside')]))).toContain('width="21.4mm"')
@@ -77,8 +78,10 @@ describe('svg export offsets', () => {
     expect(svg).toContain('shaper:cutType="pocket"')
     expect(svg).toContain('width="23.4mm"')
   })
-  it('guides are exported as blue strokes', () => {
-    expect(exportSVG(doc([sq(0, 'guide')]))).toContain('stroke="#0068FF"')
+  it('guides are exported blue, like Shaper Studio', () => {
+    const svg = exportSVG(doc([sq(0, 'guide')]))
+    expect(svg).toContain('fill="#0068FF"')
+    expect(svg).toContain('stroke="#0068FF"')
   })
   it('zero offset leaves the geometry at the design size', () => {
     expect(exportSVG(doc([sq(0)]))).toContain('width="25.4mm"')
@@ -87,7 +90,7 @@ describe('svg export offsets', () => {
 
 describe('project file parsing', () => {
   const base = (shapes: unknown[], extra: Record<string, unknown> = {}) =>
-    JSON.stringify({ app: 'ShaperStudio', version: 1, id: 'd1', name: 'x', units: 'mm', shapes, groups: [], settings: {}, ...extra })
+    JSON.stringify({ app: 'FormaStudio', version: 1, id: 'd1', name: 'x', units: 'mm', shapes, groups: [], settings: {}, ...extra })
 
   it('rejects other files and newer versions', () => {
     expect(() => parseDoc('{"hello":1}')).toThrow()
@@ -110,17 +113,68 @@ describe('project file parsing', () => {
   it('keeps a valid design intact', () => {
     const d: StudioDoc = parseDoc(base([]))
     expect(d.units).toBe('mm')
-    expect(d.app).toBe('ShaperStudio')
+    expect(d.app).toBe('FormaStudio')
+  })
+  it('still opens designs saved under the old ShaperStudio name', () => {
+    const d = parseDoc(JSON.stringify({ app: 'ShaperStudio', version: 1, id: 'old', name: 'x', units: 'mm', shapes: [], groups: [], settings: {} }))
+    expect(d.id).toBe('old')
+    expect(d.app).toBe('FormaStudio')
   })
 })
 
 describe('guide export', () => {
-  it('guides carry no shaper:cutDepth or shaper:toolDia', () => {
+  it('guides carry no shaper:cutDepth', () => {
     const g = shapeFromWorld('path', 'guide', rect(25.4, 25.4), { cut: { type: 'guide', depth: 3, offset: 0, bitDia: 3.175 } })
     const svg = exportSVG({ ...newDoc('t'), shapes: [g], groups: [] })
     expect(svg).toContain('shaper:cutType="guide"')
     expect(svg).not.toContain('shaper:cutDepth')
-    expect(svg).not.toContain('shaper:toolDia')
+  })
+})
+
+describe('shaper cut attributes', () => {
+  it('reads lengths in any unit, bare numbers as mm', () => {
+    expect(parseShaperLength('0.250 in')).toBeCloseTo(6.35)
+    expect(parseShaperLength('0.125in')).toBeCloseTo(3.175)
+    expect(parseShaperLength('6mm')).toBe(6)
+    expect(parseShaperLength('1cm')).toBe(10)
+    expect(parseShaperLength('5')).toBe(5)
+    expect(parseShaperLength('')).toBeNull()
+    expect(parseShaperLength('deep')).toBeNull()
+  })
+  it('reads cut types case-insensitively', () => {
+    expect(parseCutType('outside')).toBe('outside')
+    expect(parseCutType('On-Line')).toBe('online')
+    expect(parseCutType('bogus')).toBeNull()
+    expect(parseCutType(null)).toBeNull()
+  })
+  it('maps Shaper colours to cut types', () => {
+    expect(cutTypeFromPaint('rgb(0, 0, 0)', 'none')).toBe('outside')
+    expect(cutTypeFromPaint('rgb(255, 255, 255)', 'rgb(0, 0, 0)')).toBe('inside')
+    expect(cutTypeFromPaint('rgb(127, 127, 127)', 'none')).toBe('pocket')
+    expect(cutTypeFromPaint('none', 'rgb(127, 127, 127)')).toBe('online')
+    expect(cutTypeFromPaint('rgb(0, 104, 255)', 'rgb(0, 104, 255)')).toBe('guide')
+    expect(cutTypeFromPaint('none', 'rgb(0, 104, 255)')).toBe('guide')
+  })
+  it('every path in a real Shaper Studio export has a cutType that parses, with matching colours', () => {
+    const svg = readFileSync(new URL('./fixtures/studio-cut-types.svg', import.meta.url), 'utf8')
+    const paths = [...svg.matchAll(/<path [^>]*>/g)].map((m) => m[0])
+    const attr = (p: string, k: string) => new RegExp(`${k}="([^"]*)"`).exec(p)?.[1] ?? 'none'
+    const got = paths.map((p) => ({
+      type: parseCutType(attr(p, 'shaper:cutType')),
+      depth: parseShaperLength(attr(p, 'shaper:cutDepth')),
+      paint: cutTypeFromPaint(attr(p, 'fill').replace(/^#(..)(..)(..)$/, (_, r, g, b) => `rgb(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)})`), attr(p, 'stroke').replace(/^#(..)(..)(..)$/, (_, r, g, b) => `rgb(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)})`)),
+    }))
+    expect(got.map((g) => g.type)).toEqual(['outside', 'inside', 'pocket', 'online', 'guide'])
+    expect(got.map((g) => g.paint)).toEqual(['outside', 'inside', 'pocket', 'online', 'guide'])
+    expect(got.map((g) => g.depth && Math.round(g.depth * 10) / 10)).toEqual([6.4, 9.5, 3.2, 1.6, null])
+  })
+  it('export round-trips through the same attribute format', () => {
+    const s = shapeFromWorld('path', 'p', rect(10, 10), { cut: { type: 'pocket', depth: 4.5, offset: 0, bitDia: 6 } })
+    const svg = exportSVG({ ...newDoc('t'), shapes: [s], groups: [] })
+    const attr = (k: string) => new RegExp(`${k}="([^"]*)"`).exec(svg)![1]
+    expect(parseCutType(attr('shaper:cutType'))).toBe('pocket')
+    expect(parseShaperLength(attr('shaper:cutDepth'))).toBeCloseTo(4.5, 3)
+    expect(parseShaperLength(attr('shaper:toolDia'))).toBeCloseTo(6, 3)
   })
 })
 

@@ -1,9 +1,10 @@
+import LoadingDomino from './ui/LoadingDomino'
 import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from 'react'
-import { newDoc, useStore } from './state/store'
+import { newDoc, selectionHasReference, useStore } from './state/store'
 import Canvas from './editor/Canvas'
-import { ActionBar, EmptyHint, HelpButton, LeftRail, Toast, TopLeft, TopRight, ZoomControls } from './editor/Chrome'
-import { DesignPanel, GroupsPanel, PlanPanel } from './editor/Panels'
-import { ShapesPopover, ShortcutsDialog } from './editor/Popovers'
+import { ActionBar, HelpButton, LeftRail, Toast, TopLeft, TopRight, ZoomControls } from './editor/Chrome'
+import { DesignPanel, PlanPanel } from './editor/Panels'
+import { ReferenceDialog, ShapesPopover, ShortcutsDialog } from './editor/Popovers'
 import OffsetMode from './editor/OffsetMode'
 import ShapeShifter from './editor/ShapeShifter'
 import TextDialog from './editor/TextDialog'
@@ -23,6 +24,7 @@ import './styles/mobile-fab.css'
 import './styles/mobile-sheet.css'
 import './styles/mobile-dialogs.css'
 import './styles/desktop.css'
+import './styles/text-tool.css'
 
 // Heavy feature dialogs are code-split so the core editor stays light.
 const Carve3DDialog = lazy(() => import('./features/carve3d/Carve3DDialog'))
@@ -96,6 +98,17 @@ function useKeyboard() {
         } else if (k === 'd') {
           e.preventDefault()
           st.duplicateSelected(false)
+        } else if (k === 'g') {
+          // Group / Ungroup (⇧) are Design actions.
+          e.preventDefault()
+          if (st.mode === 'design' && st.tool === 'select') {
+            if (e.shiftKey) st.ungroupSelected()
+            else st.groupSelected()
+          }
+        } else if (k === 'h') {
+          // Studio's Toggle Reference: each selected object flips between reference and editable.
+          e.preventDefault()
+          if (st.mode === 'design' && st.tool === 'select') st.toggleReferenceSelected()
         } else if (k === 'a') {
           e.preventDefault()
           st.select(st.doc.shapes.filter((s) => !s.hidden && !s.locked).map((s) => s.id))
@@ -122,6 +135,8 @@ function useKeyboard() {
         if (st.mode !== 'review') st.deleteSelected()
       } else if (k.startsWith('arrow') && st.mode === 'design' && st.selection.length) {
         e.preventDefault()
+        // A selection with a reference in it is locked as a whole (it doesn't drag either).
+        if (selectionHasReference(st.doc, st.selection)) return
         const step = (st.doc.units === 'in' ? MM_PER_IN / 16 : 1) * (e.shiftKey ? 10 : 1)
         nudgeSelection(k === 'arrowleft' ? -step : k === 'arrowright' ? step : 0, k === 'arrowup' ? -step : k === 'arrowdown' ? step : 0)
       } else if (k === 'p' && st.mode === 'design') {
@@ -224,7 +239,7 @@ export default function App() {
   useAutosave()
   useOpenDesignRequests()
   useEffect(() => {
-    document.title = `Shaper forma | ${name}`
+    document.title = `Forma Studio | ${name}`
   }, [name])
 
   const st = useStore.getState
@@ -243,8 +258,6 @@ export default function App() {
         <PlanPanel />
         <ActionBar />
       <ZoomControls />
-      <EmptyHint />
-      <GroupsPanel />
         <ShapesPopover />
         <ShapeShifter />
         <OffsetMode />
@@ -252,9 +265,10 @@ export default function App() {
         <AppMenu />
         <TextDialog />
         <ShortcutsDialog />
+        <ReferenceDialog />
         <AccountDialog />
         <UpdatePrompt checkOnLaunch={false} />
-        <Suspense fallback={<div className="ss-dialog dialog-loading">Loading…</div>}>
+        <Suspense fallback={<LoadingDomino withOverlay />}>
           {dialog === 'carve3d' && <Carve3DDialog units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
           {dialog === 'trace' && <TraceMode units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
         </Suspense>

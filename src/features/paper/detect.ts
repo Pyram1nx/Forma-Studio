@@ -3,20 +3,30 @@
 //
 //   1. Score image: brightness with a saturation penalty (paper is bright AND
 //      low-chroma; wooden or coloured desks, shadows and stains are not).
-//   2. Candidate quads: several thresholds around Otsu x several closing radii,
-//      each -> largest bright blob -> convex hull -> four extreme corners, kept
-//      only when the quad passes geometric validation. Best score wins, so a
-//      shadow that splits the sheet at one threshold is rescued at another.
-//   3. Subpixel refinement: each quad edge is re-localised from the strongest
-//      image gradients along it, the four edge lines are re-fitted by least
-//      squares, and their intersections become the final corners. This is what
-//      makes the framing land on the paper edge instead of near it.
+//   2. Conditioning: a grey-level closing erases pen strokes (so drawings never
+//      look like sheet edges), a percentile stretch lifts dim, low-light photos,
+//      and a log transform turns shadows into a constant offset: the sheet's
+//      edge is the same log step in shade as in light, while soft shadow edges
+//      stay gradual and weak.
+//   3. Candidate quads from three independent sources: bright blobs at several
+//      thresholds, regions enclosed by sharp (log) edges — a shadow across the
+//      sheet does not split these — and a Hough search for four long straight
+//      edges. All are ranked by edge support, area, inside/outside contrast and
+//      how plausible their perspective-corrected aspect ratio is.
+//   4. Subpixel refinement, twice: on the working copy, then on the full-size
+//      photo. Each edge is re-localised from the strongest bright-to-dark step
+//      along its normal, re-fitted with a robust line fit, and the corners are
+//      the line intersections — so a dog-eared or rounded corner still lands on
+//      the true corner of the sheet.
 //
-// Everything works on plain typed arrays, so the same code runs in the browser
-// and in the Node test harness.
+// Everything works on plain typed arrays, so the same code runs in the browser,
+// in a worker and in the Node test harness.
 import type { Pt } from '../../model/types'
 import { labelComponents } from './ink'
 import { integralImage, rectSum } from './integral'
+import { closeGray, morph } from './morph'
+import { aspectPrior, estimateAspect, TRACE_FRAME, type SheetKind } from './paperSize'
+import { detectTraceFrame, traceFrameFromTrack, type SlotPair } from './traceDots'
 
 /** Long side of the working copy used for detection. */
 const WORK_MAX = 1000
@@ -241,12 +251,8 @@ export interface QuadResult {
   reason: string
 }
 
-/**
- * The brightest, biggest plausible sheet for one (threshold, closing radius)
- * pair, or null. `score` is the paper-score image.
- */
-export /** v such that a fraction `q` of the pixels are below it (8-bit histogram). */
-function percentile(v: Uint8Array, q: number): number {
+/** v such that a fraction `q` of the pixels are below it (8-bit histogram). */
+export function percentile(v: Uint8Array, q: number): number {
   const hist = new Uint32Array(256)
   for (let i = 0; i < v.length; i++) hist[v[i]]++
   const target = v.length * q
@@ -258,72 +264,219 @@ function percentile(v: Uint8Array, q: number): number {
   return 255
 }
 
-/**
- * The sheet candidate for one closing radius: largest bright component of the
- * lighting-normalised mask -> convex hull -> four extreme corners. Returns null
- * when nothing plausible is found at this radius.
- */
-function quadFromMask(
-  bright: Uint8Array,
-  score: Uint8Array,
-  w: number,
-  h: number,
-  closeR: number,
-): { quad: Pt[]; area: number; insideMean: number } | null {
-  const closed = closeMask(bright, w, h, closeR)
-  const { labels, sizes } = labelComponents(closed, w, h, false)
-  let bestLabel = 0
-  for (let l = 1; l < sizes.length; l++) {
-    if (bestLabel === 0 || sizes[l] > sizes[bestLabel]) bestLabel = l
-  }
-  if (bestLabel === 0 || sizes[bestLabel] < w * h * 0.02) return null
+/* ------------------------------------------------------------------ */
+/* Conditioning: ink removal, low-light stretch, shadow-invariant log   */
+/* ------------------------------------------------------------------ */
 
-  const boundary: Pt[] = []
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (labels[i] !== bestLabel) continue
-      const edge =
-        x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
-        labels[i - 1] !== bestLabel || labels[i + 1] !== bestLabel ||
-        labels[i - w] !== bestLabel || labels[i + w] !== bestLabel
-      if (edge) boundary.push({ x, y })
-    }
-  }
-  const hull = convexHull(boundary)
+/**
+ * Percentile stretch to the full 0..255 range. A photo taken in low light
+ * packs paper and desk into a few dozen levels; stretched, every fixed
+ * threshold downstream behaves as it does on a well-lit photo.
+ */
+export function stretchLevels(v: Uint8Array): Uint8Array {
+  const lo = percentile(v, 0.01)
+  const hi = percentile(v, 0.995)
+  if (hi - lo < 12 || (lo <= 2 && hi >= 250)) return v
+  const k = 255 / (hi - lo)
+  const lut = new Uint8Array(256)
+  for (let t = 0; t < 256; t++) lut[t] = Math.max(0, Math.min(255, Math.round((t - lo) * k)))
+  const out = new Uint8Array(v.length)
+  for (let i = 0; i < v.length; i++) out[i] = lut[v[i]]
+  return out
+}
+
+/**
+ * Log transform, 0..255. Shadows multiply brightness, so in log space they
+ * only shift it: the paper / desk step is the same height in shade and in
+ * light. The +12 offset keeps sensor noise in near-black areas from exploding.
+ */
+const LOG_LUT = (() => {
+  const t = new Uint8Array(256)
+  const a = Math.log(12)
+  const b = Math.log(267)
+  for (let v = 0; v < 256; v++) t[v] = Math.round((255 * (Math.log(v + 12) - a)) / (b - a))
+  return t
+})()
+
+export function logImage(v: Uint8Array): Uint8Array {
+  const out = new Uint8Array(v.length)
+  for (let i = 0; i < v.length; i++) out[i] = LOG_LUT[v[i]]
+  return out
+}
+
+/* ------------------------------------------------------------------ */
+/* Region candidates                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The four hull vertices spanning the largest quadrilateral. The hull is first
+ * thinned (Visvalingam: drop the vertex whose triangle is smallest) to 16
+ * vertices, which keeps the sheet's corners, at any rotation.
+ */
+export function quadFromHull(hull: Pt[]): Pt[] | null {
   if (hull.length < 4) return null
-  const pick = (get: (p: Pt) => number, maximise: boolean): Pt => {
-    let best = hull[0]
-    for (const p of hull) {
-      const s = get(p)
-      if (maximise ? s > get(best) : s < get(best)) best = p
+  const pts = hull.slice()
+  const tri = (a: Pt, b: Pt, c: Pt) => Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y))
+  while (pts.length > 16) {
+    let k = 0
+    let best = Infinity
+    for (let i = 0; i < pts.length; i++) {
+      const t = tri(pts[(i + pts.length - 1) % pts.length], pts[i], pts[(i + 1) % pts.length])
+      if (t < best) {
+        best = t
+        k = i
+      }
     }
-    return best
+    pts.splice(k, 1)
   }
-  const quad = orderQuad([
-    pick((p) => p.x + p.y, false),
-    pick((p) => p.x - p.y, true),
-    pick((p) => p.x + p.y, true),
-    pick((p) => p.x - p.y, false),
-  ])
-  if (new Set(quad.map((p) => `${p.x},${p.y}`)).size !== 4) return null
-  if (validateQuad(quad, w, h)) return null
-  // Mean score on an interior grid, used to rank candidates.
+  const n = pts.length
+  let bestArea = 0
+  let bestQ: Pt[] | null = null
+  for (let a = 0; a < n; a++)
+    for (let b = a + 1; b < n; b++)
+      for (let c = b + 1; c < n; c++)
+        for (let d = c + 1; d < n; d++) {
+          const q = [pts[a], pts[b], pts[c], pts[d]]
+          const ar = polygonArea(q)
+          if (ar > bestArea) {
+            bestArea = ar
+            bestQ = q
+          }
+        }
+  return bestQ ? orderQuad(bestQ) : null
+}
+
+/**
+ * Quads of the up-to-`max` largest components of a binary mask (each at least
+ * `minFrac` of the image): boundary -> convex hull -> largest inscribed quad.
+ * More than one is kept because the biggest bright area is not always the
+ * sheet (a white wall, a bright desk with the sheet on it).
+ */
+function componentQuads(mask: Uint8Array, w: number, h: number, max: number, minFrac: number): Pt[][] {
+  const { labels, sizes } = labelComponents(mask, w, h, false)
+  const order = sizes
+    .map((s, l) => ({ s, l }))
+    .filter((e) => e.l > 0 && e.s >= w * h * minFrac)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, max)
+  const out: Pt[][] = []
+  for (const { l } of order) {
+    const boundary: Pt[] = []
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x
+        if (labels[i] !== l) continue
+        const edge =
+          x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
+          labels[i - 1] !== l || labels[i + 1] !== l ||
+          labels[i - w] !== l || labels[i + w] !== l
+        if (edge) boundary.push({ x, y })
+      }
+    }
+    const q = quadFromHull(convexHull(boundary))
+    if (q && !validateQuad(q, w, h)) out.push(q)
+  }
+  return out
+}
+
+/** Mean over a (2r+1)² window (clipped), via an integral image. */
+function boxBlur(src: Uint8Array, w: number, h: number, r: number): Uint8Array {
+  const S = integralImage(src, w, h)
+  const out = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r)
+    const y1 = Math.min(h, y + r + 1)
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r)
+      const x1 = Math.min(w, x + r + 1)
+      out[y * w + x] = Math.round(rectSum(S, w, x0, y0, x1, y1) / ((x1 - x0) * (y1 - y0)))
+    }
+  }
+  return out
+}
+
+/** Sobel gradient magnitude. */
+function sobelMag(img: Uint8Array, w: number, h: number): Float32Array {
+  const mag = new Float32Array(w * h)
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x
+      const gx = img[i - w + 1] + 2 * img[i + 1] + img[i + w + 1] - (img[i - w - 1] + 2 * img[i - 1] + img[i + w - 1])
+      const gy = img[i + w - 1] + 2 * img[i + w] + img[i + w + 1] - (img[i - w - 1] + 2 * img[i - w] + img[i - w + 1])
+      mag[i] = Math.hypot(gx, gy)
+    }
+  }
+  return mag
+}
+
+/**
+ * Regions enclosed by sharp edges of the log image. A shadow falling across
+ * the sheet is a gradual ramp (weak at this scale), so the shaded and lit
+ * halves of the sheet stay one region, while the sheet's own edge — a sharp
+ * step even inside the shadow — closes it off from the desk.
+ */
+function edgeRegionQuads(logBlur: Uint8Array, w: number, h: number): Pt[][] {
+  const mag = sobelMag(logBlur, w, h)
+  const hist = new Uint32Array(1024)
+  for (let i = 0; i < mag.length; i++) hist[Math.min(1023, mag[i] | 0)]++
+  let acc = 0
+  let p995 = 1023
+  for (let t = 0; t < 1024; t++) {
+    acc += hist[t]
+    if (acc >= mag.length * 0.995) {
+      p995 = t
+      break
+    }
+  }
+  const t = Math.max(24, 0.3 * p995)
+  const free = new Uint8Array(w * h)
+  for (let i = 0; i < free.length; i++) free[i] = mag[i] < t ? 1 : 0
+  // Thicken the edges by a pixel so hairline gaps in them do not leak.
+  return componentQuads(morph(free, w, h, 1, false), w, h, 4, 0.02)
+}
+
+/**
+ * Log level just inside minus just outside each of the quad's edges: the mean
+ * over all four, and the weakest edge. A real sheet is brighter than what lies
+ * beyond every one of its edges; a quad that borrowed a shadow's edge has one
+ * side that is darker inside than out.
+ */
+function sideContrast(q: Pt[], img: Uint8Array, w: number, h: number): { mean: number; min: number } {
+  const at = (x: number, y: number) => img[Math.max(0, Math.min(h - 1, Math.round(y))) * w + Math.max(0, Math.min(w - 1, Math.round(x)))]
+  const cx = q.reduce((s, p) => s + p.x, 0) / 4
+  const cy = q.reduce((s, p) => s + p.y, 0) / 4
   let sum = 0
   let cnt = 0
-  for (let gy = 1; gy < 12; gy++) {
-    for (let gx = 1; gx < 12; gx++) {
-      const u = gx / 12
-      const v = gy / 12
-      const x = quad[0].x + (quad[1].x - quad[0].x) * u + (quad[3].x - quad[0].x) * v + (quad[2].x - quad[1].x - quad[3].x + quad[0].x) * u * v
-      const y = quad[0].y + (quad[1].y - quad[0].y) * u + (quad[3].y - quad[0].y) * v + (quad[2].y - quad[1].y - quad[3].y + quad[0].y) * u * v
-      const xi = Math.max(0, Math.min(w - 1, Math.round(x)))
-      const yi = Math.max(0, Math.min(h - 1, Math.round(y)))
-      sum += score[yi * w + xi]
-      cnt++
+  let min = Infinity
+  for (let e = 0; e < 4; e++) {
+    const a = q[e]
+    const b = q[(e + 1) % 4]
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+    let nx = -(b.y - a.y) / len
+    let ny = (b.x - a.x) / len
+    if (nx * ((a.x + b.x) / 2 - cx) + ny * ((a.y + b.y) / 2 - cy) < 0) {
+      nx = -nx
+      ny = -ny
     }
+    let es = 0
+    let ec = 0
+    for (let k = 0; k < 16; k++) {
+      const t = 0.15 + (0.7 * k) / 15
+      const px = a.x + (b.x - a.x) * t
+      const py = a.y + (b.y - a.y) * t
+      const ox = px + nx * 6
+      const oy = py + ny * 6
+      if (ox < 0 || oy < 0 || ox >= w || oy >= h) continue
+      es += at(px - nx * 6, py - ny * 6) - at(ox, oy)
+      ec++
+    }
+    // Edges on the photo border have no outside to compare with.
+    if (ec < 4) continue
+    sum += es
+    cnt += ec
+    min = Math.min(min, es / ec)
   }
-  return { quad, area: polygonArea(quad), insideMean: sum / Math.max(1, cnt) }
+  return cnt ? { mean: sum / cnt, min } : { mean: 0, min: 0 }
 }
 
 /* ------------------------------------------------------------------ */
@@ -375,8 +528,8 @@ function peakGradient(profile: number[]): { pos: number; mag: number } | null {
  * rounded corners, clutter) drop out; if an edge loses most of its samples the
  * original corner is kept for the sides that touch it.
  */
-export function refineQuad(quad: Pt[], score: Uint8Array, w: number, h: number): Pt[] {
-  const img = blur3(score, w, h)
+export function refineQuad(quad: Pt[], score: Uint8Array, w: number, h: number, blurred?: Uint8Array): Pt[] {
+  const img = blurred ?? blur3(score, w, h)
   const grad = (x: number, y: number) => {
     const x0 = Math.max(0, Math.min(w - 1, Math.round(x)))
     const y0 = Math.max(0, Math.min(h - 1, Math.round(y)))
@@ -494,10 +647,6 @@ export function refineQuad(quad: Pt[], score: Uint8Array, w: number, h: number):
   return refined
 }
 
-/**
- * Find the sheet in a paper-score image (w x h). Tries several thresholds and
- * closing radii, keeps the largest valid quad, then refines its edges.
- */
 /** Paper and desk levels from the smoothed score histogram: the paper is the
  * brightest well-attended mode, the desk the biggest mode well below it. */
 export function paperAndDeskLevels(score: Uint8Array): { paper: number; desk: number } {
@@ -529,52 +678,260 @@ export function paperAndDeskLevels(score: Uint8Array): { paper: number; desk: nu
   return { paper, desk }
 }
 
-export function findPaperQuad(score: Uint8Array, w: number, h: number, diag?: { log: string[] }): QuadResult {
-  const D = (t: string) => diag?.log.push(t)
-  // Two independent candidate sources, because neither wins everywhere:
-  //   - the bright-blob path is precise when the sheet contrasts with the desk;
-  //   - the Hough path survives shadows, dark desks and low contrast, because
-  //     the sheet boundary is a long straight edge even when the step is small.
-  // Both are scored by the same edge-support measure and the winner is refined.
-  const baseR = Math.max(2, Math.round(0.008 * Math.max(w, h)))
+export interface FindOptions {
+  /** Plain paper, or the window of a Shaper Trace frame (known 1.52 ratio). */
+  kind?: SheetKind
+  /** Debug log for the lab. */
+  diag?: { log: string[] }
+}
+
+/**
+ * Find the sheet in a paper-score image (w x h): conditions the image, gathers
+ * candidates from bright blobs, edge-enclosed regions and Hough lines, ranks
+ * them, and refines the winner's edges.
+ */
+export function findPaperQuad(score: Uint8Array, w: number, h: number, opts: FindOptions = {}): QuadResult {
+  const kind = opts.kind ?? 'paper'
+  const D = (t: string) => opts.diag?.log.push(t)
+  const fmt = (q: Pt[]) => JSON.stringify(q.map((p) => [p.x | 0, p.y | 0]))
+  const big = Math.max(w, h)
+
+  // Pen strokes out (a Trace frame's markers are bigger, so a smaller radius
+  // there keeps them from bridging the frame), low light stretched, log space.
+  const inkR = Math.max(2, Math.round((kind === 'trace' ? 0.0025 : 0.004) * big))
+  const clean = stretchLevels(closeGray(score, w, h, inkR))
+  const logi = logImage(clean)
+  const logBlur = blur3(logi, w, h)
+
   const candidates: Pt[][] = []
+  const add = (q: Pt[] | null, src: string) => {
+    if (!q) return
+    D(`${src}: ${fmt(q)}`)
+    const tol = big * 0.004
+    if (candidates.some((c) => c.every((p, i) => Math.hypot(p.x - q[i].x, p.y - q[i].y) < tol))) return
+    candidates.push(q)
+  }
+
+  // 1. Bright blobs at three thresholds between the desk and paper levels: a
+  //    shadow that splits the sheet at one threshold is rescued at another.
+  const baseR = Math.max(2, Math.round(0.008 * big))
+  const { paper, desk } = paperAndDeskLevels(clean)
   const bright = new Uint8Array(w * h)
-  const { paper, desk } = paperAndDeskLevels(score)
-  const thr = Math.round(desk + (paper - desk) * 0.5)
-  for (let i = 0; i < bright.length; i++) bright[i] = score[i] >= thr ? 1 : 0
-  for (const r of [baseR, baseR * 2]) {
-    const c = quadFromMask(bright, score, w, h, r)
-    D(`blob r=${r}: ` + (c ? JSON.stringify(c.quad.map((p) => [p.x | 0, p.y | 0])) : 'null'))
-    if (c) candidates.push(c.quad)
+  for (const [f, r] of [[0.5, baseR], [0.35, baseR], [0.65, baseR], [0.5, baseR * 2]]) {
+    const thr = Math.round(desk + (paper - desk) * f)
+    for (let i = 0; i < bright.length; i++) bright[i] = clean[i] >= thr ? 1 : 0
+    for (const q of componentQuads(closeMask(bright, w, h, r), w, h, 3, 0.02)) add(q, `blob f=${f} r=${r}`)
   }
-  const hq = houghQuad(score, w, h)
-  D('hough: ' + (hq ? JSON.stringify(hq.map((p) => [p.x | 0, p.y | 0])) : 'null'))
-  if (hq) candidates.push(hq)
-  if (diag) {
-    for (const q of candidates) {
-      D(`cand ${JSON.stringify(q.map((p) => [p.x | 0, p.y | 0]))}: sup=${segmentSupportDbg(q, score, w, h).toFixed(3)} area=${(polygonArea(q) / (w * h)).toFixed(3)}`)
-    }
-  }
+  // 2. Regions closed off by sharp edges: survives shadows across the sheet.
+  for (const q of edgeRegionQuads(logBlur, w, h)) add(q, 'region')
+  // 3. Four long straight edges: survives low contrast and cluttered desks.
+  //    Twice: at full detail, and on a box-blurred copy where desk texture
+  //    (wood grain, fabric) averages out but the long sheet edges remain.
+  for (const q of houghQuads(logi, w, h, 4)) add(q, 'hough')
+  for (const q of houghQuads(boxBlur(logi, w, h, Math.max(2, Math.round(0.005 * big))), w, h, 4)) add(q, 'hough coarse')
 
   let best: Pt[] | null = null
   let bestScore = -1
-  for (const q of candidates) {
-    // The sheet is the biggest quadrilateral whose sides sit on real image
-    // edges: area-biased segment support. Hybrids that borrow a pen stroke for
-    // one side cover only a small area, dim quads off the paper are unsupported.
-    const sup = segmentSupportDbg(q, score, w, h)
-    if (sup < 0.55) continue
-    const s = sup * Math.pow(polygonArea(q) / (w * h), 0.3)
+  for (const cand of candidates) {
+    const q = refineQuad(cand, logi, w, h, logBlur)
+    const s = rankQuad(q, logi, w, h, kind, D)
     if (s > bestScore) {
       bestScore = s
       best = q
     }
   }
-  if (!best) return { quad: null, reason: 'no bright sheet found' }
-  const refined = refineQuad(best, score, w, h)
-  const bad = validateQuad(refined, w, h)
+  if (!best) return { quad: null, reason: candidates.length ? 'no candidate sits on real sheet edges' : 'no bright sheet found' }
+  const bad = validateQuad(best, w, h)
   if (bad) return { quad: null, reason: bad }
-  return { quad: refined, reason: '' }
+  return { quad: best, reason: '' }
+}
+
+/**
+ * Rank a candidate sheet: the biggest quadrilateral whose sides all sit on
+ * real edges (segment support), brighter inside than out, with a plausible
+ * true aspect ratio. Returns -1 when it is not a sheet at all.
+ */
+function rankQuad(q: Pt[], logi: Uint8Array, w: number, h: number, kind: SheetKind, D: (t: string) => void): number {
+  if (validateQuad(q, w, h)) return -1
+  const sup = segmentSupport(q, logi, w, h)
+  const area = polygonArea(q) / (w * h)
+  const contrast = sideContrast(q, logi, w, h)
+  const ratio = estimateAspect(q, w, h).ratio
+  const prior = aspectPrior(ratio, kind)
+  // Hybrids that borrow a pen stroke for one side leave that side unsupported;
+  // a quad that is darker inside than out is a desk, a hole or a shadow.
+  const ok = sup >= 0.55 && contrast.min > -2
+  const s = ok ? sup * Math.pow(area, 0.3) * prior * (0.6 + 0.4 * Math.min(1, Math.max(0, contrast.mean) / 15)) : -1
+  D(`rank ${JSON.stringify(q.map((p) => [p.x | 0, p.y | 0]))}: sup=${sup.toFixed(2)} area=${area.toFixed(3)} contrast=${contrast.mean.toFixed(1)}/${contrast.min.toFixed(1)} ratio=${ratio.toFixed(3)} prior=${prior.toFixed(2)} -> ${s.toFixed(3)}`)
+  return s
+}
+
+/* ------------------------------------------------------------------ */
+/* Full-resolution refinement                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Re-fit the sheet's edges on the full-size photo. Along each edge, profiles
+ * across it (averaged over three parallel lines against noise) locate the
+ * strongest bright-inside to dark-outside step to a fraction of a pixel; a
+ * Tukey-weighted line fit ignores samples on clutter, shadows or a dog-eared
+ * corner, and the corners become the intersections of the four lines.
+ * `k` is the working-copy scale (work px per photo px) the quad came from.
+ */
+export function refineOnPhoto(rgba: Uint8ClampedArray | Uint8Array, W: number, H: number, quad: Pt[], k: number): Pt[] {
+  const logAt = (xi: number, yi: number) => {
+    const j = (yi * W + xi) * 4
+    const r = rgba[j]
+    const g = rgba[j + 1]
+    const b = rgba[j + 2]
+    const v = (r * 77 + g * 150 + b * 29) / 256 - Math.max(0, Math.max(r, g, b) - Math.min(r, g, b) - 20)
+    return Math.log(Math.max(0, v) + 12)
+  }
+  const sample = (x: number, y: number): number | null => {
+    if (x < 0 || y < 0 || x > W - 1.001 || y > H - 1.001) return null
+    const x0 = x | 0
+    const y0 = y | 0
+    const fx = x - x0
+    const fy = y - y0
+    const a = logAt(x0, y0)
+    const b = logAt(x0 + 1, y0)
+    const c = logAt(x0, y0 + 1)
+    const d = logAt(x0 + 1, y0 + 1)
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy
+  }
+  const cx = quad.reduce((s, p) => s + p.x, 0) / 4
+  const cy = quad.reduce((s, p) => s + p.y, 0) / 4
+  const R = Math.ceil(2.5 / k) + 2
+  const STEP = 0.5
+  const lines: ({ p: Pt; d: Pt } | null)[] = []
+
+  for (let e = 0; e < 4; e++) {
+    const a = quad[e]
+    const b = quad[(e + 1) % 4]
+    const len = Math.hypot(b.x - a.x, b.y - a.y)
+    if (len < 20) return quad
+    const ux = (b.x - a.x) / len
+    const uy = (b.y - a.y) / len
+    let nx = -uy
+    let ny = ux
+    if (nx * ((a.x + b.x) / 2 - cx) + ny * ((a.y + b.y) / 2 - cy) < 0) {
+      nx = -nx
+      ny = -ny
+    }
+    const found: { x: number; y: number; m: number }[] = []
+    const K = 64
+    const nS = Math.round((2 * R) / STEP) + 1
+    const prof = new Float64Array(nS)
+    for (let i = 0; i < K; i++) {
+      const t = 0.1 + (0.8 * i) / (K - 1)
+      const px = a.x + (b.x - a.x) * t
+      const py = a.y + (b.y - a.y) * t
+      let ok = true
+      for (let si = 0; si < nS && ok; si++) {
+        const s = -R + si * STEP
+        let acc = 0
+        for (const o of [-1.5, 0, 1.5]) {
+          const v = sample(px + nx * s + ux * o, py + ny * s + uy * o)
+          if (v === null) {
+            ok = false
+            break
+          }
+          acc += v
+        }
+        prof[si] = acc / 3
+      }
+      if (!ok) continue
+      // Drop going outward (inside bright -> outside dark), smoothed 1-2-1.
+      let bi = -1
+      let bm = 0
+      const drop = (si: number) => {
+        const l = Math.max(0, si - 2)
+        const r = Math.min(nS - 1, si + 2)
+        return (prof[l] - prof[r]) / (r - l)
+      }
+      for (let si = 1; si < nS - 1; si++) {
+        const m = drop(si)
+        if (m > bm) {
+          bm = m
+          bi = si
+        }
+      }
+      if (bi <= 0 || bi >= nS - 1) continue
+      const l = drop(bi - 1)
+      const r = drop(bi + 1)
+      const den = l - 2 * bm + r
+      const off = den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (l - r)) / den)) : 0
+      const s = -R + (bi + off) * STEP
+      found.push({ x: px + nx * s, y: py + ny * s, m: bm })
+    }
+    if (found.length < 12) {
+      lines.push(null)
+      continue
+    }
+    const ms = found.map((f) => f.m).sort((x, y) => x - y)
+    const cut = Math.max(0.004, 0.35 * ms[ms.length >> 1])
+    lines.push(robustLine(found.filter((f) => f.m >= cut)))
+  }
+
+  const maxMove = Math.max(4 / k, Math.hypot(W, H) * 0.012)
+  const meet = (l1: { p: Pt; d: Pt } | null, l2: { p: Pt; d: Pt } | null, fallback: Pt): Pt => {
+    if (!l1 || !l2) return fallback
+    const det = l1.d.x * l2.d.y - l1.d.y * l2.d.x
+    if (Math.abs(det) < 1e-6) return fallback
+    const t = ((l2.p.x - l1.p.x) * l2.d.y - (l2.p.y - l1.p.y) * l2.d.x) / det
+    const out = { x: l1.p.x + l1.d.x * t, y: l1.p.y + l1.d.y * t }
+    return Math.hypot(out.x - fallback.x, out.y - fallback.y) > maxMove ? fallback : out
+  }
+  const refined = [
+    meet(lines[3], lines[0], quad[0]),
+    meet(lines[0], lines[1], quad[1]),
+    meet(lines[1], lines[2], quad[2]),
+    meet(lines[2], lines[3], quad[3]),
+  ]
+  const a0 = polygonArea(quad)
+  const a1 = polygonArea(refined)
+  if (!Number.isFinite(a1) || Math.abs(a1 / a0 - 1) > 0.1 || validateQuad(refined, W, H)) return quad
+  return orderQuad(refined)
+}
+
+/**
+ * Line through weighted points, robust to outliers: total least squares,
+ * re-weighted four times with Tukey's biweight on the residuals.
+ */
+function robustLine(pts: { x: number; y: number; m: number }[]): { p: Pt; d: Pt } | null {
+  if (pts.length < 8) return null
+  let wts = pts.map((p) => p.m)
+  let line: { p: Pt; d: Pt } | null = null
+  for (let it = 0; it < 5; it++) {
+    let sw = 0
+    let mx = 0
+    let my = 0
+    for (let i = 0; i < pts.length; i++) {
+      sw += wts[i]
+      mx += pts[i].x * wts[i]
+      my += pts[i].y * wts[i]
+    }
+    if (sw <= 0) return line
+    mx /= sw
+    my /= sw
+    let sxx = 0
+    let sxy = 0
+    let syy = 0
+    for (let i = 0; i < pts.length; i++) {
+      const dx = pts[i].x - mx
+      const dy = pts[i].y - my
+      sxx += wts[i] * dx * dx
+      sxy += wts[i] * dx * dy
+      syy += wts[i] * dy * dy
+    }
+    const th = 0.5 * Math.atan2(2 * sxy, sxx - syy)
+    line = { p: { x: mx, y: my }, d: { x: Math.cos(th), y: Math.sin(th) } }
+    const res = pts.map((p) => Math.abs((p.x - mx) * line!.d.y - (p.y - my) * line!.d.x))
+    const sorted = res.slice().sort((x, y) => x - y)
+    const c = Math.max(0.75, 4.685 * 1.4826 * sorted[sorted.length >> 1])
+    wts = pts.map((p, i) => (res[i] < c ? p.m * (1 - (res[i] / c) ** 2) ** 2 : 0))
+  }
+  return line
 }
 
 /* ------------------------------------------------------------------ */
@@ -591,7 +948,7 @@ interface Line {
 }
 
 /** Fraction of each quad edge that is a real step edge (gap-tolerant). */
-function segmentSupport(quad: Pt[], score: Uint8Array, w: number, h: number): number {
+function segmentSupport(quad: Pt[], score: Uint8Array, w: number, h: number, step = 2): number {
   const at = (x: number, y: number): number => {
     const xi = Math.max(0, Math.min(w - 1, Math.round(x)))
     const yi = Math.max(0, Math.min(h - 1, Math.round(y)))
@@ -609,7 +966,7 @@ function segmentSupport(quad: Pt[], score: Uint8Array, w: number, h: number): nu
     const ny = ux
     let supported = 0
     let total = 0
-    for (let t = 0; t <= len; t += 2) {
+    for (let t = 0; t <= len; t += step) {
       const x = a.x + ux * t
       const y = a.y + uy * t
       if (x < 5 || y < 5 || x >= w - 5 || y >= h - 5) continue
@@ -690,6 +1047,11 @@ function refitLine(l: Line, mag: Float32Array, dir: Float32Array, w: number, h: 
  * image has no convincing quadrilateral.
  */
 export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peaks: Line[]; bestScore: number; valid: number }): Pt[] | null {
+  return houghQuads(score, w, h, 1, diag)[0] ?? null
+}
+
+/** The `top` best-supported distinct quads of the Hough search (see houghQuad). */
+export function houghQuads(score: Uint8Array, w: number, h: number, top: number, diag?: { peaks: Line[]; bestScore: number; valid: number }): Pt[][] {
   // Sobel gradient magnitude.
   const mag = new Float32Array(w * h)
   const dir = new Float32Array(w * h)
@@ -730,11 +1092,25 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
   // Peak pick with non-maximum suppression.
   const peaks: Line[] = []
   const used = new Uint8Array(PHI * NR)
-  const order = Array.from(votes.keys()).sort((a, b) => votes[b] - votes[a])
+  // Only bins with a real share of the strongest vote can become one of the
+  // 24 peaks; sorting just those keeps this cheap at full working size.
+  let vmax = 0
+  for (let i = 0; i < votes.length; i++) if (votes[i] > vmax) vmax = votes[i]
+  const order: number[] = []
+  for (let i = 0; i < votes.length; i++) if (votes[i] > vmax * 0.02) order.push(i)
+  order.sort((a, b) => votes[b] - votes[a])
+  // Peaks are capped per 15° orientation sector: a textured desk piles votes
+  // onto one orientation (the grain), which must not crowd the sheet's other
+  // edges out of the shortlist.
+  const SECTORS = 12
+  const perSector = new Uint8Array(SECTORS)
   for (const idx of order) {
     if (votes[idx] <= 0 || used[idx]) continue
     const pb = Math.floor(idx / NR)
     const rb = idx % NR
+    const sector = Math.floor((pb * SECTORS) / PHI)
+    if (perSector[sector] >= 10) continue
+    perSector[sector]++
     // Suppress the neighbourhood so one edge yields one line.
     for (let dp = -3; dp <= 3; dp++) {
       for (let dr = -4; dr <= 4; dr++) {
@@ -747,8 +1123,77 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
     const phi = ((pb + 0.5) / PHI) * Math.PI
     const rho = (rb + 0.5) * RHO - diagLen
     peaks.push(refitLine({ px: rho * Math.cos(phi), py: rho * Math.sin(phi), dx: -Math.sin(phi), dy: Math.cos(phi), votes: votes[idx] }, mag, dir, w, h, cut))
-    if (peaks.length >= 24) break
+    if (peaks.length >= 120) break
   }
+  // Longest contiguous stretch of real edge along each candidate line. Sheet
+  // edges run most of the frame; a pen stroke that happens to be straight
+  // supports its line for only its own short length, which is what keeps
+  // drawings from being mistaken for the sheet. Only edge pixels whose
+  // gradient points across the line count: a textured desk (wood grain,
+  // fabric) is full of edges, but they do not line up along one straight line.
+  const cut2 = cut / 2
+  const supportLen = (l: Line): number => {
+    // Total length of the straight runs along the line, each at least 24 px
+    // long; gaps up to 16 px are bridged. Where a hard shadow or a finger
+    // crosses a sheet edge the run breaks, but the edge's length still counts.
+    let run = 0
+    let total = 0
+    let gap = 0
+    const flush = () => {
+      if (run >= 24) total += run
+      run = 0
+    }
+    for (let t = -diagLen; t <= diagLen; t += 2) {
+      const x = l.px + l.dx * t
+      const y = l.py + l.dy * t
+      if (x < 1 || y < 1 || x >= w - 2 || y >= h - 2) {
+        flush()
+        gap = 0
+        continue
+      }
+      let m = 0
+      for (let s = -2; s <= 2; s++) {
+        const xi = Math.round(x - l.dy * s)
+        const yi = Math.round(y + l.dx * s)
+        if (xi < 1 || yi < 1 || xi >= w - 1 || yi >= h - 1) continue
+        const i = yi * w + xi
+        if (mag[i] <= m) continue
+        if (Math.abs(Math.cos(dir[i]) * -l.dy + Math.sin(dir[i]) * l.dx) < 0.94) continue
+        m = mag[i]
+      }
+      if (m >= cut2) {
+        run += 2 + gap * 2
+        gap = 0
+      } else if (run > 0 && ++gap > 8) {
+        flush()
+        gap = 0
+      }
+    }
+    flush()
+    return total
+  }
+  // Shortlist: the 24 lines with the longest straight support, plus the best
+  // three of every orientation sector so each sheet edge has a seat.
+  for (const p of peaks) p.votes = supportLen(p)
+  peaks.sort((a, b) => b.votes - a.votes)
+  {
+    const sectorOf = (l: Line) => {
+      const a = Math.atan2(l.dy, l.dx)
+      return Math.min(SECTORS - 1, Math.floor(((a < 0 ? a + Math.PI : a) / Math.PI) * SECTORS))
+    }
+    const seats = new Uint8Array(SECTORS)
+    const keep = peaks.filter((l, i) => {
+      const sct = sectorOf(l)
+      if (i < 24 || seats[sct] < 3) {
+        seats[sct]++
+        return true
+      }
+      return false
+    })
+    peaks.length = 0
+    peaks.push(...keep.slice(0, 30))
+  }
+
   // A soft or tilted edge smears across neighbouring bins: the same physical
   // edge can appear as several peaks. Merge lines that are near-parallel and
   // pass close to each other, keeping the best refit.
@@ -767,7 +1212,7 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
     } else merged.push(l)
   }
   if (diag) diag.peaks = merged
-  if (merged.length < 4) return null
+  if (merged.length < 4) return []
 
   const intersect = (l1: Line, l2: Line): Pt | null => {
     const det = l1.dx * l2.dy - l1.dy * l2.dx
@@ -776,44 +1221,6 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
     return { x: l1.px + l1.dx * t, y: l1.py + l1.dy * t }
   }
 
-  // Longest contiguous stretch of real edge along each candidate line. Sheet
-  // edges run most of the frame; a pen stroke that happens to be straight
-  // supports its line for only its own short length, which is what keeps
-  // drawings from being mistaken for the sheet.
-  const cut2 = cut / 2
-  const supportLen = (l: Line): number => {
-    // Clip the parameter range so q(t) stays near the image.
-    const tMin = -diagLen
-    const tMax = diagLen
-    let run = 0
-    let best = 0
-    let gap = 0
-    for (let t = tMin; t <= tMax; t += 2) {
-      const x = l.px + l.dx * t
-      const y = l.py + l.dy * t
-      if (x < 1 || y < 1 || x >= w - 2 || y >= h - 2) {
-        best = Math.max(best, run)
-        run = 0
-        continue
-      }
-      let m = 0
-      for (let s = -2; s <= 2; s++) {
-        const xi = Math.round(x - l.dy * s)
-        const yi = Math.round(y + l.dx * s)
-        if (xi < 1 || yi < 1 || xi >= w - 1 || yi >= h - 1) continue
-        m = Math.max(m, mag[yi * w + xi])
-      }
-      if (m >= cut2) {
-        run += 2
-        gap = 0
-      } else if (++gap > 6) {
-        best = Math.max(best, run)
-        run = 0
-      }
-    }
-    return Math.max(best, run)
-  }
-  for (const p of peaks) p.votes = supportLen(p)
 
   // Sort by unoriented line angle. Doubling the angle removes the 0/pi seam:
   // lines then live on a true circle, and consecutive lines in this cyclic
@@ -827,8 +1234,7 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
     .sort((a, b) => a.a - b.a)
     .map((e) => e.l)
 
-  let bestQuad: Pt[] | null = null
-  let bestScore = 0
+  const best: { q: Pt[]; seg: number }[] = []
   const n = byAngle.length
   const idx: number[] = [0, 1, 2, 3]
   const tryCombo = () => {
@@ -836,7 +1242,7 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
     const L = idx.map((k) => byAngle[k])
     // The weakest edge bounds the quad: all four edges must be long.
     const weak = Math.min(...L.map((l) => l.votes))
-    if (weak < Math.max(w, h) * 0.3) {
+    if (weak < Math.max(w, h) * 0.2) {
       weakFail++
       return
     }
@@ -869,12 +1275,25 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
       // Score on the quad's own segments: a winning sheet quad is edged along
       // its full sides, while hybrids (a drawing edge standing in for a sheet
       // edge) leave most of one side unsupported.
-      const seg = segmentSupport(quad, score, w, h)
       if (diag) diag.valid++
-      if (seg > bestScore) {
-        bestScore = seg
-        bestQuad = quad
+      // Coarse walk first (every 8 px): most valid-but-wrong quads drop here.
+      const floor = best.length >= top ? best[best.length - 1].seg : 0.5
+      if (segmentSupport(quad, score, w, h, 8) < floor - 0.12) continue
+      const seg = segmentSupport(quad, score, w, h)
+      if (seg < 0.5 || (best.length >= top && seg <= best[best.length - 1].seg)) continue
+      // The sheet is brighter than the desk beyond each of its edges; a quad
+      // that took a shadow's edge for one side is darker inside on that side.
+      if (sideContrast(quad, score, w, h).min < -2) continue
+      // Distinct quads only: near-duplicates keep the better-supported one.
+      const tol = Math.max(w, h) * 0.01
+      const twin = best.findIndex((b) => b.q.every((p, i) => Math.hypot(p.x - quad[i].x, p.y - quad[i].y) < tol))
+      if (twin >= 0) {
+        if (best[twin].seg >= seg) continue
+        best.splice(twin, 1)
       }
+      best.push({ q: quad, seg })
+      best.sort((a, b) => b.seg - a.seg)
+      if (best.length > top) best.length = top
     }
   }
   let attempts = 0
@@ -891,15 +1310,14 @@ export function houghQuad(score: Uint8Array, w: number, h: number, diag?: { peak
   }
   combos(0, 0)
   if (diag) {
-    diag.bestScore = bestScore
+    diag.bestScore = best[0]?.seg ?? 0
     ;(diag as unknown as Record<string, number | string>).attempts = attempts
     ;(diag as unknown as Record<string, number | string>).weakFail = weakFail
     ;(diag as unknown as Record<string, number | string>).detFail = detFail
     ;(diag as unknown as Record<string, number | string>).valFail = valFail
     ;(diag as unknown as Record<string, number | string>).lastBad = lastBad
   }
-  // A candidate must actually sit on image edges.
-  return bestQuad
+  return best.map((b) => b.q)
 }
 
 /**
@@ -941,13 +1359,46 @@ function edgeSupport(quad: Pt[], score: Uint8Array, w: number, h: number): numbe
   return cnt ? sum / cnt : 0
 }
 
-/** Work-copy RGBA of a canvas (long side <= WORK_MAX) and its size. */
-/** Pure core: detect the sheet from raw RGBA pixels (used by the browser and the test harness). */
-export function detectPaperRgba(rgba: Uint8ClampedArray | Uint8Array, W: number, H: number): DetectResult {
-  const k = Math.min(1, WORK_MAX / Math.max(W, H))
+export interface DetectOptions {
+  kind?: SheetKind
+  /** Long side of the working copy (px); smaller is faster (live camera preview). */
+  workMax?: number
+  /** Re-fit the edges on the full-size photo (default true). */
+  refine?: boolean
+  /** Debug log for the lab. */
+  diag?: { log: string[] }
+  /**
+   * Trace mode: where the dot track roughly is (the live camera's last lock,
+   * or corners placed by hand), used when the frame is not found from scratch.
+   */
+  traceSeed?: Pt[]
+}
+
+/** Pure core: detect the sheet from raw RGBA pixels (used by the browser, the worker and the test harness). */
+export function detectPaperRgba(rgba: Uint8ClampedArray | Uint8Array, W: number, H: number, opts: DetectOptions = {}): DetectResult {
+  // A Shaper Trace frame is found by its dots, never by its black band: the
+  // dots stay visible when the drawing or an object covers the window's edge,
+  // and they fix the window's scale and perspective exactly.
+  if (opts.kind === 'trace') {
+    const side = Math.max(800, opts.workMax ?? 1600)
+    const t = detectTraceFrame(rgba, W, H, side) ?? (opts.traceSeed ? traceFrameFromTrack(rgba, W, H, opts.traceSeed, side) : null)
+    if (t && (t.slotted >= 12 || !opts.traceSeed || t.support > 0))
+      return {
+        quad: t.window,
+        track: t.track,
+        pairs: t.pairs,
+        found: true,
+        reason: '',
+        ratio: t.landscape ? TRACE_FRAME.h / TRACE_FRAME.w : TRACE_FRAME.w / TRACE_FRAME.h,
+      }
+    const quad = insetQuad(W, H)
+    return { quad, found: false, reason: 'no Trace frame dots', ratio: estimateAspect(quad, W, H).ratio }
+  }
+  const k = Math.min(1, (opts.workMax ?? WORK_MAX) / Math.max(W, H))
   const w = Math.max(2, Math.round(W * k))
   const h = Math.max(2, Math.round(H * k))
-  // Box-downsample the source into the working grid.
+  // Box-downsample the source into the working grid (this also averages away
+  // most of the sensor noise of a dim photo).
   const score = new Uint8Array(w * h)
   const step = 1 / k
   for (let y = 0; y < h; y++) {
@@ -979,10 +1430,14 @@ export function detectPaperRgba(rgba: Uint8ClampedArray | Uint8Array, W: number,
       score[y * w + x] = v < 0 ? 0 : v > 255 ? 255 : v
     }
   }
-  const r = findPaperQuad(score, w, h)
-  if (!r.quad) return { quad: insetQuad(W, H), found: false, reason: r.reason }
-  const quad = orderQuad(r.quad.map((p) => ({ x: (p.x + 0.5) / k, y: (p.y + 0.5) / k })))
-  return { quad, found: true, reason: '' }
+  const r = findPaperQuad(score, w, h, { kind: opts.kind, diag: opts.diag })
+  if (!r.quad) {
+    const quad = insetQuad(W, H)
+    return { quad, found: false, reason: r.reason, ratio: estimateAspect(quad, W, H).ratio }
+  }
+  let quad = orderQuad(r.quad.map((p) => ({ x: (p.x + 0.5) / k, y: (p.y + 0.5) / k })))
+  if (opts.refine !== false && k < 1) quad = refineOnPhoto(rgba, W, H, quad, k)
+  return { quad, found: true, reason: '', ratio: estimateAspect(quad, W, H).ratio }
 }
 
 export interface DetectResult {
@@ -990,15 +1445,24 @@ export interface DetectResult {
   quad: Pt[]
   found: boolean
   reason: string
+  /** True width / height of the sheet, perspective-corrected (see paperSize.ts). */
+  ratio: number
+  /** Trace mode: the frame's dot track TL TR BR BL (photo px); `quad` is the capture window inside it. */
+  track?: Pt[]
+  /** Trace mode: each fitted dot and its slot (track mm -> photo px), for lens calibration. */
+  pairs?: SlotPair[]
 }
 
 /**
  * Detect the paper quad in `photo` (pixel coordinates of the photo canvas).
  * Falls back to an inset quad, with found = false, when no plausible sheet is found.
  */
-export function detectPaper(photo: HTMLCanvasElement): DetectResult {
+export function detectPaper(photo: HTMLCanvasElement, opts: DetectOptions = {}): DetectResult {
   const ctx = photo.getContext('2d', { willReadFrequently: true })
-  if (!ctx) return { quad: insetQuad(photo.width, photo.height), found: false, reason: 'no bright sheet found' }
+  if (!ctx) {
+    const quad = insetQuad(photo.width, photo.height)
+    return { quad, found: false, reason: 'no bright sheet found', ratio: photo.width / photo.height }
+  }
   const img = ctx.getImageData(0, 0, photo.width, photo.height)
-  return detectPaperRgba(img.data, photo.width, photo.height)
+  return detectPaperRgba(img.data, photo.width, photo.height, opts)
 }

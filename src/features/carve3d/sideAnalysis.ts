@@ -3,14 +3,11 @@
 // The model is analysed one axis pair at a time (top/bottom, front/back, left/right). Each face
 // of the pair is rotated to face up and rasterised into a z-buffer height map: h(x, y) is the
 // first model surface a straight bit would meet coming down from that face. The waste column
-// above the first surface is that face's work; a column is CLAIMED by the face that reaches it
-// more shallowly (ties go to the first face of the pair), so every column is carved from exactly
-// one side and opposite faces never duplicate each other's work.
-//
-// A column that is open all the way through (outside the model's footprint on that face) ties
-// with its mirror, so it lands on a stable face; deep cavities that only open towards one face
-// are claimed by that face — this is what routes the inside of a glass to the top and its
-// conical outside to the side faces.
+// above the first surface is that face's work. Opposite faces never duplicate each other: in a
+// column with material, one face's waste lies above it and the other's below, so each face
+// carves its own — the inside of a bowl from the top, the overhang under its rim from the
+// bottom. A column that is open all the way through (outside the model's footprint on that
+// face) is nobody's layered work: the outline cut-out removes it.
 import type { PlacedModel } from './loadModel'
 
 export type SideId = 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right'
@@ -160,33 +157,89 @@ export function heightMap(placed: PlacedModel, cell: number, mode: 'max' | 'min'
 
 /** A column shallower than this leaves nothing for a router (mm). */
 export const CUT_MIN_DEPTH = 0.2
-/** A face claimed over less area than this is not worth a flip (mm²). */
+/** A face with work over less area than this is not worth a flip (mm²). */
 export const CUT_MIN_AREA = 2
-/**
- * Claim tolerance: a column goes to the shallower face unless the other is deeper by more than
- * this. Keeps mirrored/float-noise columns from duplicating work on both faces of a pair; the
- * couple hundredths of overlap are harmless.
- */
-const CLAIM_EPS = 0.05
-
 export interface SideAnalysis {
   side: SideId
-  /** True when this face has claimed work worth a setup. */
+  /** True when this face has work worth a setup. */
   needed: boolean
-  /** Depth of the deepest claimed column, measured from the model's own face (mm). */
+  /** Depth of the deepest waste column, measured from the model's own face (mm). */
   cutDepth: number
-  /** Total claimed area with depth over CUT_MIN_DEPTH (mm²). */
+  /** Total area with waste deeper than CUT_MIN_DEPTH (mm²). */
   area: number
+}
+
+type Map3 = (x: number, y: number, z: number) => [number, number, number]
+
+/**
+ * rotateToSide as a point map, both ways: `toSide` takes a point of the original model frame
+ * into the side's frame, `fromSide` brings it back. rotateToSide rotates (a 90° axis
+ * permutation) and re-centres, so the offsets come from the permuted bbox — exact, no mesh work.
+ */
+export function sideFrame(side: SideId, placed: PlacedModel): { toSide: Map3; fromSide: Map3 } {
+  const R = SIDE_ROT[side]
+  const origMin = [placed.bbox.min.x, placed.bbox.min.y, placed.bbox.min.z]
+  const origMax = [placed.bbox.max.x, placed.bbox.max.y, placed.bbox.max.z]
+  const rmin = [0, 0, 0]
+  const rmax = [0, 0, 0]
+  for (let k = 0; k < 3; k++) {
+    let c = -1
+    let sign = 0
+    for (let j = 0; j < 3; j++)
+      if (R[k * 3 + j] !== 0) {
+        c = j
+        sign = R[k * 3 + j]
+      }
+    rmin[k] = sign > 0 ? origMin[c] : -origMax[c]
+    rmax[k] = sign > 0 ? origMax[c] : -origMin[c]
+  }
+  const cx = (rmin[0] + rmax[0]) / 2
+  const cy = (rmin[1] + rmax[1]) / 2
+  const cz = rmin[2]
+  return {
+    // p' = R · p − c
+    toSide: (x, y, z) => [
+      R[0] * x + R[1] * y + R[2] * z - cx,
+      R[3] * x + R[4] * y + R[5] * z - cy,
+      R[6] * x + R[7] * y + R[8] * z - cz,
+    ],
+    fromSide: (xs, ys, zs) => {
+      const vx = xs + cx
+      const vy = ys + cy
+      const vz = zs + cz
+      // p = Rᵀ · (p' + c)
+      return [R[0] * vx + R[3] * vy + R[6] * vz, R[1] * vx + R[4] * vy + R[7] * vz, R[2] * vx + R[5] * vy + R[8] * vz]
+    },
+  }
+}
+
+/** Nearest-sample lookup of a height map; −Infinity where the map never covered. */
+function sampleMap(m: HeightMap, x: number, y: number): number {
+  const i = Math.min(m.nx - 1, Math.max(0, Math.round((x - m.x0) / m.dx)))
+  const j = Math.min(m.ny - 1, Math.max(0, Math.round((y - m.y0) / m.dy)))
+  return m.h[j * m.nx + i]
 }
 
 /**
  * Analyse all six faces of the placed model. Only the model's own extent is considered: the
  * stock face of the top/bottom pair sits on the model face, and the four side pairs keep the
  * block margin above them (the caller adds that margin where it matters).
+ *
+ * Two refinements keep the job light and non-duplicative:
+ *  - Open columns (no mesh under them on either face of a pair) are nobody's work: that waste is
+ *    the outline through-cut around the silhouette, not layered carving.
+ *  - The four side faces only get waste that is SHADOWED from both the top and the bottom
+ *    (true overhangs, side bores). Waste the vertical carves already reach would only be
+ *    carved again from the side — a cone vase gains nothing from its four side faces.
  */
 export function analyzeSides(placed: PlacedModel, cell = 1): Record<SideId, SideAnalysis> {
   const out = {} as Record<SideId, SideAnalysis>
   for (const s of SIDE_ORDER) out[s] = { side: s, needed: false, cutDepth: 0, area: 0 }
+
+  // Vertical reference maps in the original frame: the first surface from above and from below.
+  const zTop = heightMap(placed, cell, 'max')
+  const zBot = heightMap(placed, cell, 'min')
+  const SHADOW_EPS = cell * 0.5
 
   for (const { a, b, mirror } of PAIRS) {
     const A = rotateToSide(placed, a)
@@ -199,22 +252,55 @@ export function analyzeSides(placed: PlacedModel, cell = 1): Record<SideId, Side
       const h = m.h[j * m.nx + i]
       return h === -Infinity ? size : size - h
     }
+    const vertical = a === 'top'
+    const invA = vertical ? null : sideFrame(a, placed).fromSide
+    const invB = vertical ? null : sideFrame(b, placed).fromSide
     for (let j = 0; j < hA.ny; j++)
       for (let i = 0; i < hA.nx; i++) {
         const ii = mirror === 'x' ? hB.nx - 1 - i : i
         const jj = mirror === 'y' ? hB.ny - 1 - j : j
         const dA = depthAt(hA, A.size.z, i, j)
         const dB =
-          ii >= 0 && ii < hB.nx && jj >= 0 && jj < hB.ny ? depthAt(hB, B.size.z, ii, jj) : Infinity
-        // Ties (a column open from both faces, or symmetric surfaces) go to `a` — stable, and
-        // the pair's work is split without overlap either way.
-        const first = dA <= dB + CLAIM_EPS
-        const d = first ? dA : dB
-        const s: SideId = first ? a : b
-        if (d > CUT_MIN_DEPTH) {
-          const rec = out[s]
-          rec.area += cell * cell
-          if (d > rec.cutDepth) rec.cutDepth = d
+          ii >= 0 && ii < hB.nx && jj >= 0 && jj < hB.ny ? depthAt(hB, B.size.z, ii, jj) : B.size.z
+        // The two faces' waste in a column is different material — above the first surface
+        // seen from one face, below the first surface seen from the other — so each face takes
+        // its own; neither can reach the other's through the model.
+        const faces = [
+          { side: a, d: dA, size: A.size.z, m: hA, wi: i, wj: j, inv: invA },
+          { side: b, d: dB, size: B.size.z, m: hB, wi: ii, wj: jj, inv: invB },
+        ]
+        for (const f of faces) {
+          // A face has work in this column only if material sits strictly inside it: flush
+          // (depth ≈ 0) means nothing to remove, and a column reaching the opposite face
+          // (depth ≈ full) is open — the outline cut-out's job, not layered carving.
+          if (!(f.d > CUT_MIN_DEPTH && f.d < f.size - 0.01)) continue
+          let d = f.d
+          if (f.inv) {
+            // Trim the column to its shadowed waste: march from the face towards the first
+            // surface, keep the deepest point the top and bottom carves cannot reach. The march
+            // samples the OPEN segment only (one step short of the surface) — a sample at the
+            // surface itself lands on the model boundary, where grid quantisation would read
+            // the model's own material as shadowed waste.
+            const xs = f.m.x0 + f.wi * f.m.dx
+            const ys = f.m.y0 + f.wj * f.m.dy
+            const steps = Math.min(400, Math.max(1, Math.ceil(d / cell)))
+            let best = 0
+            for (let t = 1; t <= steps; t++) {
+              const zs = f.size - (d * t) / (steps + 1)
+              const [xo, yo, zo] = f.inv(xs, ys, zs)
+              const zt = sampleMap(zTop, xo, yo)
+              const zb = sampleMap(zBot, xo, yo)
+              if (zo < zt - SHADOW_EPS && zo > zb + SHADOW_EPS) best = (d * t) / (steps + 1)
+            }
+            // Shadowed right up to the last open sample: the waste runs on to the surface itself,
+            // so the face carves the full column (stopping a step short leaves a skin behind).
+            d = best >= (d * steps) / (steps + 1) - 1e-9 ? d : best
+          }
+          if (d > CUT_MIN_DEPTH) {
+            const rec = out[f.side]
+            rec.area += cell * cell
+            if (d > rec.cutDepth) rec.cutDepth = d
+          }
         }
       }
   }

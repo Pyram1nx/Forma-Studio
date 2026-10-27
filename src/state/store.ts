@@ -1,11 +1,11 @@
 import { create } from 'zustand'
-import type { Contour, CutSettings, Group, ImportPayload, Mode, OriginRef, Pt, Shape, StudioDoc, Units } from '../model/types'
+import type { Contour, CutSettings, FreeOrigin, Group, ImportPayload, Mode, OriginRef, OriginPoint, Pt, Shape, SnapKind, StudioDoc, Units } from '../model/types'
 import { uid } from '../model/ids'
 import type { DocHandle } from '../io/projectFile'
 import { bake, bboxCenter, bboxH, bboxValid, bboxW, shapesBBox, type BBox } from '../geometry/transform'
 
 export type Tool = 'select' | 'draw'
-export type Dialog = null | 'text' | 'carve3d' | 'trace' | 'offset' | 'shortcuts' | 'account'
+export type Dialog = null | 'text' | 'carve3d' | 'trace' | 'offset' | 'shortcuts' | 'account' | 'reference'
 export type Popover = null | 'shapes' | 'settings'
 
 export interface View {
@@ -15,7 +15,7 @@ export interface View {
   panY: number
 }
 
-const UNITS_KEY = 'shaperstudio:units'
+const UNITS_KEY = 'formastudio:units'
 
 /** Units the user last picked; new designs start in them. */
 export function lastUnits(): Units {
@@ -39,7 +39,7 @@ function rememberUnits(u: Units) {
 export function newDoc(name = 'Untitled-1'): StudioDoc {
   const now = new Date().toISOString()
   return {
-    app: 'ShaperStudio',
+    app: 'FormaStudio',
     version: 1,
     id: uid('d'),
     name,
@@ -59,6 +59,124 @@ export function pruneGroups(doc: StudioDoc): StudioDoc {
   for (const s of doc.shapes) if (s.groupId) used.add(s.groupId)
   const groups = doc.groups.filter((g) => used.has(g.id))
   return groups.length === doc.groups.length ? doc : { ...doc, groups }
+}
+
+const CELL_FRACTION: Record<OriginPoint, FreeOrigin> = {
+  tl: { fx: 0, fy: 0 },
+  tc: { fx: 0.5, fy: 0 },
+  tr: { fx: 1, fy: 0 },
+  ml: { fx: 0, fy: 0.5 },
+  mc: { fx: 0.5, fy: 0.5 },
+  mr: { fx: 1, fy: 0.5 },
+  bl: { fx: 0, fy: 1 },
+  bc: { fx: 0.5, fy: 1 },
+  br: { fx: 1, fy: 1 },
+}
+
+/** The group whose members are exactly the current selection, if any. */
+export function groupForSelection(doc: StudioDoc, selection: readonly string[]): Group | undefined {
+  if (!selection.length) return undefined
+  const sel = new Set(selection)
+  const gid = doc.shapes.find((s) => sel.has(s.id))?.groupId
+  if (!gid) return undefined
+  const members = doc.shapes.filter((s) => s.groupId === gid)
+  if (members.length !== sel.size || !members.every((m) => sel.has(m.id))) return undefined
+  return doc.groups.find((g) => g.id === gid)
+}
+
+/** The outline of a selected box-style group: the group's one editable object for the settings panel. */
+export function groupOutlineFor(doc: StudioDoc, selection: readonly string[]): Shape | undefined {
+  const g = groupForSelection(doc, selection)
+  // A user's group is plain: an outline-role member in it (e.g. a paper trace) isn't the group's settings object.
+  if (!g || g.source === 'user') return undefined
+  return doc.shapes.find((s) => s.groupId === g.id && s.meta?.role === 'outline')
+}
+
+/**
+ * A group a feature relies on (a box joint's outline and guides, a 3D carve's layers): it has an
+ * outline-role member and wasn't made by the user. Such groups are never merged or ungrouped.
+ */
+export function isFeatureGroup(doc: StudioDoc, groupId: string): boolean {
+  const g = doc.groups.find((x) => x.id === groupId)
+  if (!g || g.source === 'user') return false
+  return doc.shapes.some((s) => s.groupId === groupId && s.meta?.role === 'outline')
+}
+
+/**
+ * The group the selection stands for as one object: every selected shape is in it and every
+ * unlocked member is selected (locked members are never selected with their group).
+ */
+export function selectedGroup(doc: StudioDoc, selection: readonly string[]): Group | undefined {
+  if (!selection.length) return undefined
+  const sel = new Set(selection)
+  const picked = doc.shapes.filter((s) => sel.has(s.id))
+  const gid = picked[0]?.groupId
+  if (!gid || picked.some((s) => s.groupId !== gid)) return undefined
+  if (doc.shapes.some((s) => s.groupId === gid && !s.locked && !sel.has(s.id))) return undefined
+  return doc.groups.find((g) => g.id === gid)
+}
+
+/**
+ * What the Group / Ungroup action does for this selection: 'ungroup' for one whole plain group,
+ * 'group' for two or more unlocked shapes outside feature groups, otherwise null.
+ */
+export function groupAction(doc: StudioDoc, selection: readonly string[]): 'group' | 'ungroup' | null {
+  const whole = selectedGroup(doc, selection)
+  if (whole) return isFeatureGroup(doc, whole.id) ? null : 'ungroup'
+  const sel = new Set(selection)
+  const free = doc.shapes.filter((s) => sel.has(s.id) && !s.locked)
+  if (free.length < 2) return null
+  if (free.some((s) => s.groupId && isFeatureGroup(doc, s.groupId))) return null
+  return 'group'
+}
+
+/** "Group", then "Group 2", "Group 3"… (the first name not already taken). */
+function nextGroupName(doc: StudioDoc): string {
+  const taken = new Set(doc.groups.map((g) => g.name))
+  if (!taken.has('Group')) return 'Group'
+  let n = 2
+  while (taken.has(`Group ${n}`)) n++
+  return `Group ${n}`
+}
+
+/**
+ * A group's anchor is kept as a fraction of the bounds of all its members, hidden ones included,
+ * so it stays on the same point when guides are hidden or the side changes. The origin in effect
+ * for a selection is that point, expressed against the selection's visible bounds.
+ */
+export function activeOrigin(doc: StudioDoc, selection: readonly string[]): OriginRef | undefined {
+  const g = groupForSelection(doc, selection)
+  if (!g?.anchor) return doc.settings.originPoint
+  const all = shapesBBox(doc.shapes.filter((s) => s.groupId === g.id))
+  const vis = shapesBBox(doc.shapes.filter((s) => selection.includes(s.id) && !s.hidden))
+  if (!bboxValid(all) || !bboxValid(vis)) return doc.settings.originPoint
+  const wx = all.minX + g.anchor.fx * (all.maxX - all.minX)
+  const wy = all.minY + g.anchor.fy * (all.maxY - all.minY)
+  return { fx: (wx - vis.minX) / Math.max(vis.maxX - vis.minX, 1e-9), fy: (wy - vis.minY) / Math.max(vis.maxY - vis.minY, 1e-9) }
+}
+
+/**
+ * The selection after undo/redo swaps `from` for `to`: ids that still exist, or the whole group
+ * again when a whole group was selected (its members can differ, e.g. a box joint's guides).
+ */
+function carrySelection(from: StudioDoc, to: StudioDoc, selection: string[]): string[] {
+  const g = groupForSelection(from, selection)
+  if (g && to.groups.some((x) => x.id === g.id)) return to.shapes.filter((s) => s.groupId === g.id && !s.locked).map((s) => s.id)
+  const ids = new Set(to.shapes.map((s) => s.id))
+  return selection.filter((i) => ids.has(i))
+}
+
+/**
+ * Studio's Reference paths are our locked shapes: shown as an amber outline, picked only by
+ * their edge, kept out of marquee selections, never edited, and left out of Plan, Review and export.
+ */
+export const REFERENCE_TOAST = 'Object set to Reference and locked'
+
+/** Whether the selection includes a reference (locked) shape: the canvas then shows no handles or panels. */
+export function selectionHasReference(doc: StudioDoc, selection: readonly string[]): boolean {
+  if (!selection.length) return false
+  const sel = new Set(selection)
+  return doc.shapes.some((s) => s.locked && sel.has(s.id))
 }
 
 export function editableIds(ids: readonly string[], doc: StudioDoc = useStore.getState().doc): string[] {
@@ -89,6 +207,8 @@ interface State {
   dirty: boolean
   fileHandle: DocHandle | null
   toast: string | null
+  /** The toast's info button opens this dialog (Studio's reference toast). */
+  toastInfo: Dialog
 
   // history
   checkpoint: () => void
@@ -100,11 +220,17 @@ interface State {
   rename: (name: string) => void
   setUnits: (u: Units) => void
   setSetting: (k: keyof StudioDoc['settings'], v: boolean) => void
+  setSnapKind: (k: SnapKind, v: boolean) => void
   setOriginPoint: (p: OriginRef) => void
+  setGroupAnchor: (groupId: string, anchor: FreeOrigin) => void
   setCustomAnchor: (p: Pt) => void
   /** Remove the custom anchor marker; a free origin that came from it falls back to the centre. */
   clearCustomAnchor: () => void
   addShapes: (shapes: Shape[], select?: boolean) => void
+  /** Adds a group record and its shapes in one undo step, selecting them. */
+  addGroupShapes: (group: Group, shapes: Shape[]) => void
+  /** Swaps the shapes matching `remove` for `add` in one undo step (no selection change). */
+  swapShapes: (remove: (s: Shape) => boolean, add: Shape[]) => void
   importPayload: (p: ImportPayload) => void
   /** Mutate shapes without a checkpoint (call checkpoint() first for undo). */
   patchShapes: (ids: string[], fn: (s: Shape) => Shape) => void
@@ -119,6 +245,17 @@ interface State {
   sendToBack: () => void
   /** Clear the locked flag on every shape (checkpointed). */
   unlockAll: () => void
+  /** Set As Reference & Lock (on) or Make Editable (off) for the selection, keeping it selected. */
+  setReferenceSelected: (on: boolean) => void
+  /** Cmd/Ctrl+H: flip each selected shape between reference and editable. */
+  toggleReferenceSelected: () => void
+  /**
+   * Group the unlocked selected shapes into a new group (one undo step), keeping them selected.
+   * Members of other plain groups move into the new one (groups are flat); locked shapes stay out.
+   */
+  groupSelected: () => void
+  /** Dissolve the selected whole group (one undo step); its members stay selected one by one. */
+  ungroupSelected: () => void
 
   // selection / ui
   select: (ids: string[]) => void
@@ -146,7 +283,7 @@ interface State {
    * user has edited since, the design stays dirty.
    */
   markSaved: (savedDoc?: StudioDoc) => void
-  showToast: (msg: string) => void
+  showToast: (msg: string, opts?: { info?: Dialog; ms?: number }) => void
 }
 
 const HISTORY_LIMIT = 100
@@ -169,7 +306,21 @@ export function withoutCheckpoint(fn: () => void) {
 
 export const useStore = create<State>((set, get) => {
   const touch = (doc: StudioDoc): StudioDoc => ({ ...doc, updatedAt: new Date().toISOString() })
-  const commitDoc = (doc: StudioDoc) => set({ doc: touch(doc), dirty: true })
+  /** The custom anchor marker belongs to the shapes it was picked for: drop it once they are all gone. */
+  const pruneAnchor = (doc: StudioDoc): StudioDoc => {
+    const { customAnchor, customAnchorFor } = doc.settings
+    if (!customAnchor || !customAnchorFor?.length || doc.shapes.some((s) => customAnchorFor.includes(s.id))) return doc
+    return {
+      ...doc,
+      settings: {
+        ...doc.settings,
+        customAnchor: undefined,
+        customAnchorFor: undefined,
+        ...(typeof doc.settings.originPoint === 'object' ? { originPoint: 'mc' as const } : {}),
+      },
+    }
+  }
+  const commitDoc = (doc: StudioDoc) => set({ doc: touch(pruneAnchor(doc)), dirty: true })
 
   return {
     doc: newDoc(),
@@ -190,6 +341,7 @@ export const useStore = create<State>((set, get) => {
     dirty: false,
     fileHandle: null,
     toast: null,
+    toastInfo: null,
 
     checkpoint: () => {
       if (suppressCheckpoints > 0) return
@@ -201,15 +353,13 @@ export const useStore = create<State>((set, get) => {
       if (!past.length) return
       // Keep the current view preferences (units, settings) — they aren't part of history.
       const prev = { ...past[past.length - 1], units: doc.units, settings: doc.settings }
-      const ids = new Set(prev.shapes.map((s) => s.id))
-      set({ doc: prev, past: past.slice(0, -1), future: [doc, ...future], selection: selection.filter((i) => ids.has(i)), dirty: true, lastNudge: 0 })
+      set({ doc: prev, past: past.slice(0, -1), future: [doc, ...future], selection: carrySelection(doc, prev, selection), dirty: true, lastNudge: 0 })
     },
     redo: () => {
       const { past, doc, future, selection } = get()
       if (!future.length) return
       const next = { ...future[0], units: doc.units, settings: doc.settings }
-      const ids = new Set(next.shapes.map((s) => s.id))
-      set({ doc: next, past: [...past, doc], future: future.slice(1), selection: selection.filter((i) => ids.has(i)), dirty: true, lastNudge: 0 })
+      set({ doc: next, past: [...past, doc], future: future.slice(1), selection: carrySelection(doc, next, selection), dirty: true, lastNudge: 0 })
     },
 
     setDoc: (doc, handle = null) => {
@@ -229,17 +379,47 @@ export const useStore = create<State>((set, get) => {
     setSetting: (k, v) => {
       commitDoc({ ...get().doc, settings: { ...get().doc.settings, [k]: v } })
     },
-    setOriginPoint: (p) => {
-      if (get().doc.settings.originPoint === p) return
-      commitDoc({ ...get().doc, settings: { ...get().doc.settings, originPoint: p } })
+    setSnapKind: (k, v) => {
+      const { doc } = get()
+      commitDoc({ ...doc, settings: { ...doc.settings, snap: { ...doc.settings.snap, [k]: v } } })
     },
-    setCustomAnchor: (p) => commitDoc({ ...get().doc, settings: { ...get().doc.settings, customAnchor: p } }),
+    setOriginPoint: (p) => {
+      // With a whole group selected, the anchor belongs to that group.
+      let { doc, selection } = get()
+      // Picking one of the nine stock points replaces any custom anchor marker.
+      if (typeof p === 'string' && doc.settings.customAnchor) {
+        doc = { ...doc, settings: { ...doc.settings, customAnchor: undefined, customAnchorFor: undefined } }
+      }
+      const g = groupForSelection(doc, selection)
+      if (g) {
+        // Convert the pick (against the visible selection) to a point on the group's full bounds.
+        const f = typeof p === 'string' ? CELL_FRACTION[p] : p
+        const vis = shapesBBox(doc.shapes.filter((s) => selection.includes(s.id) && !s.hidden))
+        const all = shapesBBox(doc.shapes.filter((s) => s.groupId === g.id))
+        const wx = vis.minX + f.fx * (vis.maxX - vis.minX)
+        const wy = vis.minY + f.fy * (vis.maxY - vis.minY)
+        if (doc !== get().doc) commitDoc(doc)
+        get().setGroupAnchor(g.id, {
+          fx: (wx - all.minX) / Math.max(all.maxX - all.minX, 1e-9),
+          fy: (wy - all.minY) / Math.max(all.maxY - all.minY, 1e-9),
+        })
+        return
+      }
+      if (doc.settings.originPoint === p && doc === get().doc) return
+      commitDoc({ ...doc, settings: { ...doc.settings, originPoint: p } })
+    },
+    setGroupAnchor: (groupId, anchor) => {
+      const doc = get().doc
+      commitDoc({ ...doc, groups: doc.groups.map((g) => (g.id === groupId ? { ...g, anchor } : g)) })
+    },
+    setCustomAnchor: (p) =>
+      commitDoc({ ...get().doc, settings: { ...get().doc.settings, customAnchor: p, customAnchorFor: [...get().selection] } }),
     clearCustomAnchor: () => {
       const { doc } = get()
       const freeOrigin = typeof doc.settings.originPoint === 'object'
       commitDoc({
         ...doc,
-        settings: { ...doc.settings, customAnchor: undefined, ...(freeOrigin ? { originPoint: 'mc' as const } : {}) },
+        settings: { ...doc.settings, customAnchor: undefined, customAnchorFor: undefined, ...(freeOrigin ? { originPoint: 'mc' as const } : {}) },
       })
     },
 
@@ -249,9 +429,20 @@ export const useStore = create<State>((set, get) => {
       commitDoc({ ...doc, shapes: [...doc.shapes, ...shapes] })
       if (selectThem) set({ selection: shapes.map((s) => s.id) })
     },
+    swapShapes: (remove, add) => {
+      get().checkpoint()
+      const doc = get().doc
+      commitDoc({ ...doc, shapes: [...doc.shapes.filter((s) => !remove(s)), ...add] })
+    },
+    addGroupShapes: (group, shapes) => {
+      get().checkpoint()
+      const doc = get().doc
+      commitDoc({ ...doc, shapes: [...doc.shapes, ...shapes], groups: [...doc.groups, group] })
+      set({ selection: shapes.map((s) => s.id) })
+    },
     importPayload: (p) => {
-      const g: Group = { ...p.group, id: uid('g') }
-      const shapes: Shape[] = p.shapes.map((s) => ({ ...s, id: uid(), groupId: g.id }) as Shape)
+      const g: Group | undefined = p.group && { ...p.group, id: uid('g') }
+      const shapes: Shape[] = p.shapes.map((s) => ({ ...s, id: uid(), ...(g && { groupId: g.id }) }) as Shape)
       const warnings = p.warnings ?? []
       if (!shapes.length) {
         get().showToast(warnings[0] ?? 'Nothing to import')
@@ -270,7 +461,7 @@ export const useStore = create<State>((set, get) => {
         }
       }
       get().checkpoint()
-      commitDoc({ ...doc, shapes: [...doc.shapes, ...shapes], groups: [...doc.groups, g] })
+      commitDoc({ ...doc, shapes: [...doc.shapes, ...shapes], groups: g ? [...doc.groups, g] : doc.groups })
       set({ selection: shapes.map((s) => s.id), popover: null })
       setTimeout(() => get().zoomToFit(shapesBBox(shapes)), 0)
       if (warnings.length) get().showToast(warnings.length > 1 ? `${warnings[0]} (+${warnings.length - 1} more)` : warnings[0])
@@ -288,11 +479,9 @@ export const useStore = create<State>((set, get) => {
     deleteSelected: () => {
       const { selection, doc } = get()
       if (!selection.length) return
+      // References are never deleted; with only references selected, Delete does nothing (as in Studio).
       const del = new Set(editableIds(selection, doc))
-      if (!del.size) {
-        get().showToast('Locked shapes can’t be deleted. Unlock them first.')
-        return
-      }
+      if (!del.size) return
       get().checkpoint()
       commitDoc(pruneGroups({ ...doc, shapes: doc.shapes.filter((s) => !del.has(s.id)) }))
       set({ selection: [] })
@@ -375,10 +564,93 @@ export const useStore = create<State>((set, get) => {
       get().checkpoint()
       commitDoc({ ...doc, shapes: doc.shapes.map((s) => (s.locked ? { ...s, locked: false } : s)) })
     },
+    setReferenceSelected: (on) => {
+      const { doc, selection } = get()
+      const sel = new Set(selection)
+      const ids = doc.shapes.filter((s) => sel.has(s.id) && !!s.locked !== on).map((s) => s.id)
+      if (!ids.length) return
+      get().updateShapes(ids, (s) => ({ ...s, locked: on }))
+      if (on) get().showToast(REFERENCE_TOAST, { info: 'reference', ms: 5000 })
+    },
+    toggleReferenceSelected: () => {
+      const { selection } = get()
+      if (!selection.length) return
+      const sel = new Set(selection)
+      get().updateShapes(selection, (s) => (sel.has(s.id) ? { ...s, locked: !s.locked } : s))
+    },
+    groupSelected: () => {
+      const { doc, selection } = get()
+      const sel = new Set(selection)
+      // Locked shapes are never edited, so they never join (or leave) a group.
+      const ids = doc.shapes.filter((s) => sel.has(s.id) && !s.locked).map((s) => s.id)
+      if (ids.length < 2) {
+        if (selection.length >= 2) get().showToast('Locked shapes can’t be grouped. Unlock them first.')
+        return
+      }
+      if (selectedGroup(doc, ids)) return // already one group
+      if (groupAction(doc, ids) !== 'group') {
+        get().showToast('Box joints and 3D carves can’t be grouped with other objects')
+        return
+      }
+      const group: Group = { id: uid('g'), name: nextGroupName(doc), source: 'user' }
+      const members = new Set(ids)
+      get().checkpoint()
+      commitDoc(
+        pruneGroups({
+          ...doc,
+          shapes: doc.shapes.map((s) => (members.has(s.id) ? { ...s, groupId: group.id } : s)),
+          groups: [...doc.groups, group],
+        }),
+      )
+      set({ selection: ids })
+    },
+    ungroupSelected: () => {
+      const { doc, selection } = get()
+      const g = selectedGroup(doc, selection)
+      if (!g) return
+      if (isFeatureGroup(doc, g.id)) {
+        get().showToast('Box joints and 3D carves can’t be ungrouped')
+        return
+      }
+      const ids = doc.shapes.filter((s) => s.groupId === g.id && !s.locked).map((s) => s.id)
+      if (!ids.length) {
+        get().showToast('Locked shapes can’t be ungrouped. Unlock them first.')
+        return
+      }
+      const members = new Set(ids)
+      get().checkpoint()
+      commitDoc(
+        pruneGroups({
+          ...doc,
+          shapes: doc.shapes.map((s) => {
+            if (!members.has(s.id)) return s
+            const { groupId: _drop, ...rest } = s
+            return rest
+          }),
+        }),
+      )
+      set({ selection: ids })
+    },
 
     select: (ids) => set({ selection: ids }),
     selectGroup: (groupId) => set({ selection: get().doc.shapes.filter((s) => s.groupId === groupId && !s.locked).map((s) => s.id) }),
-    setMode: (mode) => set({ mode, tool: 'select', popover: null, anchorPicking: false }),
+    setMode: (mode) => {
+      const { doc, selection } = get()
+      let next = selection
+      // Plan selects grouped elements one at a time; Design only ever selects whole groups.
+      if (mode === 'design' && selection.length) {
+        const sel = new Set(selection)
+        const groups = new Set(doc.shapes.filter((s) => sel.has(s.id) && s.groupId).map((s) => s.groupId))
+        if (groups.size) {
+          const all = new Set(selection)
+          for (const s of doc.shapes) if (s.groupId && groups.has(s.groupId) && !s.locked) all.add(s.id)
+          if (all.size !== sel.size) next = [...all]
+        }
+      }
+      // References exist only in Design: they are hidden in Plan and Review, so they leave the selection.
+      if (mode !== 'design') next = next.filter((id) => !doc.shapes.find((s) => s.id === id)?.locked)
+      set({ mode, selection: next, tool: 'select', popover: null, anchorPicking: false })
+    },
     setTool: (tool) => set({ tool, popover: null }),
     setAnchorPicking: (anchorPicking) => set({ anchorPicking }),
     setView: (v) => set({ view: { ...get().view, ...v } }),
@@ -429,10 +701,10 @@ export const useStore = create<State>((set, get) => {
     markSaved: (savedDoc) => {
       if (!savedDoc || get().doc === savedDoc) set({ dirty: false })
     },
-    showToast: (toast) => {
+    showToast: (toast, opts) => {
       clearTimeout(toastTimer)
-      set({ toast })
-      toastTimer = setTimeout(() => set({ toast: null }), 2600)
+      set({ toast, toastInfo: opts?.info ?? null })
+      toastTimer = setTimeout(() => set({ toast: null, toastInfo: null }), opts?.ms ?? 2600)
     },
   }
 })

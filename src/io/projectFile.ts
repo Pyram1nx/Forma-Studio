@@ -2,20 +2,23 @@
 // Uses the File System Access API when the browser supports it (Chrome, Edge) so
 // "Save" writes back to the same file; falls back to download / file input.
 import type { Contour, CutType, Group, Shape, ShapeKind, StudioDoc, Units } from '../model/types'
-import { DEFAULT_CUT } from '../model/types'
+import { DEFAULT_CUT, SNAP_KINDS } from '../model/types'
 import { uid } from '../model/ids'
 import { useStore } from '../state/store'
 import { isDesktop } from '../desktop/runtime'
 import { desktopPickOpen, desktopPickSave, desktopRead, desktopWrite, type DesktopFileHandle } from '../desktop/files'
 
-export const FILE_EXT = '.shaperstudio'
+export const FILE_EXT = '.formastudio'
+/** Extension and app marker of designs saved before the rename to Forma Studio. Still opened. */
+export const LEGACY_FILE_EXT = '.shaperstudio'
+const LEGACY_APP = 'ShaperStudio'
 const MIME = 'application/json'
 
 /** A saved design's location: a browser file handle, or a path on the desktop app. */
 export type DocHandle = FileSystemFileHandle | DesktopFileHandle
 const isDesktopHandle = (h: DocHandle): h is DesktopFileHandle => (h as DesktopFileHandle).kind === 'desktop'
 
-const pickerTypes = [{ description: 'Shaper forma design', accept: { [MIME]: [FILE_EXT, '.json'] } }]
+const pickerTypes = [{ description: 'Forma Studio design', accept: { [MIME]: [FILE_EXT, LEGACY_FILE_EXT, '.json'] } }]
 
 type FSWindow = Window & {
   showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle>
@@ -84,7 +87,7 @@ function repairShape(raw: unknown): Shape | null {
 
 /**
  * Parse and validate a design file. Invalid shapes are repaired or dropped, so a
- * damaged file still opens. Throws only for files that aren't Shaper forma designs
+ * damaged file still opens. Throws only for files that aren't Forma Studio designs
  * or that come from a newer format.
  */
 export function parseDoc(text: string): StudioDoc {
@@ -92,10 +95,10 @@ export function parseDoc(text: string): StudioDoc {
   try {
     d = JSON.parse(text)
   } catch {
-    throw new Error('Not a Shaper forma design file')
+    throw new Error('Not a Forma Studio design file')
   }
-  if (!isObj(d) || d.app !== 'ShaperStudio' || !Array.isArray(d.shapes)) throw new Error('Not a Shaper forma design file')
-  if (finite(d.version) && d.version > 1) throw new Error('This design was made by a newer version of Shaper forma')
+  if (!isObj(d) || (d.app !== 'FormaStudio' && d.app !== LEGACY_APP) || !Array.isArray(d.shapes)) throw new Error('Not a Forma Studio design file')
+  if (finite(d.version) && d.version > 1) throw new Error('This design was made by a newer version of Forma Studio')
   const seen = new Set<string>()
   const shapes: Shape[] = []
   for (const raw of d.shapes) {
@@ -110,7 +113,7 @@ export function parseDoc(text: string): StudioDoc {
     for (const g of d.groups) {
       if (isObj(g) && typeof g.id === 'string' && typeof g.name === 'string') {
         const grp: Group = { id: g.id, name: g.name }
-        if (g.source === '3d' || g.source === 'paper' || g.source === 'svg') grp.source = g.source
+        if (g.source === '3d' || g.source === 'paper' || g.source === 'svg' || g.source === 'user') grp.source = g.source
         if (isObj(g.info)) grp.info = g.info as Group['info']
         groups.push(grp)
       }
@@ -119,7 +122,7 @@ export function parseDoc(text: string): StudioDoc {
   const st = isObj(d.settings) ? d.settings : {}
   const now = new Date().toISOString()
   return {
-    app: 'ShaperStudio',
+    app: 'FormaStudio',
     version: 1,
     id: typeof d.id === 'string' && d.id ? d.id : uid('d'),
     name: typeof d.name === 'string' && d.name.trim() ? d.name : 'Untitled',
@@ -128,6 +131,9 @@ export function parseDoc(text: string): StudioDoc {
     groups,
     settings: {
       smartAlignment: st.smartAlignment !== false,
+      ...(isObj(st.snap) && SNAP_KINDS.some((k) => (st.snap as Record<string, unknown>)[k] === false)
+        ? { snap: Object.fromEntries(SNAP_KINDS.filter((k) => (st.snap as Record<string, unknown>)[k] === false).map((k) => [k, false])) }
+        : {}),
       showPosition: st.showPosition === true,
       originAnchor: st.originAnchor === true,
       cutPathDisplay: st.cutPathDisplay === true,
@@ -165,7 +171,7 @@ export async function saveDoc(doc: StudioDoc, handle: DocHandle | null, saveAs =
 
 export async function openDocFromComputer(): Promise<{ doc: StudioDoc; handle: DocHandle | null }> {
   if (isDesktop()) {
-    const h = await desktopPickOpen([FILE_EXT.slice(1), 'json'])
+    const h = await desktopPickOpen([FILE_EXT.slice(1), LEGACY_FILE_EXT.slice(1), 'json'])
     return { doc: parseDoc(await desktopRead(h)), handle: h }
   }
   if (typeof w.showOpenFilePicker === 'function') {
@@ -173,7 +179,7 @@ export async function openDocFromComputer(): Promise<{ doc: StudioDoc; handle: D
     const f = await h.getFile()
     return { doc: parseDoc(await f.text()), handle: h }
   }
-  const f = await pickFile(FILE_EXT + ',.json,' + MIME)
+  const f = await pickFile(FILE_EXT + ',' + LEGACY_FILE_EXT + ',.json,' + MIME)
   return { doc: parseDoc(await f.text()), handle: null }
 }
 
@@ -200,9 +206,9 @@ export function downloadBlob(blob: Blob, filename: string) {
 
 // ---------- Local autosave (browser storage) ----------
 
-const KEY_RECENT = 'shaperstudio:recent'
-const KEY_DOC = (id: string) => 'shaperstudio:doc:' + id
-const KEY_LAST = 'shaperstudio:last'
+const KEY_RECENT = 'formastudio:recent'
+const KEY_DOC = (id: string) => 'formastudio:doc:' + id
+const KEY_LAST = 'formastudio:last'
 
 export interface RecentEntry {
   id: string

@@ -10,7 +10,7 @@ const changelog = readFileSync(new URL('CHANGELOG.md', root), 'utf8')
 const lines = changelog.split('\n')
 const start = lines.findIndex((l) => l.startsWith(`## ${version}`) || l.startsWith(`## [${version}]`))
 if (start === -1) {
-  console.log(`Shaper forma ${version}`)
+  console.log(`Forma Studio ${version}`)
   process.exit(0)
 }
 const end = lines.findIndex((l, i) => i > start && l.startsWith('## '))

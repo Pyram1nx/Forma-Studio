@@ -1,11 +1,11 @@
 // Vectorising the ink mask into real-world millimetre contours.
 //
 // Centerline mode (pen lines): Zhang-Suen thinning -> spur pruning -> skeleton
-// graph walk -> mm polylines -> endpoint stitching (spatial grid) -> RDP -> a
-// gentle smoothing that never moves corners.
+// graph walk -> mm polylines -> endpoint stitching (spatial grid) -> smoothing
+// that irons out pixel stair-steps but pins corners -> RDP.
 //
 // Outline mode (filled shapes): marching squares on the mask -> closed loops
-// (outer boundaries and holes) -> mm -> RDP -> gentle smoothing -> holes grouped
+// (outer boundaries and holes) -> mm -> smoothing -> RDP -> holes grouped
 // under the outer loop that contains them.
 import type { Contour, Pt } from '../../model/types'
 import { signedArea, simplify } from '../../geometry/offset'
@@ -25,10 +25,11 @@ export interface VectorResult {
 const MIN_LINE_MM = 1.5
 /** RDP tolerance (mm). Corners survive; pixel stair-steps are averaged out. */
 const RDP_MM = 0.08
-/** Vertices turning less than this (degrees) may be eased toward their neighbours. */
-const SMOOTH_MAX_TURN_DEG = 20
-/** Largest move the gentle smoothing may make (mm). */
-const SMOOTH_MAX_MOVE_MM = 0.1
+/** Width (scan px) of the Gaussian that irons out pixel stair-steps. */
+const SMOOTH_SIGMA_PX = 2
+/** A path turning more than CORNER_DEG over CORNER_SPAN_PX is a real corner and is not smoothed. */
+const CORNER_DEG = 55
+const CORNER_SPAN_PX = 4
 
 /** Lets the UI repaint between heavy steps. */
 export const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -383,39 +384,77 @@ export function chaikin(pts: Pt[], closed: boolean): Pt[] {
 }
 
 /**
- * Ease nearly straight vertices toward the midpoint of their neighbours. Only
- * vertices turning less than SMOOTH_MAX_TURN_DEG move, and by at most
- * SMOOTH_MAX_MOVE_MM, so real corners (a square's 90 degrees) never round off.
+ * Iron the pixel stair-steps out of a dense traced path (one point per pixel or
+ * marching-squares edge), before RDP. Repeated 1-2-1 averaging approximates a
+ * Gaussian of SMOOTH_SIGMA_PX scan pixels. Real corners — where the path turns
+ * more than CORNER_DEG over CORNER_SPAN_PX — and open ends are held fixed, so a
+ * square stays square and lines keep their length. `pxMm` = mm per scan pixel.
  */
-export function gentleSmooth(pts: Pt[], closed: boolean): Pt[] {
+export function smoothTrace(pts: Pt[], closed: boolean, pxMm: number): Pt[] {
   const n = pts.length
-  if (n < 3) return pts.slice()
-  const cosLimit = Math.cos((SMOOTH_MAX_TURN_DEG * Math.PI) / 180)
-  const out = pts.slice()
-  const from = closed ? 0 : 1
-  const to = closed ? n : n - 1
-  for (let i = from; i < to; i++) {
-    const a = pts[(i - 1 + n) % n]
+  if (n < 5) return pts.slice()
+  const step = polylineLength(pts, closed) / (closed ? n : n - 1)
+  if (!(step > 0)) return pts.slice()
+  const sigma = (SMOOTH_SIGMA_PX * pxMm) / step
+  const iters = Math.min(80, Math.round(2 * sigma * sigma)) // binomial variance: 1/2 per pass
+  if (iters < 1) return pts.slice()
+
+  const at = (i: number) => pts[closed ? (i + n) % n : clampIdx(i, n)]
+  const turn = new Float64Array(n)
+  const k = Math.max(2, Math.round((CORNER_SPAN_PX * pxMm) / step))
+  for (let i = 0; i < n; i++) {
+    if (!closed && (i < k || i >= n - k)) continue
+    const a = at(i - k)
     const b = pts[i]
-    const c = pts[(i + 1) % n]
+    const c = at(i + k)
     const ux = b.x - a.x, uy = b.y - a.y
     const vx = c.x - b.x, vy = c.y - b.y
     const lu = Math.hypot(ux, uy)
     const lv = Math.hypot(vx, vy)
     if (lu < 1e-9 || lv < 1e-9) continue
-    const cosT = (ux * vx + uy * vy) / (lu * lv)
-    if (cosT < cosLimit) continue
-    let dx = (a.x + c.x) / 2 - b.x
-    let dy = (a.y + c.y) / 2 - b.y
-    const d = Math.hypot(dx, dy)
-    if (d > SMOOTH_MAX_MOVE_MM) {
-      dx *= SMOOTH_MAX_MOVE_MM / d
-      dy *= SMOOTH_MAX_MOVE_MM / d
-    }
-    out[i] = { x: b.x + dx, y: b.y + dy }
+    turn[i] = Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy) / (lu * lv))))
   }
+  const fixed = new Uint8Array(n)
+  if (!closed) fixed[0] = fixed[n - 1] = 1
+  const limit = (CORNER_DEG * Math.PI) / 180
+  for (let i = 0; i < n; i++) {
+    if (turn[i] < limit) continue
+    // Only the sharpest point of each corner is pinned.
+    let peak = true
+    for (let d = -k; d <= k && peak; d++) {
+      if (d === 0) continue
+      const j = closed ? (i + d + n) % n : i + d
+      if (j < 0 || j >= n) continue
+      if (turn[j] > turn[i] || (turn[j] === turn[i] && d < 0)) peak = false
+    }
+    if (peak) fixed[i] = 1
+  }
+
+  let xs = Float64Array.from(pts, (p) => p.x)
+  let ys = Float64Array.from(pts, (p) => p.y)
+  let nx = new Float64Array(n)
+  let ny = new Float64Array(n)
+  for (let it = 0; it < iters; it++) {
+    for (let i = 0; i < n; i++) {
+      if (fixed[i]) {
+        nx[i] = xs[i]
+        ny[i] = ys[i]
+        continue
+      }
+      const p = closed ? (i - 1 + n) % n : i - 1
+      const q = closed ? (i + 1) % n : i + 1
+      nx[i] = 0.25 * xs[p] + 0.5 * xs[i] + 0.25 * xs[q]
+      ny[i] = 0.25 * ys[p] + 0.5 * ys[i] + 0.25 * ys[q]
+    }
+    ;[xs, nx] = [nx, xs]
+    ;[ys, ny] = [ny, ys]
+  }
+  const out: Pt[] = new Array(n)
+  for (let i = 0; i < n; i++) out[i] = { x: xs[i], y: ys[i] }
   return out
 }
+
+const clampIdx = (i: number, n: number) => (i < 0 ? 0 : i >= n ? n - 1 : i)
 
 function polylineLength(pts: Pt[], closed: boolean): number {
   let L = 0
@@ -464,20 +503,211 @@ async function centerline(
   }
   // Stitch breaks at junctions and spurs. Tolerance: about 1.5 stroke widths, at least 2 px, at most 0.6 mm.
   const tol = Math.min(0.6, Math.max(1.5 * (swPx / ppm), 2 / Math.min(ppm, ppmY)))
+  // Twigs go before joining too: where a twig meets a stroke three ends touch,
+  // and joining could pair an arc with the twig and leave the stroke open.
+  // Twigs go before joining too: where a twig meets a stroke, joining could
+  // pair the stroke with the twig and leave the stroke itself open.
+  const sw = swPx / ppm
+  const pxX = (q: Pt) => q.x * ppm - 0.5
+  const pxY = (q: Pt) => q.y * ppmY - 0.5
+  // Two ends may be bridged only when a short walk through the ink connects
+  // them: then they belong to one stroke (a straight test fails where the
+  // skeleton wandered onto a blot fused to the stroke).
+  // A straight bridge that is almost all ink also counts: faint pencil can
+  // drop out of the mask for a hair's width without being two strokes.
+  const straightOnInk = (a: Pt, b: Pt) => {
+    const ax = pxX(a)
+    const ay = pxY(a)
+    const bx = pxX(b)
+    const by = pxY(b)
+    const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay) * 2))
+    let hit = 0
+    for (let k = 0; k <= n; k++) {
+      const x = Math.round(ax + ((bx - ax) * k) / n)
+      const y = Math.round(ay + ((by - ay) * k) / n)
+      if (x >= 0 && y >= 0 && x < w && y < h && mask[y * w + x]) hit++
+    }
+    return hit >= 0.85 * (n + 1)
+  }
+  const onInk = (a: Pt, b: Pt) => straightOnInk(a, b) || inkConnected(mask, w, h, pxX(a), pxY(a), pxX(b), pxY(b), 2 * swPx + 4)
+  const bridge = Math.min(4, Math.max(tol, 3 * sw))
+  pieces = dropBranchStubs(pieces, sw, 'junction', { joinTol: tol, reach: bridge, onInk }, tol)
   pieces = joinEndpoints(pieces, tol)
+  // Twigs that were not at a clean junction still hang off a stroke now.
+  pieces = dropBranchStubs(pieces, sw, 'touch', undefined, tol)
+  // Gaps the skeleton leaves inside one stroke (around a blot, a bump of
+  // grain) are wider than the join tolerance: bridge them over the ink.
+  pieces = joinEndpoints(pieces, bridge, onInk)
+  pieces = dropBranchStubs(pieces, sw, 'touch', undefined, tol)
   await yieldToUi()
 
   const groups: Contour[][] = []
+  const pxMm = 2 / (ppm + ppmY)
   let lengthMm = 0
   for (const { pts, closed } of pieces) {
     const L = polylineLength(pts, closed)
     if (L < MIN_LINE_MM) continue
     lengthMm += L
-    const simp = simplify(pts, RDP_MM, closed)
+    const simp = simplify(smoothTrace(pts, closed, pxMm), RDP_MM, closed)
     if (simp.length < 2) continue
-    groups.push([{ pts: gentleSmooth(simp, closed), closed }])
+    groups.push([{ pts: simp, closed }])
   }
   return { groups, lengthMm }
+}
+
+/**
+ * Is (bx, by) reachable from (ax, ay) through ink pixels (8-connected) by a
+ * path at most `slack` px longer than the straight distance? Both points snap
+ * to ink within 2 px. The search stays in a box around the two points, so it
+ * is cheap however large the drawing is.
+ */
+function inkConnected(mask: Uint8Array, w: number, h: number, ax: number, ay: number, bx: number, by: number, slack: number): boolean {
+  const snap = (x: number, y: number): number => {
+    const x0 = Math.round(x)
+    const y0 = Math.round(y)
+    let best = -1
+    let bd = Infinity
+    for (let dy = -2; dy <= 2; dy++)
+      for (let dx = -2; dx <= 2; dx++) {
+        const X = x0 + dx
+        const Y = y0 + dy
+        if (X < 0 || Y < 0 || X >= w || Y >= h || !mask[Y * w + X]) continue
+        const d = dx * dx + dy * dy
+        if (d < bd) {
+          bd = d
+          best = Y * w + X
+        }
+      }
+    return best
+  }
+  const s = snap(ax, ay)
+  const t = snap(bx, by)
+  if (s < 0 || t < 0) return false
+  if (s === t) return true
+  const limit = Math.hypot(bx - ax, by - ay) + slack
+  const m = Math.ceil(limit)
+  const x0 = Math.max(0, Math.floor(Math.min(ax, bx)) - m)
+  const y0 = Math.max(0, Math.floor(Math.min(ay, by)) - m)
+  const x1 = Math.min(w - 1, Math.ceil(Math.max(ax, bx)) + m)
+  const y1 = Math.min(h - 1, Math.ceil(Math.max(ay, by)) + m)
+  const bw = x1 - x0 + 1
+  const dist = new Float32Array(bw * (y1 - y0 + 1)).fill(Infinity)
+  const queue: number[] = [s]
+  dist[(Math.floor(s / w) - y0) * bw + (s % w) - x0] = 0
+  // Breadth-first by steps; diagonal steps count as one, so the step limit is generous enough.
+  for (let qi = 0; qi < queue.length; qi++) {
+    const p = queue[qi]
+    const px = p % w
+    const py = (p - px) / w
+    const d = dist[(py - y0) * bw + px - x0]
+    if (p === t) return true
+    if (d >= limit) continue
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue
+        const X = px + dx
+        const Y = py + dy
+        if (X < x0 || Y < y0 || X > x1 || Y > y1) continue
+        const q = Y * w + X
+        if (!mask[q]) continue
+        const k = (Y - y0) * bw + X - x0
+        if (dist[k] !== Infinity) continue
+        dist[k] = d + 1
+        queue.push(q)
+      }
+  }
+  return false
+}
+
+/**
+ * Drop short side branches: an open piece shorter than about 3 stroke widths
+ * (at least 2.5 mm) that hangs off a stroke by one end, its other end free, is
+ * a bump on that stroke (grain, a dust speck, a blot of ink) that the skeleton
+ * turned into a twig — not something that was drawn. Short pieces standing on
+ * their own are left alone.
+ *
+ * `junction` (raw skeleton pieces, before joining): the twig's base is a
+ * junction — at least two other pieces end there, or one does and another
+ * stroke's loose end (no partner within the join tolerance) waits within
+ * `reach` along the ink, where the skeleton left a gap. A piece meeting just
+ * one other end with nothing loose nearby is a link in a chain of fragments:
+ * the last link of an open stroke is that stroke's real tip, so it stays.
+ * `touch` (after joining): the twig's base touches another piece anywhere.
+ * Tiny closed loops that touch a stroke go too: the skeleton circling a
+ * pinhole in the ink.
+ */
+export function dropBranchStubs(
+  pieces: Piece[],
+  strokeMm: number,
+  mode: 'junction' | 'touch' = 'touch',
+  j?: { joinTol: number; reach: number; onInk: (a: Pt, b: Pt) => boolean },
+  tipTol = 0.3,
+): Piece[] {
+  const stubMax = Math.max(2.5, 3 * strokeMm)
+  const touch = Math.max(0.3, 1.2 * strokeMm)
+  const len = pieces.map((p) => polylineLength(p.pts, p.closed))
+  const near = (a: Pt, b: Pt) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2 <= t2
+  /** Does q come within `r` of any other piece, anywhere along it? */
+  const touchesAny = (q: Pt, self: number, r: number) => {
+    const t2 = r * r
+    for (let j = 0; j < pieces.length; j++) {
+      if (j === self) continue
+      const pts = pieces[j].pts
+      const segs = pieces[j].closed ? pts.length : pts.length - 1
+      for (let k = 0; k < Math.max(1, segs); k++) {
+        const a = pts[k]
+        const b = pts[(k + 1) % pts.length]
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const l2 = dx * dx + dy * dy
+        const t = l2 ? Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / l2)) : 0
+        const ex = a.x + t * dx - q.x
+        const ey = a.y + t * dy - q.y
+        if (ex * ex + ey * ey <= t2) return true
+      }
+    }
+    return false
+  }
+  /** How many other pieces have an end at q. */
+  const t2 = touch * touch
+  const endsAt = (q: Pt, self: number) => {
+    let n = 0
+    for (let j = 0; j < pieces.length; j++) {
+      if (j === self || pieces[j].closed) continue
+      const pts = pieces[j].pts
+      if (near(q, pts[0]) || near(q, pts[pts.length - 1])) n++
+    }
+    return n
+  }
+  // Ends with no partner end within the join tolerance (junction mode only).
+  const loose: Pt[] = []
+  if (j) {
+    const ends: { p: Pt; i: number }[] = []
+    pieces.forEach((p, i) => {
+      if (!p.closed) ends.push({ p: p.pts[0], i }, { p: p.pts[p.pts.length - 1], i })
+    })
+    const jt2 = j.joinTol * j.joinTol
+    for (const e of ends)
+      if (!ends.some((f) => f !== e && (f.p.x - e.p.x) ** 2 + (f.p.y - e.p.y) ** 2 <= jt2)) loose.push(e.p)
+  }
+  const looseNear = (base: Pt, tip: Pt) =>
+    !!j && loose.some((q) => q !== tip && Math.hypot(q.x - base.x, q.y - base.y) <= j.reach && j.onInk(base, q))
+  // The tip is free when nothing is within the join tolerance of it: a twig
+  // sticks out of its stroke, while a short arc's ends meet other ends.
+  const hangs = (base: Pt, tip: Pt, i: number) => {
+    if (touchesAny(tip, i, tipTol)) return false
+    if (mode === 'touch') return touchesAny(base, i, touch)
+    const n = endsAt(base, i)
+    return n >= 2 || (n === 1 && looseNear(base, tip))
+  }
+  return pieces.filter((p, i) => {
+    // A tiny loop fused to a stroke is the skeleton circling a pinhole in the ink.
+    if (p.closed) return !(len[i] < 2 * stubMax && p.pts.some((q) => touchesAny(q, i, tipTol)))
+    if (len[i] >= stubMax) return true
+    const a = p.pts[0]
+    const b = p.pts[p.pts.length - 1]
+    return !(hangs(a, b, i) || hangs(b, a, i))
+  })
 }
 
 /**
@@ -486,7 +716,7 @@ async function centerline(
  * distance and joined greedily with chain bookkeeping: O(P log P) for P endpoints
  * instead of re-scanning every pair after each join.
  */
-export function joinEndpoints(input: Piece[], tol: number): Piece[] {
+export function joinEndpoints(input: Piece[], tol: number, canJoin?: (a: Pt, b: Pt) => boolean): Piece[] {
   const done: Piece[] = []
   // Chains: open pieces being joined. Endpoint ids: 2k = head of chain k, 2k+1 = tail.
   interface Chain {
@@ -540,7 +770,7 @@ export function joinEndpoints(input: Piece[], tol: number): Piece[] {
         for (const b of list) {
           if (b <= a) continue
           const d = Math.hypot(ep[a].x - ep[b].x, ep[a].y - ep[b].y)
-          if (d <= tol) pairs.push({ d, a, b })
+          if (d <= tol && (!canJoin || canJoin(ep[a], ep[b]))) pairs.push({ d, a, b })
         }
       }
     }
@@ -810,13 +1040,13 @@ export async function vectorise(
   )
   await yieldToUi()
   const smooth: Pt[][] = []
+  const pxMm = 2 / (ppm + ppmY)
   let perimeterMm = 0
   for (const l of loopsMm) {
-    const s = simplify(l, RDP_MM, true)
+    const s = simplify(smoothTrace(l, true, pxMm), RDP_MM, true)
     if (s.length < 3) continue
-    const c = gentleSmooth(s, true)
-    perimeterMm += polylineLength(c, true)
-    smooth.push(c)
+    perimeterMm += polylineLength(s, true)
+    smooth.push(s)
   }
   const groups = groupLoops(smooth)
   // A thin stroke has perimeter ~ 2 x its length, so width ~ area / (perimeter / 2).

@@ -7,11 +7,21 @@ import { worldD } from '../geomCache'
 import { depthLevel, REVIEW_SHADOW_DY, type CutGeometry } from './canvasMath'
 
 export const DesignShape = memo(function DesignShape({ s, selected, hovered }: { s: Shape; selected: boolean; hovered: boolean }) {
-  const isGuide = s.cut.type === 'guide'
+  if (s.locked) {
+    // Studio's Reference path: an amber outline with no fill, plus a soft halo when hovered or selected.
+    const d = worldD(s)
+    const cls = 'cv-ref' + (selected ? ' is-selected' : '') + (hovered ? ' is-hover' : '')
+    return (
+      <g className={cls}>
+        <path d={d} className="cv-ref__halo" fill="none" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        <path d={d} className="cv-ref__path" fill="none" vectorEffect="non-scaling-stroke" />
+      </g>
+    )
+  }
   const closed = s.contours.some((c) => c.closed)
   // Stacked 3D slice layers would fill to an opaque block, so draw them as outlines.
   const outlineOnly = !closed || s.meta?.source === '3d'
-  const cls = 'cv-shape' + (selected ? ' is-selected' : '') + (hovered ? ' is-hover' : '') + (isGuide ? ' is-guide' : '')
+  const cls = 'cv-shape' + (selected ? ' is-selected' : '') + (hovered ? ' is-hover' : '')
   return <path d={worldD(s)} fillRule="evenodd" className={cls} fill={outlineOnly ? 'none' : undefined} vectorEffect="non-scaling-stroke" />
 })
 
@@ -43,10 +53,10 @@ export const PlanShape = memo(function PlanShape({
   // Style from the effective type (what the geometry was built for), so a stored
   // type that the shape can't use (e.g. an inside cut on an open path) renders consistently.
   const t = geom?.type ?? s.cut.type
-  const isGuide = t === 'guide'
   const pocket = t === 'pocket'
-  const cls = 'pl-shape' + (selected ? ' is-selected' : '') + (hovered ? ' is-hover' : '') + (pocket ? ' is-pocket' : '') + (isGuide ? ' is-guide' : '')
-  const band = !isGuide && showCut && geom
+  const cls = 'pl-shape' + (selected ? ' is-selected' : '') + (hovered ? ' is-hover' : '') + (pocket ? ' is-pocket' : '') + (t === 'guide' ? ' is-guide' : '')
+  // A guide has no cut path, so it gets no tool band; everything else draws like any other shape.
+  const band = t !== 'guide' && showCut && geom
   return (
     <g className={cls}>
       {band && pocket && geom.sweptD && (

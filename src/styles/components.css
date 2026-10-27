@@ -430,63 +430,16 @@
   accent-color: var(--blue-050);
 }
 
-/* Temporary test loading screen: full-bleed overlay with the domino mark. */
-.loading-screen {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--white);
+/* Compact switch for sub-options (40x20). */
+.ss-switch--sm {
+  width: 40px;
+  height: 20px;
+  border-radius: 10px;
 }
-.loading-domino svg {
-  width: 120px;
-  height: 24px;
+.ss-switch--sm::after {
+  width: 16px;
+  height: 16px;
 }
-/* Columns flip in sequence, like dominos falling left to right. */
-.loading-domino path {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: domino-fall 1.3s ease-in-out infinite;
-}
-#oval13,
-#oval14 {
-  animation-delay: 0.78s;
-}
-#oval11,
-#oval12 {
-  animation-delay: 0.65s;
-}
-#oval09,
-#oval10 {
-  animation-delay: 0.52s;
-}
-#oval07,
-#oval08 {
-  animation-delay: 0.39s;
-}
-#oval05,
-#oval06 {
-  animation-delay: 0.26s;
-}
-#oval03,
-#oval04 {
-  animation-delay: 0.13s;
-}
-#oval01,
-#oval02 {
-  animation-delay: 0s;
-}
-@keyframes domino-fall {
-  0%,
-  70%,
-  100% {
-    transform: scaleY(1);
-    opacity: 1;
-  }
-  35% {
-    transform: scaleY(0.3);
-    opacity: 0.35;
-  }
+.ss-switch--sm.is-on::after {
+  left: 22px;
 }

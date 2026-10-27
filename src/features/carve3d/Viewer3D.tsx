@@ -32,6 +32,9 @@ export interface AnimState {
 
 /** Which parts of the preview are visible. */
 export interface CarveView {
+  /** The finished part: every side's carve applied to the block. */
+  finished: boolean
+  /** The selected stage's carve alone, on uncut stock. */
   carved: boolean
   model: boolean
   layers: boolean
@@ -43,11 +46,15 @@ export interface Viewer3DProps {
   positions: Float32Array
   /** Model size in mm (Z up, min Z = 0). */
   modelSize: Vec3
-  /** Stock box: x/y footprint incl. margin, z = stock thickness (top at modelSize.z). */
+  /** Stock box: x/y footprint incl. margin, z = stock thickness (top at `stockTop`). */
   stockSize: Vec3
+  /** z of the stock top, mm. Default: the model top. */
+  stockTop?: number
   outlines: LayerOutline[]
   /** Finished-piece height map. null until a plan has been carved. */
   surface: CarvedSurface | null
+  /** The whole job's finished part, in this view's frame. null until it has been built. */
+  part?: { positions: Float32Array; indices: Uint32Array } | null
   show: CarveView
   /** Plan the animation cuts (with plan.bit). */
   plan: CarvePlan | null
@@ -64,6 +71,8 @@ interface CarveMaterials {
   /** Top surface and stock edge; clips away material cut down to the floor. */
   woodCut: THREE.MeshStandardMaterial
   woodBottom: THREE.MeshStandardMaterial
+  /** The finished part: no floor clip, the mesh is the whole solid. */
+  woodPart: THREE.MeshStandardMaterial
   cutMat: THREE.LineBasicMaterial
   modelMat: THREE.MeshStandardMaterial
   dimLine: THREE.LineBasicMaterial
@@ -76,6 +85,7 @@ interface ViewState {
   controls: OrbitControls
   model: THREE.Group
   carved: THREE.Group
+  part: THREE.Group
   anim: THREE.Group
   dims: THREE.Group
   stock: THREE.Group
@@ -168,7 +178,7 @@ function makeWoodTexture(): THREE.CanvasTexture {
   return tex
 }
 
-export default function Viewer3D({ positions, modelSize, stockSize, outlines, surface, show, plan, anim, onAnimProgress, onAnimComplete, dimLabels }: Viewer3DProps) {
+export default function Viewer3D({ positions, modelSize, stockSize, stockTop, outlines, surface, part, show, plan, anim, onAnimProgress, onAnimComplete, dimLabels }: Viewer3DProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<ViewState | null>(null)
   const sizeRef = useRef(modelSize)
@@ -212,11 +222,12 @@ export default function Viewer3D({ positions, modelSize, stockSize, outlines, su
 
     const model = new THREE.Group()
     const carved = new THREE.Group()
+    const partGroup = new THREE.Group()
     const animGroup = new THREE.Group()
     const dims = new THREE.Group()
     const stock = new THREE.Group()
     const layers = new THREE.Group()
-    scene.add(model, carved, animGroup, stock, layers, dims)
+    scene.add(model, carved, partGroup, animGroup, stock, layers, dims)
 
     // Polygon offset pushes the solid back so the cut lines on its edges win the depth test.
     const solidOffset = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }
@@ -225,6 +236,7 @@ export default function Viewer3D({ positions, modelSize, stockSize, outlines, su
       woodTex,
       woodCut: new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.75, ...solidOffset }),
       woodBottom: new THREE.MeshStandardMaterial({ map: woodTex, color: 0xe0c8a8, roughness: 0.85, ...solidOffset }),
+      woodPart: new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.75 }),
       cutMat: new THREE.LineBasicMaterial({ color: hexNum(COLORS.cutLine) }),
       modelMat: new THREE.MeshStandardMaterial({ color: COLORS.meshGrey, roughness: 0.6, metalness: 0, side: THREE.DoubleSide }),
       // Guides draw over everything: they annotate the piece and must never hide behind it.
@@ -277,7 +289,7 @@ export default function Viewer3D({ positions, modelSize, stockSize, outlines, su
       updateDims()
       renderer.render(scene, camera)
     })
-    viewRef.current = { renderer, camera, controls, model, carved, anim: animGroup, dims, stock, layers, grid, mats }
+    viewRef.current = { renderer, camera, controls, model, carved, part: partGroup, anim: animGroup, dims, stock, layers, grid, mats }
 
     return () => {
       viewRef.current = null
@@ -287,6 +299,7 @@ export default function Viewer3D({ positions, modelSize, stockSize, outlines, su
       disposeGeometry(model)
       disposeGeometry(dims)
       disposeGeometry(carved) // the animation disposes itself in its own effect
+      disposeGeometry(partGroup)
       disposeChildren(stock)
       disposeChildren(layers)
       for (const m of Object.values(mats)) m.dispose()
@@ -346,6 +359,32 @@ export default function Viewer3D({ positions, modelSize, stockSize, outlines, su
     }
   }, [surface])
 
+  // Finished part: indexed mesh, smooth normals, wood grain projected along each vertex's
+  // dominant normal axis (the part has no height-map UVs).
+  useEffect(() => {
+    const v = viewRef.current
+    if (!v) return
+    disposeGeometry(v.part)
+    if (!part || !part.indices.length) return
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(part.positions, 3))
+    geo.setIndex(new THREE.BufferAttribute(part.indices, 1))
+    geo.computeVertexNormals()
+    const p = part.positions
+    const nrm = geo.getAttribute('normal').array as Float32Array
+    const uv = new Float32Array((p.length / 3) * 2)
+    for (let i = 0, t = 0; i < p.length; i += 3, t += 2) {
+      const ax = Math.abs(nrm[i])
+      const ay = Math.abs(nrm[i + 1])
+      const az = Math.abs(nrm[i + 2])
+      if (az >= ax && az >= ay) uv.set([p[i], p[i + 1]], t)
+      else if (ay >= ax) uv.set([p[i], p[i + 2]], t)
+      else uv.set([p[i + 1], p[i + 2]], t)
+    }
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+    v.part.add(new THREE.Mesh(geo, v.mats.woodPart))
+  }, [part])
+
   // Animation: a fresh run on uncut stock whenever it is switched on, restarted, or the plan
   // changes. It shares the wood materials with the finished surface (same stock, same floor).
   const animOn = anim.on
@@ -353,7 +392,7 @@ export default function Viewer3D({ positions, modelSize, stockSize, outlines, su
   useEffect(() => {
     const v = viewRef.current
     if (!v || !animOn || !plan) return
-    const hf = createHeightfield(worldRect(plan.stock), plan.modelH, plan.modelH - Math.max(plan.stockThickness, plan.carveDepth), 160_000)
+    const hf = createHeightfield(worldRect(plan.stock), plan.modelH, plan.modelH - Math.max(plan.stockThickness, plan.carveDepth, plan.throughDepth), 160_000)
     v.mats.woodCut.clippingPlanes = [floorClip(hf)]
     const a = new CarveAnimation({ parent: v.anim, plan, bit: plan.bit, hf, solidMaterials: [v.mats.woodCut, v.mats.woodBottom] })
     a.onProgress = (f) => progressRef.current?.(f)
@@ -377,32 +416,37 @@ export default function Viewer3D({ positions, modelSize, stockSize, outlines, su
 
   // Visibility only: no geometry is rebuilt here. The carved solid replaces the stock box, and the
   // model ghosts over it when both are shown.
+  const showFinished = show.finished
   const showCarved = show.carved
   const showModel = show.model
   const showLayers = show.layers
   const showDims = show.dims
   const hasSurface = !!surface
+  const hasPart = !!part && part.indices.length > 0
   useEffect(() => {
     const v = viewRef.current
     if (!v) return
-    const carvedOn = showCarved && hasSurface && !animOn
-    const modelOn = animOn ? showModel : showModel || !hasSurface || !showCarved
-    const ghost = (carvedOn || animOn) && modelOn
+    const partOn = showFinished && hasPart && !animOn
+    const carvedOn = showCarved && hasSurface && !animOn && !partOn
+    const solidOn = partOn || carvedOn
+    const modelOn = animOn ? showModel : showModel || !solidOn
+    const ghost = (solidOn || animOn) && modelOn
+    v.part.visible = partOn
     v.carved.visible = carvedOn
     v.model.visible = modelOn
     v.layers.visible = showLayers
     v.dims.visible = showDims
     v.anim.visible = animOn
-    v.stock.visible = !carvedOn && !animOn
+    v.stock.visible = !solidOn && !animOn
     const m = v.mats.modelMat
     m.transparent = ghost
     m.opacity = ghost ? 0.35 : 1
     m.depthWrite = !ghost
-  }, [showCarved, showModel, showLayers, showDims, hasSurface, animOn])
+  }, [showFinished, showCarved, showModel, showLayers, showDims, hasSurface, hasPart, animOn])
 
-  // Stock box: translucent, from (H − T) to H.
+  // Stock box: translucent, from (top − T) to top.
   const { x: sx, y: sy, z: sz } = stockSize
-  const modelZ = modelSize.z
+  const modelZ = stockTop ?? modelSize.z
   useEffect(() => {
     const v = viewRef.current
     if (!v) return

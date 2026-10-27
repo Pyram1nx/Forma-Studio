@@ -8,6 +8,7 @@ import { boolean, offsetContours, type JoinStyle } from '../geometry/offset'
 import { uid } from '../model/ids'
 import { buildFromParams, isParametric } from './shapeFactory'
 import { wbbox, world } from './geomCache'
+import { boxJointPartsOf, scaleBoxJoint, syncBoxJointGuides } from './boxJointGuides'
 
 export type Anchor = `${'t' | 'm' | 'b'}${'l' | 'c' | 'r'}`
 
@@ -62,7 +63,11 @@ export function resizeSelection(ids: string[], w: number | null, h: number | nul
   const fx = w != null && bw > 1e-9 ? w / bw : 1
   const fy = h != null && bh > 1e-9 ? h / bh : 1
   const a = anchorPoint(b, anchor)
+  // Box joints take the scale into their params (never stretched); their guides are rebuilt after.
+  const joints = boxJointPartsOf(st.doc, target)
   st.updateShapes(target, (s0) => {
+    if (joints.outlines.has(s0.id)) return scaleBoxJoint(s0, fx, fy, a, st.doc.units)
+    if (joints.guides.has(s0.id)) return s0
     const s = s0.rotation % 360 !== 0 ? bake(s0) : s0
     return normalizeParametric({
       ...s,
@@ -72,6 +77,7 @@ export function resizeSelection(ids: string[], w: number | null, h: number | nul
       sy: s.sy * fy,
     })
   })
+  for (const id of joints.outlines) syncBoxJointGuides(id)
 }
 
 /** Set absolute rotation (single) or rotate by delta around the anchor (multi). */

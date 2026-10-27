@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:shaper="http://www.shapertools.com/namespaces/shaper" width="45.65574198131314mm" height="28.379012765886625mm" viewBox="-17.978436843151478 -10.985877675435656 45.65574198131314 28.379012765886625"> <g id="sg-0044b019-0f26-4e90-bd79-aac952e250a0"  transform="matrix(1 0 0 1 -12.898436843151476 -5.905877675435657)">
+  <path id="basePath-sg-0044b019-0f26-4e90-bd79-aac952e250a0-pg-3ca2baf7-b561-444c-a7f9-eb6a6167aea6"  stroke-width="0.1" fill="#000000" transform="matrix(0.39999999999999997 0 0 0.39999999999999997 0 -7.105427719442484e-16)" fill-rule="nonzero" shaper:cutType="outside" shaper:cutDepth="0.250 in" shaper:cutOffset="0in" shaper:toolDia="0.125in" d = "M 12.7 0 A 12.7 12.7 0 0 1 0 12.7 A 12.7 12.7 0 0 1 -12.7 0 A 12.7 12.7 0 0 1 0 -12.7 A 12.7 12.7 0 0 1 12.7 0 Z" />
+</g>
+<g id="sg-c1e8a730-e67e-4e75-bea1-057f57d1c4bb"  transform="matrix(1 0 0 1 14.977305784904827 5.905877675435658)">
+  <path id="basePath-sg-c1e8a730-e67e-4e75-bea1-057f57d1c4bb-pg-68427c37-e613-4b59-9255-7d76c4f8eab1"  stroke="#000000" stroke-width="0.1" fill="#FFFFFF" transform="matrix(0.4999999999999999 0 0 0.7499999999999999 0 0)" fill-rule="nonzero" shaper:cutType="inside" shaper:cutDepth="0.375 in" shaper:cutOffset="0in" shaper:toolDia="0.125in" d = "M -12.7 -12.7 L 12.7 -12.7 L 12.7 12.7 L -12.7 12.7 Z" />
+</g>
+<g id="sg-e769fd55-27d1-4bb0-a90c-49fffb694524"  transform="matrix(1 0 0 1 14.977305784904827 5.905877675435658)">
+  <path id="basePath-sg-e769fd55-27d1-4bb0-a90c-49fffb694524-pg-acc6b3d6-fe81-48c3-b096-94c8a46d7647"  fill="#7F7F7F" transform="matrix(0.9999999490753412 0 0 0.9999999490753412 0 1.2127419382415283)" fill-rule="nonzero" shaper:cutType="pocket" shaper:cutDepth="0.125 in" shaper:cutOffset="0in" shaper:toolDia="0.125in" d = "M 7.464873 10.274516 L -7.464873 10.274516 L -12.078418 -3.9245157 L -0 -12.7 L 12.078418 -3.9245157 Z" />
+</g>
+<g id="sg-e085a515-2ffe-4a27-add5-0c54f8b73a34"  transform="matrix(1 0 0 1 14.977305784904827 5.905877675435658)">
+  <path id="basePath-sg-e085a515-2ffe-4a27-add5-0c54f8b73a34-pg-geometry"  stroke="#7F7F7F" fill="none" stroke-width="0.1" transform="matrix(25.399998 0 0 25.39999969929672 -12.699999 -10.998522449791661)" fill-rule="nonzero" shaper:cutType="online" shaper:cutDepth="0.063 in" shaper:cutOffset="0in" shaper:toolDia="0.125in" d = "M 0 0.8660254 L 1 0.8660254 L 0.5 0 L 0 0.8660254 Z" />
+</g>
+<g id="sg-df154ad2-685f-47aa-83bc-165760fc1bc1"  transform="matrix(1 0 0 1 14.977305784904827 5.905877675435658)">
+  <path id="basePath-sg-df154ad2-685f-47aa-83bc-165760fc1bc1-pg-0ac4ea8f-f443-4763-85eb-0819d1362106"  fill="#0068FF" stroke="#0068FF" stroke-width="0.1" transform="matrix(0.9999999490753412 0 0 0.9999999490753412 0 -8.881784197001252e-16)" fill-rule="nonzero" shaper:cutType="guide" shaper:cutOffset="0in" shaper:toolDia="0.125in" d = "M 12.7 0 A 12.7 6.35 0 0 1 0 6.35 A 12.7 6.35 0 0 1 -12.7 0 A 12.7 6.35 0 0 1 0 -6.35 A 12.7 6.35 0 0 1 12.7 0 Z" />
+</g> </svg>

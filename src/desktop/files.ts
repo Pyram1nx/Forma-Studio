@@ -15,7 +15,7 @@ const basename = (p: string) => p.split(/[\\/]/).pop() || p
 export async function desktopPickSave(suggestedName: string, ext: string): Promise<DesktopFileHandle> {
   const path = await save({
     defaultPath: suggestedName,
-    filters: [{ name: 'Shaper forma design', extensions: [ext.replace(/^\./, '')] }],
+    filters: [{ name: 'Forma Studio design', extensions: [ext.replace(/^\./, '')] }],
   })
   if (!path) throw new DOMException('Save cancelled', 'AbortError')
   return { kind: 'desktop', name: basename(path), path }
@@ -26,7 +26,7 @@ export async function desktopPickOpen(exts: string[]): Promise<DesktopFileHandle
   const path = await open({
     multiple: false,
     directory: false,
-    filters: [{ name: 'Shaper forma design', extensions: exts }],
+    filters: [{ name: 'Forma Studio design', extensions: exts }],
   })
   if (!path) throw new DOMException('Open cancelled', 'AbortError')
   return { kind: 'desktop', name: basename(path), path }

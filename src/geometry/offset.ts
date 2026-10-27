@@ -117,6 +117,25 @@ export function normalize(contours: Contour[], fill: 'evenodd' | 'nonzero' = 'ev
   return out
 }
 
+/**
+ * Merge overlapping closed contours with non-zero fill, the rule fonts are drawn with: glyphs
+ * built from overlapping parts become one clean outline, and opposite-winding contours stay holes.
+ * Open contours are returned untouched.
+ */
+export function unionNonZero(contours: Contour[]): Contour[] {
+  try {
+    const closed = clean(contours).filter((c) => c.closed)
+    const open = contours.filter((c) => !c.closed)
+    const c = new ClipperLib.Clipper()
+    c.AddPaths(closed.map((k) => toInt(k.pts)), ClipperLib.PolyType.ptSubject, true)
+    const out: IntPath[] = []
+    c.Execute(ClipperLib.ClipType.ctUnion, out, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero)
+    return [...toContours(out), ...open]
+  } catch {
+    return contours
+  }
+}
+
 export type BoolOp = 'union' | 'difference' | 'intersection' | 'xor'
 
 const CLIP = {

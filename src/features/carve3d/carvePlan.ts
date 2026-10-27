@@ -50,10 +50,42 @@ export interface CarveSettings {
   units: Units
   /** Depth the plan starts at (a previous stage already carved above it), mm. Default 0. */
   startDepth?: number
+  /**
+   * Radial stock to leave on every wall, mm (a roughing pass leaves it for the finishing bit).
+   * The bit centre keeps this much further from the material. Default 0.
+   */
+  leave?: number
+  /**
+   * Extra material the bit must not touch, besides the model: regions (design space) present
+   * from depth `from` to `to`. The multi-sided planner keeps its bridges here so no setup cuts
+   * them.
+   */
+  keepOut?: KeepOut[]
+  /** Outline for the through-cut. Default: the union of the layer sections. */
+  throughOutline?: Contour[]
+  /** Depth of the through-cut, mm. Default: the carve depth. */
+  throughDepth?: number
   /** Prepended to every shape name, e.g. "Top · Rough" for a multi-sided plan. */
   labelPrefix?: string
+  /**
+   * This plan is one face of a multi-sided (flip) job: undercut warnings are meaningless (the
+   * flip reaches them) and their scan is skipped. Default false.
+   */
+  multiSide?: boolean
+  /**
+   * false = the plan is outline-only (no pocket regions): the cutting animation must not
+   * ring-clear the layer, just follow the outlines. Default true.
+   */
+  rings?: boolean
   /** Identifies the inputs this plan was made from. The dialog compares it with its current key. */
   key?: string
+}
+
+export interface KeepOut {
+  regions: Contour[]
+  /** Depth band the regions occupy, mm from the plan top. */
+  from: number
+  to: number
 }
 
 export interface CarveLayer {
@@ -81,12 +113,17 @@ export interface CarvePlan {
   shapes: Omit<Shape, 'id'>[]
   warnings: string[]
   info: Record<string, number | string>
-  /** Model height, mm (z of the model top). */
+  /**
+   * z of the plan top, mm: the face depths are measured from. The model top for a single-sided
+   * plan; the stock face of a multi-sided setup (above the model when the block has margin there).
+   */
   modelH: number
   /** Stock thickness as set, mm (not capped at the model height). */
   stockThickness: number
   /** Depth actually carved, mm (min of model height and stock thickness). */
   carveDepth: number
+  /** Depth of the through-cut, mm (the carve depth unless set otherwise). */
+  throughDepth: number
   /** Stock block footprint, design space. */
   stock: Contour[]
   /** Union of all kept contours: the model's footprint, design space. */
@@ -95,6 +132,8 @@ export interface CarvePlan {
   throughCut: boolean
   /** Through-cut split: pieces cut all the way, bridges cut to `bridgeDepth`. Null without a through-cut. */
   tabs: { through: Contour[]; bridges: Contour[]; bridgeDepth: number } | null
+  /** false = outline-only plan: the animation follows the outlines without ring-clearing. */
+  rings: boolean
 }
 
 /** Thrown when a run is cancelled through the AbortSignal. */
@@ -194,14 +233,18 @@ const absArea = (cs: Contour[]) => Math.abs(cs.reduce((a, c) => a + (c.closed ? 
 /**
  * Split closed outline contours at `count` bridge positions of length `width`. Returns the pieces
  * that are cut through and the bridge pieces (cut only to the bridge depth). With no tabs the
- * outline comes back unchanged.
+ * outline comes back unchanged. Holes (loops wound against the outer boundary) are cut through
+ * whole: what is inside a hole is waste, and a bridge there would only hold the plug in place.
  */
 export function splitTabs(contours: Contour[], count: number, width: number): { through: Contour[]; tabs: Contour[] } {
   if (count <= 0 || width <= 0) return { through: contours, tabs: [] }
   const through: Contour[] = []
   const tabs: Contour[] = []
-  for (const c of contours) {
-    if (!c.closed || c.pts.length < 3) {
+  const areas = contours.map((c) => (c.closed && c.pts.length >= 3 ? signedArea(c.pts) : 0))
+  const outerSign = Math.sign(areas.reduce((m, a) => (Math.abs(a) > Math.abs(m) ? a : m), 0))
+  for (let ci = 0; ci < contours.length; ci++) {
+    const c = contours[ci]
+    if (!c.closed || c.pts.length < 3 || Math.sign(areas[ci]) !== outerSign) {
       through.push(c)
       continue
     }
@@ -262,8 +305,9 @@ export async function buildCarvePlan(
   if (bit.carvable === false || bit.type === 'undercut') throw new Error(bit.carveReason ?? 'This bit cannot carve top-down.')
   const s = st.stepDown
   const T = carveDepth(modelH, st.stockThickness)
-  // Stages after the first start below material a previous stage already carved away.
-  const d0 = Math.min(Math.max(0, st.startDepth ?? 0), Math.max(0, T - 1e-6))
+  // Stages after the first start below material a previous stage already carved away. A start
+  // at or below the carve depth leaves no layers (an outline-only cut-out stage).
+  const d0 = Math.max(0, st.startDepth ?? 0)
   const N = layerCount(T, s, d0)
   const depths = layerDepths(T, s, d0)
   const R = bit.diameter / 2
@@ -302,15 +346,21 @@ export async function buildCarvePlan(
   }
 
   const n = samplesPerLayer(bit, s, ctx?.sampleCap)
-  const grid = depthGrid(T, s, n)
+  const keepOut = (st.keepOut ?? []).filter((k) => k.regions.length && k.to > k.from && k.from < T)
+  // Keep-out bands thinner than a layer must still be sampled: add their edges to the grid.
+  const grid = keepOut.length
+    ? [...new Set([...depthGrid(T, s, n), ...keepOut.flatMap((k) => [Math.max(0, k.from), Math.min(T, k.to)])])].sort((a, b) => a - b)
+    : depthGrid(T, s, n)
+  const leave = Math.max(0, st.leave ?? 0)
 
   const forbiddenAt = (d: number): Contour[] => {
     let F: Contour[] = []
     for (const delta of grid) {
       if (delta > d + 1e-9) break
-      const set = keepAt(delta).contours
+      let set = keepAt(delta).contours
+      for (const k of keepOut) if (delta >= k.from - 1e-9 && delta <= k.to + 1e-9) set = set.length ? boolean('union', set, k.regions) : k.regions
       if (!set.length) continue
-      const r = reachRadius(bit, Math.max(0, d - delta))
+      const r = reachRadius(bit, Math.max(0, d - delta)) + leave
       const grown = r > 1e-9 ? offsetContours(set, r) : set
       F = F.length ? boolean('union', F, grown) : grown
     }
@@ -320,6 +370,8 @@ export async function buildCarvePlan(
   const warnings: string[] = []
   let undercutAt: number | null = null
   let scanned = 0 // grid index of the shallow end of the next undercut check
+  // In a multi-sided job the flip itself reaches undercuts, so the single-face check is off.
+  const checkUndercuts = !st.multiSide
   const cut = (type: 'guide' | 'online' | 'pocket' | 'outside', depth: number) => ({ type, depth, offset: 0, bitDia: bit.diameter })
   const note = (d: number) => `tip depth ${fmt(d)} (${bit.name})`
 
@@ -342,7 +394,7 @@ export async function buildCarvePlan(
     const keep = keepRes.contours
 
     // Undercut check: S(shallow) must sit inside S(deep) (0.05 mm tolerance).
-    while (undercutAt === null && scanned + 1 < grid.length && grid[scanned + 1] <= d + 1e-9) {
+    while (checkUndercuts && undercutAt === null && scanned + 1 < grid.length && grid[scanned + 1] <= d + 1e-9) {
       const a = grid[scanned]
       const b = grid[scanned + 1]
       const Sa = keepAt(a).contours
@@ -402,22 +454,24 @@ export async function buildCarvePlan(
   }
 
   if (undercutAt !== null) warnings.push(`Model has undercuts at depth ${fmt(undercutAt)} — they can't be carved from the top`)
-  if (bit.type === 'vbit' && T > coneHeight(bit)) {
+  if (bit.type === 'vbit' && !st.multiSide && T > coneHeight(bit)) {
     warnings.push(`Below ${fmt(coneHeight(bit))} this V-bit is at full Ø and cuts a flat-bottomed groove`)
   }
 
   const throughShapes: Omit<Shape, 'id'>[] = []
+  if (st.throughOutline) outline = st.throughOutline
   const throughCut = st.throughCut && outline.length > 0
+  const throughDepth = st.throughDepth ?? T
   let tabPlan: CarvePlan['tabs'] = null
   if (throughCut) {
     const tabs = st.tabs ?? { count: 0, width: 0, height: 0 }
     const { through, tabs: bridges } = splitTabs(outline, tabs.count, tabs.width)
-    const bridgeDepth = Math.max(0, T - tabs.height)
+    const bridgeDepth = Math.max(0, throughDepth - tabs.height)
     tabPlan = { through, bridges, bridgeDepth }
     if (through.length) {
       throughShapes.push(
-        shapeFromWorld('slice', `${prefix}Through-cut outline · ${fmt(T)}`, through, {
-          cut: cut('outside', T),
+        shapeFromWorld('slice', `${prefix}Through-cut outline · ${fmt(throughDepth)}`, through, {
+          cut: cut('outside', throughDepth),
           meta: { source: '3d', role: 'outline', bitId: bit.id, note: 'outside cut of the model footprint at full depth' },
         }),
       )
@@ -456,9 +510,11 @@ export async function buildCarvePlan(
     modelH,
     stockThickness: st.stockThickness,
     carveDepth: T,
+    throughDepth,
     stock: stockRect,
     outline,
     throughCut,
     tabs: tabPlan,
+    rings: st.rings ?? true,
   }
 }

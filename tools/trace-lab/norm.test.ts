@@ -21,7 +21,7 @@ it('norm dump', () => {
   src.data.set(img.data)
   const flat = warpPerspective(src as any, Hinv, outW, outH)
   const gray = grayFromImageData(flat as any)
-  const norm = normaliseLighting(gray, outW, outH, Math.max(4, Math.round(12*ppm)))
+  const norm = normaliseLighting(gray, outW, outH, ppm)
   const { paper, sigma } = paperLevelAndNoise(norm)
   writeFileSync(new URL('./out/photo1-norm.png', import.meta.url), (() => { const d = new Uint8ClampedArray(outW*outH*4); for (let i=0;i<norm.length;i++){ d[i*4]=d[i*4+1]=d[i*4+2]=norm[i]; d[i*4+3]=255 } return encodePng({data:d,width:outW,height:outH}) })())
   const lines = [`paper=${paper} sigma=${sigma.toFixed(2)}`]

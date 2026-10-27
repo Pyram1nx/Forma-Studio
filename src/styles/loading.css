@@ -1,0 +1,281 @@
+/* Loading screen: the dot-matrix "domino" loader, matching Shaper Studio's. */
+.loading-domino {
+  width: 240px;
+  position: fixed;
+  margin: 0 auto;
+  z-index: 100000;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+.loading-domino > svg {
+  display: block;
+  width: 100%;
+  animation-delay: 0.1s;
+}
+.loading-domino--overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 99;
+  background-color: #fdfdfe;
+  opacity: 0.8;
+}
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  background: #fdfdfe;
+}
+.loading-domino > svg #oval01 { animation: domino01 4s infinite linear; }
+.loading-domino > svg #oval02 { animation: domino02 4s infinite linear; }
+.loading-domino > svg #oval03 { animation: domino03 4s infinite linear; }
+.loading-domino > svg #oval04 { animation: domino04 4s infinite linear; }
+.loading-domino > svg #oval05 { animation: domino05 4s infinite linear; }
+.loading-domino > svg #oval06 { animation: domino06 4s infinite linear; }
+.loading-domino > svg #oval07 { animation: domino07 4s infinite linear; }
+.loading-domino > svg #oval08 { animation: domino08 4s infinite linear; }
+.loading-domino > svg #oval09 { animation: domino09 4s infinite linear; }
+.loading-domino > svg #oval10 { animation: domino10 4s infinite linear; }
+.loading-domino > svg #oval11 { animation: domino11 4s infinite linear; }
+.loading-domino > svg #oval12 { animation: domino12 4s infinite linear; }
+.loading-domino > svg #oval13 { animation: domino13 4s infinite linear; }
+.loading-domino > svg #oval14 { animation: domino14 4s infinite linear; }
+@keyframes domino01 {
+  0%, 9%, 35%, 39%, 70%, 79%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  10%, 40%, 80% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  15%, 34%, 45%, 69%, 85%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino02 {
+  0%, 4%, 35%, 39%, 70%, 74%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  5%, 40%, 75% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  10%, 34%, 45%, 69%, 80%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino03 {
+  0%, 9%, 35%, 70%, to {
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  10% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  15%, 34% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino04 {
+  0%, 14%, 35%, 44%, 70%, 79%, to {
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  15%, 45%, 80% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  20%, 34%, 50%, 69%, 85%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino05 {
+  0%, 14%, 35%, 70%, 84%, to {
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  15%, 85% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  20%, 34%, 90%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino06 {
+  0%, 14%, 35%, 44%, 70%, to {
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  15%, 45% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  20%, 34%, 50%, 69% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino07 {
+  0%, 35%, 49%, 70%, to {
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  50% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  55%, 69% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino08 {
+  0%, 35%, 49%, 70%, to {
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  50% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  55%, 69% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino09 {
+  0%, 19%, 35%, 70%, 84%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  20%, 85% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  25%, 34%, 90%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino10 {
+  0%, 35%, 54%, 70%, 84%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  55%, 85% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  60%, 69%, 90%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino11 {
+  0%, 19%, 35%, 70%, 89%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  20%, 90% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  25%, 34%, 95%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino12 {
+  0%, 35%, 54%, 70%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  55% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  60%, 69% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino13 {
+  0%, 24%, 35%, 59%, 70%, 89%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  25%, 60%, 90% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  30%, 34%, 65%, 69%, 95%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes domino14 {
+  0%, 24%, 35%, 59%, 70%, 94%, to {
+    opacity: 0;
+    transition: opacity 0s;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(.5);
+  }
+  25%, 60%, 95% {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+  30%, 34%, 65%, 69%, 99% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* Keeps the controls underneath usable while a preview recomputes. */
+.loading-domino--passthrough {
+  pointer-events: none;
+}

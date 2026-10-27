@@ -99,29 +99,56 @@ export function sanitizeSvgTree(root: Element): void {
   }
 }
 
-function readDepth(v: string | null): number | null {
+/**
+ * A Shaper length attribute (shaper:cutDepth="0.250 in", shaper:toolDia="0.125in") in mm.
+ * Shaper always writes a unit; a bare number is taken as mm. Null when missing or unreadable.
+ */
+export function parseShaperLength(v: string | null | undefined): number | null {
   if (!v) return null
-  return lenMM(v.includes('mm') || v.includes('in') ? v : v + 'mm')
+  const t = v.trim()
+  return lenMM(/[a-z]$/i.test(t) ? t : t + 'mm')
+}
+
+const CUT_TYPES: readonly CutType[] = ['online', 'outside', 'inside', 'pocket', 'guide']
+
+/** shaper:cutType value to a CutType. Case-insensitive; 'on-line' and 'on line' count as online. */
+export function parseCutType(v: string | null | undefined): CutType | null {
+  const t = (v ?? '').trim().toLowerCase().replace(/[-_\s]/g, '')
+  return CUT_TYPES.find((c) => c === t) ?? null
+}
+
+/**
+ * Cut type from the colours Shaper uses when there is no shaper:cutType: black fill is
+ * outside, white fill (black stroke) inside, 50% grey fill pocket, grey stroke with no
+ * fill on-line, blue (#0068FF) guide. Inputs are computed-style colours (rgb()/none).
+ */
+export function cutTypeFromPaint(fill: string, stroke: string): CutType {
+  const isNone = (c: string) => !c || c === 'none' || c.startsWith('rgba(0, 0, 0, 0)')
+  const rgb = (c: string) => (c.match(/\d+(\.\d+)?/g) || []).map(Number)
+  const isBlue = ([r, g, b]: number[]) => b > 150 && r < 100 && g < 160
+  if (isNone(fill)) return !isNone(stroke) && isBlue(rgb(stroke)) ? 'guide' : 'online'
+  const c = rgb(fill)
+  if (isBlue(c)) return 'guide'
+  const [r, g, b] = c
+  if (r > 230 && g > 230 && b > 230) return 'inside'
+  if (Math.abs(r - g) < 20 && Math.abs(g - b) < 20 && r > 60 && r < 200) return 'pocket'
+  return 'outside'
+}
+
+/** A shaper:* attribute on the element or the nearest ancestor that sets it (groups can carry it). */
+function shaperAttr(el: Element, name: string): string | null {
+  for (let n: Element | null = el; n; n = n.parentElement) {
+    const v = n.getAttributeNS(SHAPER_NS, name) ?? n.getAttribute('shaper:' + name)
+    if (v) return v
+  }
+  return null
 }
 
 function cutTypeFor(el: Element): CutType {
-  const attr = el.getAttributeNS(SHAPER_NS, 'cutType') || el.getAttribute('shaper:cutType')
-  if (attr && ['online', 'outside', 'inside', 'pocket', 'guide'].includes(attr)) return attr as CutType
+  const attr = parseCutType(shaperAttr(el, 'cutType'))
+  if (attr) return attr
   const cs = getComputedStyle(el)
-  const fill = cs.fill
-  const stroke = cs.stroke
-  const isNone = (c: string) => !c || c === 'none' || c.startsWith('rgba(0, 0, 0, 0)')
-  const rgb = (c: string) => (c.match(/\d+(\.\d+)?/g) || []).map(Number)
-  if (isNone(fill)) {
-    const [r, , b] = rgb(stroke)
-    if (b > 150 && r < 100) return 'guide'
-    return 'online'
-  }
-  const [r, g, b] = rgb(fill)
-  if (b > 150 && r < 100 && g < 160) return 'guide'
-  if (r > 230 && g > 230 && b > 230) return 'inside'
-  if (Math.abs(r - g) < 20 && r > 60 && r < 200) return 'pocket'
-  return 'outside'
+  return cutTypeFromPaint(cs.fill, cs.stroke)
 }
 
 export async function importSVGFile(file: File): Promise<ImportPayload> {
@@ -153,7 +180,7 @@ export function importSVGText(text: string, name: string): ImportPayload {
 
   // Attach to the live DOM so getCTM / computed styles work.
   const host = document.createElement('div')
-  host.style.cssText = 'position:absolute;left:-99999px;top:0;width:10px;height:10px;overflow:hidden;visibility:hidden'
+  host.style.cssText = 'position:absolute;left:-99999px;top:0;width:10px;height:10px;overflow:hidden;pointer-events:none'
   const svg = document.importNode(src, true) as unknown as SVGSVGElement
   host.appendChild(svg)
   document.body.appendChild(host)
@@ -212,11 +239,18 @@ export function importSVGText(text: string, name: string): ImportPayload {
         return { x: x * mmPerUnit, y: y * mmPerUnit }
       }
       const world: Contour[] = local.map((c) => ({ closed: c.closed, pts: c.pts.map(tx) }))
-      const type = cutTypeFor(el)
-      const depth = readDepth(el.getAttributeNS(SHAPER_NS, 'cutDepth') || el.getAttribute('shaper:cutDepth'))
-      const title = el.querySelector('title')?.textContent || el.getAttribute('id') || `${name} ${++idx}`
+      const declared = cutTypeFor(el)
+      // Open paths can only be cut on-line (or used as guides).
+      const type: CutType = world.every((c) => !c.closed) && declared !== 'guide' ? 'online' : declared
+      // Guides are not cut, so any depth on them is ignored.
+      const depth = type === 'guide' ? null : parseShaperLength(shaperAttr(el, 'cutDepth'))
+      const offset = parseShaperLength(shaperAttr(el, 'cutOffset')) ?? DEFAULT_CUT.offset
+      const bitDia = parseShaperLength(shaperAttr(el, 'toolDia')) || DEFAULT_CUT.bitDia
+      // Shaper Studio ids look like "basePath-sg-<uuid>-pg-<uuid>"; they make poor names.
+      const id = el.getAttribute('id')
+      const title = el.querySelector('title')?.textContent || (id && !/^(basePath|sg|pg)-/.test(id) ? id : '') || `${name} ${++idx}`
       const s = shapeFromWorld('import', title, world, {
-        cut: { ...DEFAULT_CUT, type: world.every((c) => !c.closed) && type !== 'guide' ? 'online' : type, depth },
+        cut: { ...DEFAULT_CUT, type, depth, offset, bitDia },
         meta: { source: 'svg' },
       })
       shapes.push(s)

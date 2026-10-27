@@ -1,4 +1,4 @@
-# Shaper forma
+# Forma Studio
 
 A lightweight, fully client-side design studio for the Shaper Origin, modelled on
 Shaper Tools' Studio (layout, colours, IBM Plex Sans type, Design / Plan / Review
@@ -22,7 +22,7 @@ the build is configured with an accounts API.
 | Design | Pen tool, Make Shape (circle, ellipse, rectangle, rounded rect, polygon, triangle + 14 templates), text to outlines (IBM Plex Sans or your own font), SVG import (hidden layers skipped, local `<use>` resolved, unsupported content reported), move / scale / rotate / anchor, smart-alignment snapping, Offset (open paths are stroked), ShapeShifter (union, subtract, intersect, exclude), mirror, duplicate (copies get their own groups), z-order, lock / unlock all. Units (in or mm) are set per design in the settings menu, and new designs start in the last unit you chose. |
 | Plan | Cut type (on line, guide, inside, pocket, outside), depth, offset, bit diameter (⅛ ¼ ½ presets + bit library), live tool-width preview. The cut path can be shown for every shape (Cut path display setting), drawn as marching cut paths. Units are also switchable here. |
 | Review | Depth-shaded material preview |
-| Files | Autosave + Open Recent (browser storage), **Save / Open `.shaperstudio` files on your computer** (writes back to the same file in Chrome / Edge), Export SVG for Origin. New, Open, Import and Open Recent ask before discarding unsaved changes. |
+| Files | Autosave + Open Recent (browser storage), **Save / Open `.formastudio` files on your computer** (writes back to the same file in Chrome / Edge), Export SVG for Origin. New, Open, Import and Open Recent ask before discarding unsaved changes. |
 | 3D Carve | STL/OBJ/GLB/GLTF, units + up-axis + fit-to-size, Shaper's real catalogue of 20 bits (`docs/research/shaper-bits.json`, including the 3 that come in the box), step-down / layers / stock / margin, per-layer contour (guide) + compensated toolpath (on line) + pocket region (pocket), optional through-cut |
 | Paper Scan | Camera or photo upload, automatic paper corner detection with draggable corners, A3/A4/A5/Letter/Legal/Tabloid/custom, lighting correction, adaptive ink threshold, centerline or outline tracing, stroke-width estimate |
 
@@ -95,7 +95,8 @@ The desktop app opens to a home window. It lists the designs saved on this compu
 (newest first, with a thumbnail), starts new designs, and has the account page. Opening
 a design, or using **Designs** in the studio's app menu, shows the studio in its own
 window. A design that is already open in the studio is switched to in place. In a
-browser the same screens open as tabs (`?view=home`).
+browser the same screens are pages: `/` is the home page, `/account` the account and saved
+designs, and `/studio` the editor.
 
 ### Releases and updates
 
@@ -134,7 +135,12 @@ server/         accounts API (AWS Lambda), stores users in S3
 docs/research/  design measurements taken from Shaper Studio
 ```
 
-Shaper forma is an independent project and is not affiliated with Shaper Tools.
+Forma Studio is an independent project and is not affiliated with Shaper Tools.
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Fork the repository, make
+your change on a branch, and open a pull request. Releases are made by the maintainer only.
 
 ## Licence
 

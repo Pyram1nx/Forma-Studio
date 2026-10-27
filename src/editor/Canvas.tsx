@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { OriginPoint, OriginRef, Pt, Shape } from '../model/types'
-import { useStore } from '../state/store'
+import { activeOrigin, useStore } from '../state/store'
 import { requestCut, subscribeCut, wbbox, world } from './geomCache'
 import { bake, bboxValid, distToContours, emptyBBox, pointInContours, type BBox } from '../geometry/transform'
 import { anchorPoint } from './ops'
+import { alignCoords, snapKindsOn, snapPoint } from './snapTargets'
 import { fmtLen } from '../model/factory'
 import { uid } from '../model/ids'
 import { DEFAULT_CUT } from '../model/types'
 import { contoursToD } from '../geometry/svgPath'
 import { buildFromParams, isParametric } from './shapeFactory'
 import { IconArrowDown } from '../ui/icons'
+import { boxJointForSelection, boxJointPartsOf, scaleBoxJoint, setBoxJointAnchor, stockAnchorOf, stockAnchorWorld, syncBoxJointGuides } from './boxJointGuides'
+import { STOCK_ANCHORS, type StockAnchor } from '../geometry/boxJoints'
 import { DesignShape, PlanShape, ReviewShape } from './canvas/ShapeViews'
 import {
-  axisFactor,
+  cornerFactor,
+  edgeFactor,
+  handleUsable,
   clampRange,
   depthLevel,
   isMouseWheelDelta,
@@ -27,7 +32,7 @@ type Drag =
   | { kind: 'pan'; sx: number; sy: number; px: number; py: number; moved: boolean; tap: boolean }
   | { kind: 'move'; start: Pt; orig: Map<string, Pt>; bbox: BBox; moved: boolean }
   | { kind: 'marquee'; start: Pt; cur: Pt; additive: boolean }
-  | { kind: 'scale'; handle: Handle; anchor: Pt; ref: Pt; orig: Map<string, Shape>; moved: boolean }
+  | { kind: 'scale'; handle: Handle; anchor: Pt; ref: Pt; start: Pt; orig: Map<string, Shape>; moved: boolean }
   | { kind: 'pinch'; dist: number; zoom: number; anchor: Pt }
 
 interface Guide {
@@ -86,9 +91,25 @@ function originAt(p: Pt, b: BBox, zoom: number): OriginRef {
   return { fx: (p.x - b.minX) / (b.maxX - b.minX || 1), fy: (p.y - b.minY) / (b.maxY - b.minY || 1) }
 }
 
+/** A box joint's stock anchor for a click at world point p: the nearest of its five, if close enough. */
+function stockAnchorAt(outline: Shape, p: Pt, zoom: number): StockAnchor | null {
+  let best: StockAnchor | null = null
+  let bestD = (ANCHOR_SNAP_PX * 1.5) / zoom
+  for (const a of STOCK_ANCHORS) {
+    const q = stockAnchorWorld(outline, a)
+    const d = Math.hypot(p.x - q.x, p.y - q.y)
+    if (d <= bestD) {
+      best = a
+      bestD = d
+    }
+  }
+  return best
+}
+
 /**
  * Shape Anchor mode (Studio's): the selection bounds show their nine points and the hint. A click on the
  * canvas picks the origin (snapping to a nearby point); Escape, the close button, or the pick leaves the mode.
+ * Box joints offer their five stock anchors (`points`, screen space) instead of the bounds points.
  */
 function AnchorPickOverlay({
   x0,
@@ -99,6 +120,7 @@ function AnchorPickOverlay({
   hasCustom,
   w,
   h,
+  points,
 }: {
   x0: number
   y0: number
@@ -108,23 +130,23 @@ function AnchorPickOverlay({
   hasCustom: boolean
   w: number
   h: number
+  points?: { key: string; x: number; y: number; active: boolean }[]
 }) {
   const xs = { l: x0, c: (x0 + x1) / 2, r: x1 }
   const ys = { t: y0, m: (y0 + y1) / 2, b: y1 }
+  const pts =
+    points ??
+    ANCHOR_POINTS.map((p) => ({ key: p, x: xs[p[1] as 'l' | 'c' | 'r'], y: ys[p[0] as 't' | 'm' | 'b'], active: p === value }))
   return (
     <g className="cv-anchor-pick">
       <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} className="cv-bbox" />
-      {ANCHOR_POINTS.map((p) => {
-        const x = xs[p[1] as 'l' | 'c' | 'r']
-        const y = ys[p[0] as 't' | 'm' | 'b']
-        return (
-          <g key={p} className="cv-anchor-point">
-            <circle cx={x} cy={y} r={ANCHOR_SNAP_PX} className="cv-anchor-point__hit" />
-            <circle cx={x} cy={y} r={ANCHOR_SNAP_PX - 1} className="cv-anchor-point__ring" />
-            <rect x={x - 4} y={y - 4} width={8} height={8} className={'cv-anchor-point__dot' + (p === value ? ' is-active' : '')} />
-          </g>
-        )
-      })}
+      {pts.map(({ key, x, y, active }) => (
+        <g key={key} className="cv-anchor-point" data-anchor={key}>
+          <circle cx={x} cy={y} r={ANCHOR_SNAP_PX} className="cv-anchor-point__hit" />
+          <circle cx={x} cy={y} r={ANCHOR_SNAP_PX - 1} className="cv-anchor-point__ring" />
+          <rect x={x - 4} y={y - 4} width={8} height={8} className={'cv-anchor-point__dot' + (active ? ' is-active' : '')} />
+        </g>
+      ))}
       <g className="cv-anchor-title" transform={`translate(${w / 2} 40)`}>
         <text textAnchor="middle" x={10}>
           Shape Anchor
@@ -179,6 +201,8 @@ export default function Canvas() {
   const dragRef = useRef<Drag | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   const [guides, setGuides] = useState<Guide[]>([])
+  /** Shape Anchor mode: where a free pick would land (snapped), or null over the nine stock points. */
+  const [anchorHover, setAnchorHover] = useState<Pt | null>(null)
   const [draft, setDraft] = useState<Pt[]>([])
   const draftRef = useRef<Pt[]>([])
   draftRef.current = draft
@@ -193,12 +217,19 @@ export default function Canvas() {
   const hoverRaf = useRef(0)
   const hoverPt = useRef<Pt | null>(null)
 
+  useEffect(() => {
+    if (anchorPicking) return
+    setAnchorHover(null)
+    setGuides((prev) => (prev.length ? [] : prev))
+  }, [anchorPicking])
+
   const setDragBoth = (d: Drag | null) => {
     dragRef.current = d
     setDrag(d)
   }
 
-  const visible = useMemo(() => doc.shapes.filter((s) => !s.hidden), [doc.shapes])
+  // References (locked shapes) exist only in Design: Plan and Review neither draw nor hit them.
+  const visible = useMemo(() => doc.shapes.filter((s) => !s.hidden && (mode === 'design' || !s.locked)), [doc.shapes, mode])
   const selSet = useMemo(() => new Set(selection), [selection])
   const selShapes = useMemo(() => visible.filter((s) => selSet.has(s.id)), [visible, selSet])
   const selBBox = useMemo(() => (selShapes.length ? unionBBox(selShapes) : null), [selShapes])
@@ -291,7 +322,8 @@ export default function Canvas() {
       if (p.x < b.minX - tol || p.x > b.maxX + tol || p.y < b.minY - tol || p.y > b.maxY + tol) continue
       const w = world(s)
       const closed = w.some((c) => c.closed)
-      if (closed && mode === 'design' && pointInContours(p, w)) return s
+      // A reference has no fill: it is picked only by its edge.
+      if (closed && mode === 'design' && !s.locked && pointInContours(p, w)) return s
       if (distToContours(p, w) <= tol) return s
       if (mode === 'plan' && closed && pointInContours(p, w)) return s
     }
@@ -377,13 +409,23 @@ export default function Canvas() {
         maxY: Math.max(d.start.y, d.cur.y),
       }
       if ((b.maxX - b.minX) * st.view.zoom > 3 || (b.maxY - b.minY) * st.view.zoom > 3) {
-        const inside = visible
+        let inside = visible
           .filter((s) => {
             if (s.locked) return false
             const sb = wbbox(s)
             return sb.minX >= b.minX && sb.maxX <= b.maxX && sb.minY >= b.minY && sb.maxY <= b.maxY
           })
           .map((s) => s.id)
+        if (st.mode === 'design') {
+          // A group is one object: the marquee takes it only when all of it is inside, and then whole.
+          const ins = new Set(inside)
+          const partial = new Set<string>()
+          for (const s of visible) if (s.groupId && !s.locked && !ins.has(s.id)) partial.add(s.groupId)
+          const whole = new Set(st.doc.shapes.filter((s) => ins.has(s.id) && s.groupId && !partial.has(s.groupId)).map((s) => s.groupId))
+          inside = st.doc.shapes
+            .filter((s) => (ins.has(s.id) && !s.groupId) || (s.groupId && whole.has(s.groupId) && !s.locked))
+            .map((s) => s.id)
+        }
         st.select(d.additive ? [...new Set([...st.selection, ...inside])] : inside)
       }
     }
@@ -433,14 +475,26 @@ export default function Canvas() {
     if (st.popover) st.setPopover(null)
     if (st.anchorPicking) {
       // Shape Anchor mode: any click picks the origin for the selection (no pan, no selection change).
-      if (selBBox && bboxValid(selBBox)) {
-        const w = toWorld(e.clientX, e.clientY)
-        const ref = originAt(w, selBBox, view.zoom)
+      const joint = boxJointForSelection(st.doc, st.selection)
+      if (joint) {
+        // Box joints anchor only on their stock: its corners and centre.
+        const a = stockAnchorAt(joint, toWorld(e.clientX, e.clientY), view.zoom)
+        if (a) setBoxJointAnchor(joint.id, a)
+      } else if (selBBox && bboxValid(selBBox)) {
+        const raw = toWorld(e.clientX, e.clientY)
+        const stock = originAt(raw, selBBox, view.zoom)
+        // Over a stock point it wins; elsewhere the pick lands where the red dot was snapped.
+        const w = typeof stock === 'string' || !st.doc.settings.smartAlignment
+          ? raw
+          : snapPoint(raw, visible, snapKindsOn(st.doc.settings), SNAP_PX / view.zoom).pt
+        const ref = typeof stock === 'string' ? stock : originAt(w, selBBox, view.zoom)
         st.setOriginPoint(ref)
         // A free pick also leaves a custom anchor marker on the canvas until it is cleared.
         if (typeof ref !== 'string') st.setCustomAnchor(w)
       }
       st.setAnchorPicking(false)
+      setAnchorHover(null)
+      setGuides([])
       return
     }
     lastPtrType.current = e.pointerType
@@ -488,10 +542,19 @@ export default function Canvas() {
     if (hit) {
       let sel = st.selection
       if (e.shiftKey || e.metaKey) {
-        sel = sel.includes(hit.id) ? sel.filter((i) => i !== hit.id) : [...sel, hit.id]
+        // In Design a group is one object: shift-click adds or removes all of its unlocked members.
+        const unit =
+          hit.groupId && mode === 'design' && !e.altKey && !hit.locked
+            ? st.doc.shapes.filter((s) => s.groupId === hit.groupId && !s.locked).map((s) => s.id)
+            : [hit.id]
+        sel = sel.includes(hit.id) ? sel.filter((i) => !unit.includes(i)) : [...new Set([...sel, ...unit])]
         st.select(sel)
-      } else if (e.altKey && hit.groupId) {
-        // Alt+click selects the whole group, even when this member is already selected.
+      } else if (hit.groupId && e.altKey) {
+        // Alt+click picks this one element out of its group (to edit its cut type, depth or bit).
+        sel = [hit.id]
+        st.select(sel)
+      } else if (hit.groupId && mode === 'design' && !hit.locked) {
+        // A plain click on a grouped element selects the whole group, so it drags as one.
         st.selectGroup(hit.groupId)
         sel = useStore.getState().selection
       } else if (!sel.includes(hit.id)) {
@@ -499,9 +562,9 @@ export default function Canvas() {
         st.select(sel)
       }
       if (mode === 'design' && sel.includes(hit.id)) {
-        // Locked shapes can be selected but never moved.
-        const moving = st.doc.shapes.filter((s) => sel.includes(s.id) && !s.locked)
-        if (moving.length) {
+        // References can be selected but never moved, and a selection with one in it stays put (as in Studio).
+        const moving = st.doc.shapes.filter((s) => sel.includes(s.id))
+        if (moving.length && !moving.some((s) => s.locked)) {
           const orig = new Map<string, Pt>()
           for (const s of moving) orig.set(s.id, { x: s.x, y: s.y })
           setDragBoth({ kind: 'move', start: p, orig, bbox: unionBBox(moving), moved: false })
@@ -531,14 +594,35 @@ export default function Canvas() {
       x: hh.includes('l') ? b.minX : hh.includes('r') ? b.maxX : (b.minX + b.maxX) / 2,
       y: hh.startsWith('t') ? b.minY : hh.startsWith('b') ? b.maxY : (b.minY + b.maxY) / 2,
     })
-    const opposite: Record<Handle, Handle> = { tl: 'br', tm: 'bm', tr: 'bl', rm: 'lm', br: 'tl', bm: 'tm', bl: 'tr', lm: 'rm' }
-    const anchor = st.doc.settings.originAnchor ? anchorPoint(b, st.doc.settings.originPoint ?? 'mc') : pos(opposite[h])
+    // Scaling is always about the anchor (the centre unless another point was picked), as in Studio.
+    const anchor = anchorPoint(b, activeOrigin(st.doc, st.selection) ?? 'mc')
     // No checkpoint here: the undo step is taken on the first real movement.
     const orig = new Map<string, Shape>()
     // Rotated shapes or multi-selections are baked so scaling is axis-aligned in world space.
-    for (const s of selShapes) if (!s.locked) orig.set(s.id, s.rotation % 360 !== 0 ? bake(s) : s)
+    // Box joints are never baked: the scale goes into their params.
+    const joints = boxJointPartsOf(st.doc, selShapes.map((s) => s.id))
+    for (const s of selShapes) {
+      if (s.locked) continue
+      const keep = joints.outlines.has(s.id) || joints.guides.has(s.id)
+      orig.set(s.id, s.rotation % 360 !== 0 && !keep ? bake(s) : s)
+    }
     if (!orig.size) return
-    setDragBoth({ kind: 'scale', handle: h, anchor, ref: pos(h), orig, moved: false })
+    setDragBoth({ kind: 'scale', handle: h, anchor, ref: pos(h), start: toWorld(e.clientX, e.clientY), orig, moved: false })
+  }
+
+  /** Snap the free-anchor preview to the enabled targets; hidden over the nine stock points and for box joints. */
+  const updateAnchorHover = (raw: Pt, st: ReturnType<typeof useStore.getState>) => {
+    const joint = boxJointForSelection(st.doc, st.selection)
+    if (joint || !selBBox || !bboxValid(selBBox) || typeof originAt(raw, selBBox, st.view.zoom) === 'string') {
+      setAnchorHover(null)
+      setGuides((prev) => (prev.length ? [] : prev))
+      return
+    }
+    const hit = st.doc.settings.smartAlignment
+      ? snapPoint(raw, visible, snapKindsOn(st.doc.settings), SNAP_PX / st.view.zoom)
+      : { pt: raw, guides: [] as Guide[] }
+    setAnchorHover(hit.pt)
+    setGuides(hit.guides)
   }
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -550,6 +634,10 @@ export default function Canvas() {
     }
     const p = toWorld(e.clientX, e.clientY)
     const st = useStore.getState()
+    if (st.anchorPicking) {
+      updateAnchorHover(p, st)
+      return
+    }
     if (tool === 'draw') {
       const dr = draftRef.current
       const last = dr[dr.length - 1]
@@ -583,15 +671,7 @@ export default function Canvas() {
         if (st.doc.settings.smartAlignment && !e.altKey) {
           const tol = SNAP_PX / st.view.zoom
           const others = visible.filter((s) => !d.orig.has(s.id))
-          const xs: number[] = []
-          const ys: number[] = []
-          for (const o of others) {
-            const b = wbbox(o)
-            xs.push(b.minX, (b.minX + b.maxX) / 2, b.maxX)
-            ys.push(b.minY, (b.minY + b.maxY) / 2, b.maxY)
-          }
-          xs.push(0)
-          ys.push(0)
+          const { xs, ys } = alignCoords(others, snapKindsOn(st.doc.settings))
           const mb = d.bbox
           if (axis !== 'y') {
             const mx = [mb.minX + dx, (mb.minX + mb.maxX) / 2 + dx, mb.maxX + dx]
@@ -621,24 +701,24 @@ export default function Canvas() {
         break
       }
       case 'scale': {
-        const { anchor, ref, handle } = d
-        // A zero-width/height selection keeps that axis at 1 (no divide-by-~0 blow-up).
-        const degX = Math.abs(ref.x - anchor.x) < 1e-6
-        const degY = Math.abs(ref.y - anchor.y) < 1e-6
-        let fx = handle === 'tm' || handle === 'bm' || degX ? 1 : axisFactor(p.x, anchor.x, ref.x)
-        let fy = handle === 'lm' || handle === 'rm' || degY ? 1 : axisFactor(p.y, anchor.y, ref.y)
+        const { anchor, ref, handle, start } = d
+        const delta = { x: p.x - start.x, y: p.y - start.y }
+        // Edge handles scale one axis about the anchor; an axis through the anchor keeps factor 1.
+        let fx = handle === 'tm' || handle === 'bm' ? 1 : edgeFactor(delta.x, anchor.x, ref.x)
+        let fy = handle === 'lm' || handle === 'rm' ? 1 : edgeFactor(delta.y, anchor.y, ref.y)
         const corner = handle.length === 2 && !handle.includes('m')
-        if (corner && !e.shiftKey && !degX && !degY) {
+        if (corner && !e.shiftKey) {
           // Corners scale proportionally (Shift for free scaling).
-          const f = Math.abs(fx) > Math.abs(fy) ? fx : fy
-          fx = fy = f
+          fx = fy = cornerFactor(delta, anchor, ref)
         }
-        if (Math.abs(fx) < 1e-3) fx = 1e-3
-        if (Math.abs(fy) < 1e-3) fy = 1e-3
         // The first real movement creates the undo step.
         if (!d.moved) st.checkpoint()
+        // Box joints are rebuilt from scaled params (never stretched) and their guides re-laid out.
+        const joints = boxJointPartsOf(st.doc, d.orig.keys())
         st.patchShapes([...d.orig.keys()], (s) => {
           const o = d.orig.get(s.id)!
+          if (joints.outlines.has(s.id)) return scaleBoxJoint(o, fx, fy, anchor, st.doc.units)
+          if (joints.guides.has(s.id)) return s
           return {
             ...o,
             x: anchor.x + (o.x - anchor.x) * fx,
@@ -647,6 +727,7 @@ export default function Canvas() {
             sy: o.sy * fy,
           }
         })
+        for (const id of joints.outlines) syncBoxJointGuides(id)
         if (!d.moved) setDragBoth({ ...d, moved: true })
         break
       }
@@ -678,14 +759,22 @@ export default function Canvas() {
   }
 
   let shapeEls: React.ReactNode[]
+  // Hovering one member of a group highlights the whole group.
+  const hoverSet = useMemo(() => {
+    const h = hover ? visible.find((s) => s.id === hover) : undefined
+    if (!h) return new Set<string>()
+    // Plan elements carry their own cut type and depth, so only the hovered one lights up there.
+    if (!h.groupId || mode === 'plan' || h.locked) return new Set([h.id])
+    return new Set(visible.filter((s) => s.groupId === h.groupId && !s.locked).map((s) => s.id))
+  }, [hover, visible, mode])
   if (mode === 'design') {
     shapeEls = visible.map((s) => (
-      <DesignShape key={s.id} s={s} selected={selSet.has(s.id)} hovered={hover === s.id && !selSet.has(s.id)} />
+      <DesignShape key={s.id} s={s} selected={selSet.has(s.id)} hovered={hoverSet.has(s.id) && !selSet.has(s.id)} />
     ))
   } else if (mode === 'plan') {
     shapeEls = visible.map((s) => {
       const selected = selSet.has(s.id)
-      const hovered = hover === s.id && !selected
+      const hovered = hoverSet.has(s.id) && !selected
       const isGuide = s.cut.type === 'guide'
       const showCut = !isGuide && (selected || hovered || cutAll)
       const geom = showCut && inView(s) ? requestCut(s) : undefined
@@ -710,16 +799,24 @@ export default function Canvas() {
     ) : null
   let overlay: React.ReactNode = null
   if (anchorPicking && mode === 'design' && selBBox && bboxValid(selBBox)) {
+    const joint = boxJointForSelection(doc, selection)
+    const jointPts = joint
+      ? STOCK_ANCHORS.map((a) => {
+          const q = stockAnchorWorld(joint, a)
+          return { key: a, x: sx(q.x), y: sy(q.y), active: stockAnchorOf(joint) === a }
+        })
+      : undefined
     overlay = (
       <AnchorPickOverlay
         x0={sx(selBBox.minX)}
         y0={sy(selBBox.minY)}
         x1={sx(selBBox.maxX)}
         y1={sy(selBBox.maxY)}
-        value={doc.settings.originPoint ?? 'mc'}
+        value={activeOrigin(doc, selection) ?? 'mc'}
         hasCustom={!!doc.settings.customAnchor}
         w={viewport.w}
         h={viewport.h}
+        points={jointPts}
       />
     )
   } else if (selBBox && bboxValid(selBBox) && tool === 'select') {
@@ -730,8 +827,22 @@ export default function Canvas() {
     const pad = 4
     const L = 10
     const units = doc.units
-    if (mode === 'design') {
+    if (mode === 'design' && selShapes.some((s) => s.locked)) {
+      // A selection with a reference in it: Studio's thin orange box, no handles, labels or anchor.
+      overlay = (
+        <g className="cv-overlay">
+          <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} className="cv-bbox is-reference" />
+        </g>
+      )
+    } else if (mode === 'design') {
+      const hb = selBBox
+      const hpos = (hh: Handle): Pt => ({
+        x: hh.includes('l') ? hb.minX : hh.includes('r') ? hb.maxX : (hb.minX + hb.maxX) / 2,
+        y: hh.startsWith('t') ? hb.minY : hh.startsWith('b') ? hb.maxY : (hb.minY + hb.maxY) / 2,
+      })
+      const handleAnchor = anchorPoint(hb, activeOrigin(doc, selection) ?? 'mc')
       const H = (h: Handle, x: number, y: number, dx: number, dy: number) => {
+        if (!handleUsable(h, hpos(h), handleAnchor)) return null
         const corner = !h.includes('m')
         const half = handleSize / 2
         return (
@@ -768,7 +879,7 @@ export default function Canvas() {
           {H('rm', x1 + pad, cy, 0, 0)}
           {/* The origin marker: the usual centre dot, or the picked point (blue when snapped, red when free). */}
           {(() => {
-            const o = doc.settings.originPoint ?? 'mc'
+            const o = activeOrigin(doc, selection) ?? 'mc'
             const ap = anchorPoint(selBBox, o)
             const free = typeof o !== 'string'
             const cls = o === 'mc' ? 'cv-center' : 'cv-anchor-mark' + (free ? ' is-free' : '')
@@ -850,8 +961,9 @@ export default function Canvas() {
     )
   }
 
-  const cursorStyle =
-    drag?.kind === 'pan' || spaceDown
+  const cursorStyle = anchorPicking
+    ? 'default'
+    : drag?.kind === 'pan' || spaceDown
       ? drag
         ? 'grabbing'
         : 'grab'
@@ -874,6 +986,7 @@ export default function Canvas() {
       onPointerCancel={onPointerUp}
       onLostPointerCapture={onLostCapture}
       onPointerLeave={() => {
+        setAnchorHover(null)
         setHover(null)
         setCursor(null)
       }}
@@ -912,16 +1025,17 @@ export default function Canvas() {
           <rect width="100%" height="100%" fill="url(#rv-grain)" />
         </>
       )}
-      {mode !== 'review' && (
-        <g className="cv-origin" pointerEvents="none">
-          <line x1={sx(0) - 10} x2={sx(0) + 10} y1={sy(0)} y2={sy(0)} />
-          <line x1={sx(0)} x2={sx(0)} y1={sy(0) - 10} y2={sy(0) + 10} />
-        </g>
+      {mode !== 'review' && doc.settings.originAnchor && (
+        // Origin Anchor: Studio's red corner marker at the workspace origin (fixed screen size, corner on 0,0).
+        <path className="cv-origin" d={`M ${sx(0)} ${sy(0) - 24} V ${sy(0)} H ${sx(0) + 14} Z`} pointerEvents="none" />
       )}
       <g transform={worldTransform}>{shapeEls}</g>
       {guideEls}
       {overlay}
       {customEl}
+      {anchorPicking && mode === 'design' && anchorHover && (
+        <circle className="cv-anchor-hover" cx={sx(anchorHover.x)} cy={sy(anchorHover.y)} r={4} />
+      )}
       {marquee}
       {draftEl}
     </svg>

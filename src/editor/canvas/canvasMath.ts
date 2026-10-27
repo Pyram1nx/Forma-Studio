@@ -78,6 +78,36 @@ export function axisFactor(p: number, anchor: number, ref: number): number {
 }
 
 /**
+ * Proportional corner scale about the anchor (Studio's): the pointer's travel since the grab, projected on the
+ * line from the anchor through the handle. 1 at no travel; negative flips through the anchor.
+ */
+export function cornerFactor(delta: { x: number; y: number }, anchor: { x: number; y: number }, ref: { x: number; y: number }): number {
+  const vx = ref.x - anchor.x
+  const vy = ref.y - anchor.y
+  const len2 = vx * vx + vy * vy
+  if (len2 < 1e-12) return 1
+  const f = 1 + (delta.x * vx + delta.y * vy) / len2
+  return Math.abs(f) < 1e-3 ? 1e-3 : f
+}
+
+/** One-axis scale about the anchor for an edge handle (or a free corner axis), measured from the grab point. */
+export function edgeFactor(delta: number, anchor: number, ref: number): number {
+  const span = ref - anchor
+  if (Math.abs(span) < 1e-6) return 1
+  const f = 1 + delta / span
+  return Math.abs(f) < 1e-3 ? 1e-3 : f
+}
+
+/** A handle that sits on the anchor's row or column (on an axis it scales) has nothing to scale from, so it is hidden. */
+export function handleUsable(handle: string, ref: { x: number; y: number }, anchor: { x: number; y: number }): boolean {
+  const sx = handle.includes('l') || handle.includes('r')
+  const sy = handle.startsWith('t') || handle.startsWith('b')
+  if (sx && Math.abs(ref.x - anchor.x) < 1e-6) return false
+  if (sy && Math.abs(ref.y - anchor.y) < 1e-6) return false
+  return true
+}
+
+/**
  * Heuristic for a physical mouse wheel. Trackpads send fractional or small deltas
  * and are treated as pan; wheel notches are integer multiples of 10 px.
  */

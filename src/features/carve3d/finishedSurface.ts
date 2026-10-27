@@ -86,7 +86,7 @@ export function distanceSquared(src: Uint8Array, nx: number, ny: number, dx: num
  */
 export async function carvedSurface(plan: CarvePlan, bit: Bit, signal?: AbortSignal, maxSamples = 250_000): Promise<CarvedSurface> {
   const H = plan.modelH
-  const hf = createHeightfield(worldRect(plan.stock), H, H - Math.max(plan.stockThickness, plan.carveDepth), maxSamples)
+  const hf = createHeightfield(worldRect(plan.stock), H, H - Math.max(plan.stockThickness, plan.carveDepth, plan.throughDepth), maxSamples)
   const prof = bitProfile(bit)
   const R = prof.radius
 
@@ -122,7 +122,7 @@ export async function carvedSurface(plan: CarvePlan, bit: Bit, signal?: AbortSig
   // piece is freed and everything outside it is gone; on thicker stock a skin stays below.
   if (plan.throughCut && plan.outline.length) {
     const inside = rasterize(hf, plan.outline)
-    const zCut = H - plan.carveDepth
+    const zCut = H - plan.throughDepth
     const freed = zCut <= hf.bottom + 1e-6
     for (let k = 0; k < inside.length; k++) if (!inside[k]) hf.h[k] = freed ? hf.bottom : Math.min(hf.h[k], zCut)
   }

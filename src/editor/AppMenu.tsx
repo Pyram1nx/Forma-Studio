@@ -46,8 +46,6 @@ export default function AppMenu() {
   const mod = navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'
   const visible = doc.shapes.filter((s) => !s.hidden)
   const selected = visible.filter((s) => selection.includes(s.id))
-  // Studio's export count: selected/all when something is selected, otherwise all/all.
-  const exportCount = selection.length ? `${selected.length} of ${visible.length}` : `${visible.length} of ${visible.length}`
 
   return (
     <>
@@ -55,7 +53,7 @@ export default function AppMenu() {
       <aside className={'app-menu' + (open ? ' is-open' : '')} aria-label="Menu" inert={!open}>
         <div className="app-menu__leading">
           <div className="app-menu__top">
-            <div className="app-menu__wordmark">STUDIO</div>
+            <div className="app-menu__wordmark">FORMA</div>
             <button className="app-menu__close" onClick={close} aria-label="Close menu">
               <Ic.IconClose />
             </button>
@@ -97,7 +95,7 @@ export default function AppMenu() {
                 }
               />
               <Item icon={<Ic.IconFolderOpen />} label="Open from Computer" onClick={run(openFromComputer)} right={<span className="app-menu__kbd">{mod}O</span>} />
-              <Item icon={<Ic.IconDownload />} label="Export SVG" onClick={run(() => exportSvg(false))} right={<span className="export-count">{exportCount}</span>} />
+              <Item icon={<Ic.IconDownload />} label="Export SVG" onClick={run(() => exportSvg(false))} right={<span className="export-count">Unlimited</span>} />
               {selection.length > 0 && (
                 <Item icon={<Ic.IconDownload />} label="Export Selection" onClick={run(() => exportSvg(true))} right={<span className="export-count">{selected.length}</span>} />
               )}
@@ -162,7 +160,7 @@ export default function AppMenu() {
             <Item icon={<Ic.IconDownload />} label="Check for Updates" onClick={run(() => window.dispatchEvent(new Event(CHECK_UPDATES_EVENT)))} />
           )}
           <div className="app-menu__foot ss-muted">
-            Shaper forma · runs locally in your browser.
+            Forma Studio · runs locally in your browser.
             <br />
             Not affiliated with Shaper Tools.
           </div>

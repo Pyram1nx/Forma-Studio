@@ -1,19 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../state/store'
+import { iconPayload, iconUrl, iconsEnabled, searchIcons, type IconHit } from '../io/iconSearch'
 import * as Ic from '../ui/icons'
-import { BASIC_SHAPES, createBasic, createTemplate, type BasicShape } from './shapeFactory'
+import { BASIC_SHAPES, createBasic, createTemplate } from './shapeFactory'
 import { TEMPLATES } from '../geometry/templates'
 import { TemplateIcon } from '../geometry/templateIcons'
+import { placeBoxJoint } from './boxJointGuides'
+import { boxJointKind } from '../geometry/boxJoints'
 import { MM_PER_IN } from '../model/types'
-
-const basicIcon: Record<BasicShape, ReactNode> = {
-  circle: <circle cx="12" cy="12" r="7" />,
-  ellipse: <ellipse cx="12" cy="12" rx="8" ry="5" />,
-  rect: <rect x="5.5" y="5.5" width="13" height="13" />,
-  roundrect: <rect x="5.5" y="5.5" width="13" height="13" rx="3.5" />,
-  polygon: <path d="M12 4.5 19.5 10l-2.9 8.5H7.4L4.5 10Z" />,
-  triangle: <path d="M12 5.5 19 18.5H5Z" />,
-}
 
 function viewCentre() {
   const { view, viewport } = useStore.getState()
@@ -41,9 +35,47 @@ export function ShapesPopover() {
   const popover = useStore((s) => s.popover)
   const mode = useStore((s) => s.mode)
   const [query, setQuery] = useState('')
+  // Results are tagged with the query they answer, so a slow reply never shows under a newer query.
+  const [iconRes, setIconRes] = useState<{ q: string; hits: IconHit[]; error: boolean } | null>(null)
   useOutsideDismiss(popover === 'shapes' && mode === 'design', SHAPE_INSIDE)
+  const trimmed = query.trim()
+  const icons = iconRes?.q === trimmed ? iconRes.hits : []
+  const iconError = iconRes?.q === trimmed && iconRes.error
+  // Debounced icon search. Each keystroke aborts the request still in flight.
+  useEffect(() => {
+    if (!iconsEnabled() || trimmed.length < 2 || popover !== 'shapes') return
+    const ac = new AbortController()
+    const t = setTimeout(() => {
+      searchIcons(trimmed, ac.signal)
+        .then((hits) => setIconRes({ q: trimmed, hits, error: false }))
+        .catch(() => {
+          if (!ac.signal.aborted) setIconRes({ q: trimmed, hits: [], error: true })
+        })
+    }, 250)
+    return () => {
+      clearTimeout(t)
+      ac.abort()
+    }
+  }, [trimmed, popover])
   if (popover !== 'shapes' || mode !== 'design') return null
   const st = useStore.getState
+  const placeIcon = async (id: string) => {
+    try {
+      const payload = await iconPayload(id)
+      if (!payload.shapes.length) st().showToast('No paths found in that icon')
+      else st().importPayload(payload)
+    } catch (e) {
+      st().showToast('Import failed: ' + (e as Error).message)
+    }
+  }
+  // Box joints (basic and pro) come with their guides as a group; other templates are a single shape.
+  const placeTemplate = (id: string) => {
+    const s = createTemplate(id, viewCentre().x, viewCentre().y, st().doc.units)
+    if (!boxJointKind(id) || !s) return place(s)
+    placeBoxJoint(s)
+    const { view, viewport } = st()
+    if (view.zoom * MM_PER_IN < Math.min(viewport.w, viewport.h) / 8) st().zoomToFit()
+  }
   const place = (s: ReturnType<typeof createBasic> | null) => {
     if (!s) return
     st().addShapes([s])
@@ -63,8 +95,8 @@ export function ShapesPopover() {
         autoFocus
         type="search"
         className="shape-creator__search"
-        placeholder="Search shapes & templates"
-        aria-label="Search shapes & templates"
+        placeholder={iconsEnabled() ? 'Search shapes, templates & icons' : 'Search shapes & templates'}
+        aria-label="Search shapes and templates"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
@@ -74,9 +106,7 @@ export function ShapesPopover() {
           <div className="shape-creator__basic">
             {basics.map((b) => (
               <button key={b.id} className="basic-shape-btn" title={b.label} aria-label={b.label} onClick={() => place(createBasic(b.id, viewCentre().x, viewCentre().y))}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
-                  {basicIcon[b.id]}
-                </svg>
+                <TemplateIcon id={b.id} size={24} />
               </button>
             ))}
           </div>
@@ -89,14 +119,30 @@ export function ShapesPopover() {
           </div>
           <div className="shape-creator__templates">
             {templates.map((t) => (
-              <button key={t.id} className="template-btn" title={t.name} aria-label={t.name} onClick={() => place(createTemplate(t.id, viewCentre().x, viewCentre().y))}>
+              <button key={t.id} className="template-btn" title={t.name} aria-label={t.name} onClick={() => placeTemplate(t.id)}>
                 <TemplateIcon id={t.id} size={36} />
               </button>
             ))}
           </div>
         </>
       )}
-      {!basics.length && !templates.length && <div className="ss-muted shape-creator__none">No shapes or templates match “{query.trim()}”.</div>}
+      {trimmed.length >= 2 && iconsEnabled() && (
+        <>
+          <div className="shape-creator__label">icons</div>
+          {iconError ? (
+            <div className="ss-muted shape-creator__none">Icon search is unavailable right now.</div>
+          ) : (
+            <div className="shape-creator__icons">
+              {icons.map((h) => (
+                <button key={h.id} className="icon-result-btn" title={h.id} aria-label={h.id} onClick={() => placeIcon(h.id)}>
+                  <img src={iconUrl(h.id)} alt="" />
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {!basics.length && !templates.length && !icons.length && <div className="ss-muted shape-creator__none">No shapes or templates match “{trimmed}”.</div>}
       <button className="shape-creator__close ss-btn-round" onClick={dismissPopover} aria-label="Close make shape">
         <Ic.IconClose />
       </button>
@@ -123,6 +169,8 @@ export function ShortcutsDialog() {
     [`${mod} ⇧ E`, 'Export selection as SVG'],
     [`${mod} Z / ${mod} ⇧ Z / ${mod} Y`, 'Undo / Redo'],
     [`${mod} D`, 'Duplicate'],
+    [`${mod} G / ${mod} ⇧ G`, 'Group / Ungroup (Design)'],
+    [`${mod} H`, 'Set as reference / make editable (Design)'],
     [`${mod} A`, 'Select all'],
     [`${mod} +  /  ${mod} −`, 'Zoom in / out'],
     [`${mod} 0`, 'Zoom to fit'],
@@ -135,7 +183,7 @@ export function ShortcutsDialog() {
     ['P', 'Draw tool'],
     ['Enter / Backspace / Esc', 'Finish / remove last point / cancel while drawing'],
     ['1 / 2 / 3', 'Design / Plan / Review'],
-    ['Alt + click', 'Select whole group'],
+    ['Alt + click', 'Select one object of a group'],
     ['Shift', 'Snap angle / free scale / add to selection'],
     ['Alt + drag', 'Move without smart alignment'],
   ]
@@ -157,8 +205,42 @@ export function ShortcutsDialog() {
           ))}
         </div>
         <div className="ss-muted" style={{ marginTop: 12 }}>
-          Shaper forma runs entirely in your browser. Designs autosave locally; use Save to keep a <code>.shaperstudio</code> file on your computer and Export SVG to
+          Forma Studio runs entirely in your browser. Designs autosave locally; use Save to keep a <code>.formastudio</code> file on your computer and Export SVG to
           send it to Shaper Origin.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Studio's Reference explainer, opened from the info button on the "set to Reference" toast. */
+export function ReferenceDialog() {
+  const dialog = useStore((s) => s.dialog)
+  useEffect(() => {
+    if (dialog !== 'reference') return
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && useStore.getState().openDialog(null)
+    window.addEventListener('keydown', k)
+    return () => window.removeEventListener('keydown', k)
+  }, [dialog])
+  if (dialog !== 'reference') return null
+  const close = () => useStore.getState().openDialog(null)
+  return (
+    <div className="reference-modal" onPointerDown={close}>
+      <div className="reference-modal__card" role="dialog" aria-modal="true" aria-labelledby="reference-modal-title" onPointerDown={(e) => e.stopPropagation()}>
+        <button className="reference-modal__close" onClick={close} aria-label="Close">
+          <Ic.IconClose size={20} />
+        </button>
+        <div className="reference-modal__title" id="reference-modal-title">
+          <Ic.IconPathTypeLock size={24} /> Reference
+        </div>
+        <div className="reference-modal__info">
+          <p>
+            Objects set to “Reference” will be locked (non-editable), excluded from lasso selections, and will not be visible in other modes or on Origin.
+          </p>
+          <p>Use this feature to more easily draw over your traces or reference designs and keep your working designs out of your cut files.</p>
+          <a className="reference-modal__more" href="https://support.shapertools.com/hc/articles/21945983196187-Reference-Paths-Deep-Dive" target="_blank" rel="noreferrer">
+            Learn more <Ic.IconChevronRight size={14} />
+          </a>
         </div>
       </div>
     </div>

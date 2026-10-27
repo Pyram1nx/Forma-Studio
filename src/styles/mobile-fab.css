@@ -2,7 +2,6 @@
 .m-fab, .m-scrim, .m-selbar, .help-launcher__badge { display: none; }
 @media (max-width: 700px) {
   .canvas-action-menu, .zoom-controls, .action-bar { display: none !important; }
-  .empty-hint { display: none; }
   .m-fab {
     display: flex; position: absolute; left: 15px; bottom: 15px; width: 40px; height: 40px;
     border-radius: 50%; border: none; padding: 0; align-items: center; justify-content: center;

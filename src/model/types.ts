@@ -43,7 +43,7 @@ export interface ShapeMeta {
   /** Layer index for 3D slices (0 = top). */
   layer?: number
   /** Role of a generated shape. */
-  role?: 'contour' | 'toolpath' | 'pocket' | 'outline' | 'paper'
+  role?: 'contour' | 'toolpath' | 'pocket' | 'outline' | 'paper' | 'guide' | 'guideLabel'
   /** Bit used to generate this shape (see features/carve3d/bits.ts). */
   bitId?: string
   /** Free-form note shown in the panel. */
@@ -75,9 +75,12 @@ export interface Shape {
 export interface Group {
   id: string
   name: string
-  source?: '3d' | 'paper' | 'svg'
+  /** Where the group came from; 'user' = made with Group (always plain, never a feature's outline group). */
+  source?: '3d' | 'paper' | 'svg' | 'user'
   /** Optional metadata, e.g. bit summary for a 3D slice set. */
   info?: Record<string, string | number>
+  /** The group's own anchor (fractions of the group's bounds), used when the whole group is selected. */
+  anchor?: FreeOrigin
 }
 
 export type Units = 'in' | 'mm'
@@ -89,20 +92,28 @@ export type FreeOrigin = { fx: number; fy: number }
 /** The origin: one of the nine bounds points (snapped) or a free point. */
 export type OriginRef = OriginPoint | FreeOrigin
 
+/** What Smart Alignment can snap to (each toggled in Design settings; all on by default). */
+export const SNAP_KINDS = ['points', 'midpoints', 'edges', 'bounds', 'centers', 'origin'] as const
+export type SnapKind = (typeof SNAP_KINDS)[number]
+
 export interface DocSettings {
   smartAlignment: boolean
+  /** Per-target Smart Alignment toggles; a missing entry means on. */
+  snap?: Partial<Record<SnapKind, boolean>>
   showPosition: boolean
   originAnchor: boolean
   /** Optional so documents saved before the picker existed load with the centre. */
   originPoint?: OriginRef
   /** A free point picked on the canvas, kept as a marker until cleared (Studio's custom anchor). */
   customAnchor?: Pt
+  /** The shapes selected when the custom anchor was picked; it goes away with them. */
+  customAnchorFor?: string[]
   /** Plan mode: show tool band + cut path for every shape, not only the selection. */
   cutPathDisplay: boolean
 }
 
 export interface StudioDoc {
-  app: 'ShaperStudio'
+  app: 'FormaStudio'
   version: 1
   id: string
   name: string
@@ -128,10 +139,11 @@ export const DEFAULT_CUT: CutSettings = {
 /**
  * Payload a feature dialog (3D carve, paper scan, SVG import) hands back to the
  * editor. Shapes are placed as-is (world coordinates in mm); the editor assigns
- * the group id and selects them.
+ * the group id and selects them. Without a group the shapes import as separate,
+ * independently movable objects.
  */
 export interface ImportPayload {
-  group: Omit<Group, 'id'>
+  group?: Omit<Group, 'id'>
   shapes: Omit<Shape, 'id'>[]
   /** Non-fatal problems to show the user (unsupported content, skipped elements). */
   warnings?: string[]

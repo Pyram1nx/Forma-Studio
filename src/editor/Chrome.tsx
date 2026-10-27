@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { confirmDiscard } from './fileActions'
-import { useStore } from '../state/store'
+import { groupAction, selectionHasReference, useStore } from '../state/store'
 import * as Ic from '../ui/icons'
-import type { DocSettings, Mode, Units } from '../model/types'
+import { SNAP_KINDS, type DocSettings, type Mode, type SnapKind, type Units } from '../model/types'
 import { importSVGFile } from '../io/svgImport'
 import { parseDoc, pickFile } from '../io/projectFile'
 import { shapesBBox } from '../geometry/transform'
@@ -27,7 +27,7 @@ export function TopLeft() {
     <>
       <div className="app-launcher">
         <button className="app-launcher__logo" onClick={() => useStore.getState().setMenuOpen(true)} aria-label="Open menu">
-          <Ic.IconLogo size={22} />
+          <Ic.FormaLogo size={40} />
         </button>
         {editing ? (
           <input
@@ -118,8 +118,8 @@ export function LeftRail() {
     // The picker takes focus and gives no outside pointer-down, so close the popover first.
     st().setPopover(null)
     try {
-      const f = await pickFile('.svg,image/svg+xml,.shaperstudio,.json')
-      if (/\.(shaperstudio|json)$/i.test(f.name)) {
+      const f = await pickFile('.svg,image/svg+xml,.formastudio,.shaperstudio,.json')
+      if (/\.(formastudio|shaperstudio|json)$/i.test(f.name)) {
         if (!confirmDiscard()) return
         st().setDoc(parseDoc(await f.text()))
         return
@@ -279,7 +279,7 @@ export function TopRight() {
   )
 }
 
-const ORIGIN_ANCHOR_INFO = "Resize and rotate around a chosen point of the selection instead of the opposite handle (applies in Design mode)."
+const ORIGIN_ANCHOR_INFO = "Custom Anchors help you position your design on Origin."
 function SettingsRow(p: { icon: ReactNode; label: string; info?: string; children: ReactNode }) {
   return (
     <div className="settings-pop__row">
@@ -291,6 +291,44 @@ function SettingsRow(p: { icon: ReactNode; label: string; info?: string; childre
         </span>
       )}
       {p.children}
+    </div>
+  )
+}
+
+const SNAP_LABELS: Record<SnapKind, string> = {
+  points: 'Points',
+  midpoints: 'Midpoints',
+  edges: 'Edges',
+  bounds: 'Bounding box',
+  centers: 'Centers',
+  origin: 'Origin',
+}
+
+/** What Smart Alignment snaps to; folds out under the Smart Alignment row while it is on. */
+function SnapAccordion() {
+  const open = useStore((s) => s.doc.settings.smartAlignment)
+  const snap = useStore((s) => s.doc.settings.snap)
+  return (
+    <div className={'settings-pop__accordion' + (open ? ' is-open' : '')} aria-hidden={!open}>
+      <div className="settings-pop__accordion-inner">
+        {SNAP_KINDS.map((k) => {
+          const on = snap?.[k] !== false
+          return (
+            <div key={k} className="settings-pop__subrow">
+              <span className="settings-pop__label">{SNAP_LABELS[k]}</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                aria-label={'Snap to ' + SNAP_LABELS[k].toLowerCase()}
+                tabIndex={open ? 0 : -1}
+                className={'ss-switch ss-switch--sm' + (on ? ' is-on' : '')}
+                onClick={() => useStore.getState().setSnapKind(k, !on)}
+              />
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -363,6 +401,7 @@ function SettingsPopover({ plan }: { plan: boolean }) {
           <SettingsRow icon={<Ic.IconMagnet size={20} />} label="Smart Alignment">
             <Switch k="smartAlignment" label="Smart Alignment" />
           </SettingsRow>
+          <SnapAccordion />
           <SettingsRow icon={<Ic.IconPosition size={20} />} label="Position">
             <Switch k="showPosition" label="Position" />
           </SettingsRow>
@@ -395,19 +434,6 @@ export function ZoomControls() {
   )
 }
 
-/** Centred muted hint on an empty design canvas. Never intercepts pointer events. */
-export function EmptyHint() {
-  const empty = useStore((s) => s.doc.shapes.length === 0)
-  const dialog = useStore((s) => s.dialog)
-  const mode = useStore((s) => s.mode)
-  if (!empty || dialog || mode !== 'design') return null
-  return (
-    <div className="empty-hint">
-      Draw (<kbd>P</kbd>), make a shape, add text, or import an SVG
-    </div>
-  )
-}
-
 // ---------- Bottom action bar (selection) ----------
 export function ActionBar() {
   const mode = useStore((s) => s.mode)
@@ -415,8 +441,18 @@ export function ActionBar() {
   const shapes = useStore((s) => s.doc.shapes)
   const tool = useStore((s) => s.tool)
   const anchorPicking = useStore((s) => s.anchorPicking)
-  if (mode !== 'design' || !selection.length || tool !== 'select' || anchorPicking) return null
+  // Group with two or more objects selected; Ungroup when the selection is one whole group.
+  const groupAct = useStore((s) => groupAction(s.doc, s.selection))
+  // Studio hides the selection actions while a reference is selected.
+  const hasRef = useStore((s) => selectionHasReference(s.doc, s.selection))
+  if (mode !== 'design' || !selection.length || tool !== 'select' || anchorPicking || hasRef) return null
   const st = useStore.getState
+  const groupItem =
+    groupAct === 'group'
+      ? { label: 'Group', icon: <Ic.IconGroup />, onClick: () => st().groupSelected() }
+      : groupAct === 'ungroup'
+        ? { label: 'Ungroup', icon: <Ic.IconUngroup />, onClick: () => st().ungroupSelected() }
+        : null
   const textShape = selection.length === 1 ? shapes.find((s) => s.id === selection[0]) : undefined
   // Locked text can't be re-typeset.
   const isText = textShape?.kind === 'text' && !textShape.locked
@@ -431,6 +467,7 @@ export function ActionBar() {
           { label: 'ShapeShifter', icon: <Ic.IconShapeShifter />, onClick: () => st().enterShapeShifter() },
           { label: 'Offset', icon: <Ic.IconOffset />, onClick: () => st().openDialog('offset') },
           { label: 'Mirror', icon: <Ic.IconMirrorH />, onClick: () => st().mirrorSelected('h') },
+          ...(groupItem ? [groupItem] : []),
         ]}
         extra={
           <>
@@ -464,6 +501,12 @@ export function ActionBar() {
       >
         <Ic.IconShapeShifter />
       </HoverButton>
+      {groupItem && (
+        <HoverButton label={groupItem.label} labelSide="top" className="ui-round ui-round--dark" onClick={groupItem.onClick}>
+          {groupItem.icon}
+        </HoverButton>
+      )}
+      {/* Each stacked pair is its own flush dark pill that grows as the second action flies up. */}
       <Stacked
         a={{ label: 'Mirror Horizontal', icon: <Ic.IconMirrorH />, onClick: () => st().mirrorSelected('h') }}
         b={{ label: 'Mirror Vertical', icon: <Ic.IconMirrorV />, onClick: () => st().mirrorSelected('v') }}
@@ -556,6 +599,20 @@ export function HelpButton() {
 
 export function Toast() {
   const toast = useStore((s) => s.toast)
+  const info = useStore((s) => s.toastInfo)
+  // Studio's reference toast: at the top, with the path-type icon and an info button for its explainer.
+  if (toast && info === 'reference')
+    return (
+      <div role="status" aria-live="polite" aria-atomic="true">
+        <div className="toast toast--guide">
+          <Ic.IconPathTypeLock size={20} />
+          <span>{toast}</span>
+          <button className="toast__info" aria-label="About reference paths" onClick={() => useStore.getState().openDialog('reference')}>
+            <Ic.IconInfoOutline size={20} />
+          </button>
+        </div>
+      </div>
+    )
   // The live region stays mounted so screen readers announce each new message.
   return <div role="status" aria-live="polite" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>
 }

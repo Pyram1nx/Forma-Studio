@@ -5,7 +5,7 @@ import { isDesktop } from './runtime'
 import { useStore } from '../state/store'
 
 /** Dispatched on window by the app menu to run a check that reports "up to date" too. */
-export const CHECK_UPDATES_EVENT = 'shaperstudio:check-updates'
+export const CHECK_UPDATES_EVENT = 'formastudio:check-updates'
 
 /**
  * Checks GitHub Releases for a newer version when the app opens (desktop only). When one
@@ -25,7 +25,7 @@ export default function UpdatePrompt({ checkOnLaunch = true }: { checkOnLaunch?:
         const found = await check()
         if (cancelled) return
         if (found) setUpdate(found)
-        else if (manual) useStore.getState().showToast('Shaper forma is up to date')
+        else if (manual) useStore.getState().showToast('Forma Studio is up to date')
       } catch (e) {
         // A failed check (offline, release not public yet) should not interrupt the editor.
         console.warn('Update check failed', e)
@@ -69,7 +69,7 @@ export default function UpdatePrompt({ checkOnLaunch = true }: { checkOnLaunch?:
       <div className="modal-card update-card" role="dialog" aria-modal="true" aria-label="Update available">
         <div className="modal-card__head">Update available</div>
         <p>
-          Shaper forma {update.version} is ready to download. You have version {update.currentVersion}. Download and install it now?
+          Forma Studio {update.version} is ready to download. You have version {update.currentVersion}. Download and install it now?
         </p>
         <details className="update-card__notes">
           <summary>Release notes</summary>

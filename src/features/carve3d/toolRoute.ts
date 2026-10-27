@@ -96,24 +96,27 @@ function cutContours(out: RoutePoint[], contours: Contour[], tipZ: number, safeZ
  * Bit-centre route for the whole carve: every layer shallow to deep (clearing rings outside in,
  * then the finishing pass), then the through-cut passes if requested. Horizontal travel only
  * happens at the safe height, so the bit never sweeps across the stock below the model top.
+ * Outline-only plans (plan.rings === false, multi-sided jobs without pocket output) skip the
+ * clearing rings and just follow the outlines around the mesh.
  */
 export function buildRoute(plan: CarvePlan, bit: Bit): RoutePoint[] {
   const R = bit.diameter / 2
   const safeZ = plan.modelH + SAFE_CLEARANCE
   const out: RoutePoint[] = []
   const grownStock = offsetContours(plan.stock, R)
+  const rings = plan.rings !== false
 
   for (const layer of plan.layers) {
     const tipZ = plan.modelH - layer.depth
     const step = Math.max(MIN_STEPOVER, 1.4 * layer.sideOffset)
-    for (const ring of clearingRings(layer.toolpath, grownStock, step)) cutContours(out, ring, tipZ, safeZ)
+    if (rings) for (const ring of clearingRings(layer.toolpath, grownStock, step)) cutContours(out, ring, tipZ, safeZ)
     cutContours(out, layer.toolpath, tipZ, safeZ)
   }
 
   if (plan.throughCut && plan.outline.length) {
     const outer = offsetContours(plan.outline, R)
     const from = plan.layers.length ? plan.layers[plan.layers.length - 1].depth : 0
-    const to = plan.carveDepth
+    const to = plan.throughDepth
     const passes = to - from > 1e-6 ? THROUGH_PASSES : 1
     for (let p = 1; p <= passes; p++) {
       const depth = from + ((to - from) * p) / passes

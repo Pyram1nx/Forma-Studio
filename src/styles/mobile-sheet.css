@@ -98,6 +98,7 @@
   .design-panel[data-mtab] [data-tab] {
     display: none;
   }
+  .design-panel[data-mtab='font'] [data-tab='font'],
   .design-panel[data-mtab='size'] [data-tab='size'],
   .design-panel[data-mtab='sides'] [data-tab='sides'],
   .design-panel[data-mtab='radius'] [data-tab='radius'],
@@ -167,15 +168,5 @@
   .plan-panel {
     max-height: 60vh;
     overflow-y: auto;
-  }
-
-  /* Groups card: full-width strip under the top bar */
-  .groups-card {
-    left: 12px;
-    right: 12px;
-    bottom: auto;
-    top: 128px;
-    width: auto;
-    max-height: 30vh;
   }
 }

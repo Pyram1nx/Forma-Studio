@@ -30,7 +30,7 @@ dist-ssr
 tools/trace-lab/samples
 tools/trace-lab/out
 
-# Private deployment and publishing notes. Never publish.
+# Local-only working files (not part of the source)
 deploy/
 
 # Tauri desktop build output

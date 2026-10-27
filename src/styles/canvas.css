@@ -10,11 +10,6 @@
   stroke: #56575d;
   stroke-width: 1px;
 }
-.cv-shape.is-guide {
-  stroke: var(--blue-050);
-  stroke-dasharray: 4 3;
-  fill: none;
-}
 .cv-shape.is-hover {
   stroke: var(--blue-050);
   stroke-width: 2px;
@@ -25,8 +20,7 @@
   stroke-width: 3.5px; /* measured in Studio */
 }
 /* Open paths, guides and 3D slice outlines never get a fill (CSS beats the fill attribute). */
-.cv-shape[fill='none'],
-.cv-shape.is-guide {
+.cv-shape[fill='none'] {
   fill: none !important;
 }
 .cv-bbox {
@@ -34,6 +28,30 @@
   stroke: rgba(44, 101, 255, 0.4);
   stroke-width: 1;
   pointer-events: none;
+}
+/* Reference paths (Studio's measured strokes): amber 1.5px, orange 2px when selected, 12px halo. */
+.cv-ref__path {
+  stroke: #ebb52e;
+  stroke-width: 1.5px;
+}
+.cv-ref.is-selected .cv-ref__path {
+  stroke: #e27718;
+  stroke-width: 2px;
+}
+.cv-ref__halo {
+  stroke: none;
+  stroke-width: 12px;
+}
+.cv-ref.is-hover .cv-ref__halo {
+  stroke: #e89e26;
+  stroke-opacity: 0.12;
+}
+.cv-ref.is-selected .cv-ref__halo {
+  stroke: #e27718;
+  stroke-opacity: 0.2;
+}
+.cv-bbox.is-reference {
+  stroke: rgba(226, 119, 24, 0.45);
 }
 .cv-handle {
   cursor: pointer;
@@ -67,7 +85,7 @@
 }
 /* Shape Anchor mode: nine picks on the selection bounds. */
 .cv-anchor-point {
-  cursor: pointer;
+  cursor: default;
 }
 .cv-anchor-point__hit {
   fill: transparent;
@@ -92,7 +110,7 @@
   fill: rgb(44, 101, 255);
 }
 .cv-anchor-clear {
-  cursor: pointer;
+  cursor: default;
 }
 .cv-anchor-clear rect {
   fill: #eceef2;
@@ -127,7 +145,7 @@
   fill: #e5484d;
 }
 .cv-anchor-hint__close {
-  cursor: pointer;
+  cursor: default;
 }
 .cv-anchor-hint__close circle {
   fill: rgba(22, 21, 20, 0.08);
@@ -137,10 +155,8 @@
   stroke-width: 1.5;
   stroke-linecap: round;
 }
-.cv-origin line {
-  stroke: #b9bcc6;
-  stroke-width: 1px;
-  vector-effect: non-scaling-stroke;
+.cv-origin {
+  fill: var(--snap-red);
 }
 .cv-label {
   pointer-events: none;
@@ -204,15 +220,13 @@
 .pl-shape.is-pocket.is-hover .pl-base {
   stroke: var(--pocket-hover);
 }
-.pl-shape.is-guide .pl-base {
-  stroke: var(--plan-guide);
+.pl-shape.is-guide.is-hover .pl-base {
+  stroke: var(--pocket-hover);
+  stroke-width: 2.5px;
 }
 .pl-shape.is-selected .pl-base {
   stroke: #1be09e;
   stroke-width: 2.5px;
-}
-.pl-shape.is-guide.is-selected .pl-base {
-  stroke: #1be09e;
 }
 /* Tool band for outside / inside / online: centre path stroked at bit width. */
 .pl-band {
@@ -316,4 +330,12 @@
 .rv-shadow-0, .rv-shadow-1, .rv-shadow-2, .rv-shadow-3, .rv-shadow-4, .rv-shadow-5, .rv-shadow-6, .rv-shadow-7 {
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+/* Snapped preview of a free anchor pick: a red dot under the cursor. */
+.cv-anchor-hover {
+  fill: #e5484d;
+  stroke: #fff;
+  stroke-width: 1.5;
+  pointer-events: none;
 }

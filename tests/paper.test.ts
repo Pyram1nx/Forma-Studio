@@ -115,6 +115,27 @@ describe('endpoint stitching', () => {
   })
 })
 
+describe('branch stubs', () => {
+  it('drops a twig off a stroke but keeps a lone dash and a real branch', async () => {
+    const { dropBranchStubs } = await import('../src/features/paper/trace')
+    const line = { pts: [{ x: 0, y: 0 }, { x: 50, y: 0 }], closed: false }
+    const twig = { pts: [{ x: 20, y: 0.2 }, { x: 20.8, y: 1.6 }], closed: false }
+    const branch = { pts: [{ x: 35, y: 0.2 }, { x: 35, y: 6 }], closed: false }
+    const dash = { pts: [{ x: 10, y: 20 }, { x: 12, y: 20 }], closed: false }
+    const kept = dropBranchStubs([line, twig, branch, dash], 0.5)
+    expect(kept).toEqual([line, branch, dash])
+  })
+  it('before joining: drops a twig at a junction, keeps the fragments of a stroke', async () => {
+    const { dropBranchStubs } = await import('../src/features/paper/trace')
+    const arc1 = { pts: [{ x: 0, y: 0 }, { x: 10, y: 0 }], closed: false }
+    const arc2 = { pts: [{ x: 10, y: 0 }, { x: 30, y: 0 }], closed: false }
+    const twig = { pts: [{ x: 10, y: 0.1 }, { x: 10.5, y: 1.5 }], closed: false }
+    const tip = { pts: [{ x: 30.1, y: 0 }, { x: 30.6, y: 0 }], closed: false }
+    const kept = dropBranchStubs([arc1, arc2, twig, tip], 0.5, 'junction')
+    expect(kept).toEqual([arc1, arc2, tip])
+  })
+})
+
 describe('ink mask (full pipeline incl. lighting correction)', () => {
   it('inks the whole interior of a 30 mm solid fill', async () => {
     const { buildInkMask } = await import('../src/features/paper/ink')
@@ -198,6 +219,43 @@ describe('hard shadows and noise (regression)', () => {
       }
     expect(circle).toBeGreaterThan(2 * Math.PI * 30 * ppm * 1.2 * ppm)
     expect(shadowCore).toBeLessThan(0.02 * 25 * ppm * ppm)
+  })
+})
+
+describe('hard shadows on the flattened page (regression)', () => {
+  it('does not ink the sharp edges of a shadow band, but keeps the drawing', () => {
+    const ppm = 6
+    const W = 150 * ppm, H = 200 * ppm
+    const gray = new Uint8Array(W * H)
+    // A phone's shadow: a diagonal band at 48% brightness with a sharp edge
+    // (one-pixel anti-aliased ramp), plus mild vignetting.
+    const band = (x: number, y: number) => {
+      const d = (x + 0.7 * y) / ppm
+      const t1 = Math.min(1, Math.max(0, d - 90 + 0.5))
+      const t2 = Math.min(1, Math.max(0, 150 - d + 0.5))
+      return 1 - 0.52 * Math.min(t1, t2)
+    }
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const vig = 1 - 0.12 * ((x - W / 2) ** 2 + (y - H / 2) ** 2) / (W * W)
+        gray[y * W + x] = Math.round(225 * vig * band(x, y))
+      }
+    // Pen circle of radius 40 mm at (75, 100) mm, 0.8 mm wide, crossing the band.
+    const onCircle = (x: number, y: number, tol: number) => Math.abs(Math.hypot(x - 75 * ppm, y - 100 * ppm) - 40 * ppm) <= tol * ppm
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (onCircle(x, y, 0.4)) gray[y * W + x] = Math.round(gray[y * W + x] * 0.18)
+    const m = buildInkMask(gray, W, H, { ppm, sensitivity: 50, cOffset: 0, marginMm: 3, minBlobMm2: 3, closeGaps: false })
+    let circle = 0
+    let stray = 0
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        if (!m[y * W + x]) continue
+        if (onCircle(x, y, 1.5)) circle++
+        else stray++
+      }
+    // The circle is inked all the way round, in and out of the shadow...
+    expect(circle).toBeGreaterThan(2 * Math.PI * 40 * ppm * 0.7 * ppm)
+    // ...and nothing else: no lines along the shadow's edges.
+    expect(stray).toBeLessThan(0.5 * ppm * ppm)
   })
 })
 

@@ -12,14 +12,14 @@ import '../styles/home.css'
 type Page = 'designs' | 'account'
 
 /** The home window: saved designs and the account. Opens designs in the studio window. */
-export default function HomeApp() {
-  const [page, setPage] = useState<Page>('designs')
+export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Page }) {
+  const [page, setPage] = useState<Page>(initialPage)
   const [session, setSession] = useState<Session | null>(() => getSession())
   const [designs, setDesigns] = useState<RecentEntry[]>(() => listRecent())
   const [error, setError] = useState('')
 
   useEffect(() => {
-    document.title = 'Shaper forma'
+    document.title = 'Forma Studio'
     // Designs may have changed in the studio window while this one was in the background.
     const refresh = () => setDesigns(listRecent())
     window.addEventListener('focus', refresh)
@@ -46,8 +46,8 @@ export default function HomeApp() {
     <div className="home">
       <aside className="home__side">
         <div className="home__brand">
-          <Ic.IconLogo size={22} />
-          <span>Shaper forma</span>
+          <Ic.FormaLogo size={28} />
+          <span>Forma Studio</span>
         </div>
         <nav className="home__nav" aria-label="Home">
           <button className="home__nav-item" aria-current={page === 'designs' ? 'page' : undefined} onClick={() => setPage('designs')}>
@@ -118,7 +118,7 @@ function DesignCard({ entry, onOpen }: { entry: RecentEntry; onOpen: () => void 
     try {
       const doc = loadRecent(entry.id)
       if (!doc || !doc.shapes.length) return null
-      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(exportSVG(doc))
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(exportSVG(doc, undefined, { includeReference: true }))
     } catch {
       return null
     }

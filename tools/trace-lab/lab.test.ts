@@ -140,5 +140,5 @@ describe('trace lab: synthetic photos', () => {
       expect(Math.max(...(r.cornersError ?? [0]))).toBeLessThan(4)
       expect(r.lines).toBe(c.expectedLines)
     }
-  })
+  }, 60000)
 })

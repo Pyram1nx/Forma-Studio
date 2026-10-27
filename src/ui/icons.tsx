@@ -47,6 +47,23 @@ const F = (children: ReactNode, vb = '0 0 24 24') =>
   }
 
 export const IconLogo = F(<><path d="M23.4761 21.9086L12.4704 21.8963L17.9959 12.2771L23.4761 21.9086Z" /><path fillRule="evenodd" clipRule="evenodd" d="M7.99632 3.03583C10.956 1.05729 14.4358 0.000813822 17.9959 0C22.7685 0.00326651 27.3447 1.90004 30.7202 5.27398C34.0957 8.64792 35.9946 13.2233 36 17.9959C36.0008 21.5559 34.9459 25.0363 32.9687 27.9968C30.9916 30.9574 28.1809 33.2651 24.8921 34.6283C21.6033 35.9914 17.9842 36.3487 14.4924 35.6549C11.0006 34.9612 7.79292 33.2476 5.27499 30.7308C2.75707 28.2141 1.04201 25.0072 0.346676 21.5157C-0.348656 18.0242 0.00697691 14.4049 1.3686 11.1155C2.73023 7.82612 5.03669 5.01437 7.99632 3.03583ZM10.9605 23.7189H25.0149C25.7513 23.7189 26.2944 22.9618 25.7554 22.0238L18.971 10.2075C18.432 9.26537 17.5598 9.26537 17.0249 10.2075L10.2363 22.0238C9.70561 22.9577 10.261 23.7189 10.9605 23.7189Z" /></>, '0 0 36 36')
+
+// Full-colour Forma Studio logo (disc + white triangle outline); standalone copy in brand/forma-logo.svg.
+// Colours come from --logo-disc / --logo-mark so themes can invert it.
+const LOGO_HOLE = 'M10.9605 23.7189H25.0149C25.7513 23.7189 26.2944 22.9618 25.7554 22.0238L18.971 10.2075C18.432 9.26537 17.5598 9.26537 17.0249 10.2075L10.2363 22.0238C9.70561 22.9577 10.261 23.7189 10.9605 23.7189Z'
+export function FormaLogo({ size = 40, ...rest }: P) {
+  return (
+    <svg className="forma-logo" width={size} height={size} viewBox="0 0 36 36" aria-hidden="true" focusable="false" {...rest}>
+      <path d={LOGO_HOLE} fill="var(--logo-mark, #fdfdfe)" />
+      <path
+        fill="var(--logo-disc, #0a0a0b)"
+        fillRule="evenodd"
+        d={'M7.99632 3.03583C10.956 1.05729 14.4358 0.000813822 17.9959 0C22.7685 0.00326651 27.3447 1.90004 30.7202 5.27398C34.0957 8.64792 35.9946 13.2233 36 17.9959C36.0008 21.5559 34.9459 25.0363 32.9687 27.9968C30.9916 30.9574 28.1809 33.2651 24.8921 34.6283C21.6033 35.9914 17.9842 36.3487 14.4924 35.6549C11.0006 34.9612 7.79292 33.2476 5.27499 30.7308C2.75707 28.2141 1.04201 25.0072 0.346676 21.5157C-0.348656 18.0242 0.00697691 14.4049 1.3686 11.1155C2.73023 7.82612 5.03669 5.01437 7.99632 3.03583Z' + LOGO_HOLE}
+      />
+      <path fill="var(--logo-disc, #0a0a0b)" d="M23.4761 21.9086L12.4704 21.8963L17.9959 12.2771L23.4761 21.9086Z" />
+    </svg>
+  )
+}
 export const IconUndo = F(<path d="M10.0711 5.76028L8.65685 4.34607L3 10.0029L8.65685 15.6598L10.0711 14.2456L6.8255 11H14C16.2091 11 18 12.7909 18 15C18 17.2091 16.2091 19 14 19H11V21H14C17.3137 21 20 18.3137 20 15C20 11.6863 17.3137 9 14 9H6.83135L10.0711 5.76028Z" />)
 // Redo is Studio's undo glyph mirrored left-to-right.
 export const IconRedo = F(<g transform="matrix(-1 0 0 1 24 0)"><path d="M10.0711 5.76028L8.65685 4.34607L3 10.0029L8.65685 15.6598L10.0711 14.2456L6.8255 11H14C16.2091 11 18 12.7909 18 15C18 17.2091 16.2091 19 14 19H11V21H14C17.3137 21 20 18.3137 20 15C20 11.6863 17.3137 9 14 9H6.83135L10.0711 5.76028Z" /></g>)
@@ -95,6 +112,18 @@ export const IconMirrorH = F(<path d="M18 20V2H12V4H16V18H12V20H18ZM10 22V0H8V22
 export const IconDuplicate = F(<><path d="M14 8V2H2V14H8V8H14Z" /><path fillRule="evenodd" clipRule="evenodd" d="M10 10H22V22H10V10ZM15 20V17H12V15H15V12H17V15H20V17H17V20H15Z" /></>)
 export const IconDuplicateInPlace = F(<><path d="M15 5V4H4V15H5V5H15Z" /><path fillRule="evenodd" clipRule="evenodd" d="M7 7H19V19H7V7ZM12 17V14H9V12H12V9H14V12H17V14H14V17H12Z" /></>)
 export const IconDelete = F(<path fillRule="evenodd" clipRule="evenodd" d="M15.5 4H19V6H5V4H8.5L9.5 3H14.5L15.5 4ZM18 21H6V7.5H18V21Z" />)
+// Studio's path-type-lock: a dotted square with a padlock (Set As Reference & Lock / Make Editable).
+export const IconPathTypeLock = F(
+  <>
+    <path fillRule="evenodd" clipRule="evenodd" d="M7 3H9V5H7V3ZM3 19H5V21H3V19ZM7 19H9V21H7V19ZM19 9H21V7H19V9ZM11 3H13V5H11V3ZM15 3H17V5H15V3ZM3 3H5V5H3V3ZM3 7H5V9H3V7ZM3 11H5V13H3V11ZM3 15H5V17H3V15ZM19 3H21V5H19V3Z" />
+    <path fillRule="evenodd" clipRule="evenodd" d="M13.5 22C13.075 22 12.7188 21.8562 12.4313 21.5687C12.1438 21.2812 12 20.925 12 20.5V16C12 15.575 12.1438 15.2188 12.4313 14.9313C12.7188 14.6438 13.075 14.5 13.5 14.5V13C13.5 12.175 13.7938 11.4688 14.3813 10.8813C14.9688 10.2938 15.675 10 16.5 10C17.325 10 18.0313 10.2938 18.6188 10.8813C19.2063 11.4688 19.5 12.175 19.5 13V14.5C19.925 14.5 20.2813 14.6438 20.5688 14.9313C20.8563 15.2188 21 15.575 21 16V20.5C21 20.925 20.8563 21.2812 20.5688 21.5687C20.2813 21.8562 19.925 22 19.5 22H13.5ZM16 11.5C15.4477 11.5 15 11.9477 15 12.5V14.5H18V12.5C18 11.9477 17.5523 11.5 17 11.5H16Z" />
+  </>,
+)
+// Studio's info-outline (the info button on its toasts).
+export const IconInfoOutline = F(
+  <path fillRule="evenodd" clipRule="evenodd" d="M1.33325 8.00016C1.33325 4.32016 4.31992 1.3335 7.99992 1.3335C11.6799 1.3335 14.6666 4.32016 14.6666 8.00016C14.6666 11.6802 11.6799 14.6668 7.99992 14.6668C4.31992 14.6668 1.33325 11.6802 1.33325 8.00016ZM8.66659 7.3335V11.3335H7.33325V7.3335H8.66659ZM7.99992 13.3335C5.05992 13.3335 2.66659 10.9402 2.66659 8.00016C2.66659 5.06016 5.05992 2.66683 7.99992 2.66683C10.9399 2.66683 13.3333 5.06016 13.3333 8.00016C13.3333 10.9402 10.9399 13.3335 7.99992 13.3335ZM8.66659 4.66683V6.00016H7.33325V4.66683H8.66659Z" />,
+  '0 0 16 16',
+)
 export const IconLock = I(<><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>)
 export const IconUnlock = I(<><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 7.5-2" /></>)
 // Linked dimensions: Studio's aspect-ratio chain (the unlinked state is IconUnlink).
@@ -132,6 +161,9 @@ export const IconSubtract = I(<><path d="M4 4h10v6h-4v4H4Z" fill="currentColor" 
 export const IconIntersect = I(<><path d="M4 4h10v10H4Z" strokeDasharray="2 2" /><path d="M10 10h10v10H10Z" strokeDasharray="2 2" /><path d="M10 10h4v4h-4Z" fill="currentColor" /></>)
 export const IconExclude = I(<><path d="M4 4h10v6h-4v4H4ZM14 10h6v10H10v-6h4Z" fill="currentColor" fillOpacity={0.2} /></>)
 export const IconFront = I(<><rect x="4" y="4" width="10" height="10" rx="1" /><rect x="10" y="10" width="10" height="10" rx="1" fill="currentColor" fillOpacity={0.3} /></>)
+// Group: two objects inside one set of selection corners. Ungroup: the same two objects, apart, each with its own.
+export const IconGroup = I(<><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" /><rect x="7" y="7" width="6.5" height="6.5" rx="1" /><rect x="10.5" y="10.5" width="6.5" height="6.5" rx="1" fill="currentColor" fillOpacity={0.3} /></>)
+export const IconUngroup = I(<><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1" /><rect x="13" y="13" width="7.5" height="7.5" rx="1" fill="currentColor" fillOpacity={0.3} /><path d="M14 3.5h6.5V10M3.5 14V20.5H10" strokeDasharray="2 2.25" /></>)
 export const IconBack = I(<><rect x="10" y="10" width="10" height="10" rx="1" /><rect x="4" y="4" width="10" height="10" rx="1" fill="currentColor" fillOpacity={0.3} /></>)
 
 // Cut type icons (Plan mode). Only Guide is dashed; the other cut types are solid.
@@ -153,6 +185,12 @@ export const IconCutMixed = I(
 export const IconUploadArrow = I(<><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></>)
 export const IconCamera = I(<><path d="M4 8h3l1.5-2.5h7L17 8h3v11H4Z" /><circle cx="12" cy="13.5" r="3.5" /></>)
 export const IconCapture = I(<circle cx="12" cy="12" r="6" fill="currentColor" />)
+// Trace mobile controls (originals drawn in brand/original-icons/trace-*.svg).
+export const IconTraceEditScan = I(<><path d="M21.3 13V17.85A3 3 0 0 1 18.3 20.85H6.6A3 3 0 0 1 3.6 17.85V9.4A3 3 0 0 1 6.6 6.4H8.4L9.9 3.4H12.8" /><circle cx="11.8" cy="13.3" r="3.2" /><path d="M22.1 6.3H14.3M17.6 3.5 14.3 6.3 17.6 9.1" /></>)
+export const IconTraceModify = I(<><path d="M15 4.4H6.2a2.2 2.2 0 0 0 0 4.4H15" /><circle cx="18" cy="6.6" r="3.1" /><path d="M9.1 15.4h9.3a2.2 2.2 0 0 1 0 4.4H9.1" /><circle cx="6" cy="17.6" r="3.1" /></>)
+export const IconTracePick = I(<><path d="M10.5 20.5H6a3 3 0 0 1-3-3V5.8a3 3 0 0 1 3-3H18.5a3 3 0 0 1 3 3V11" /><path d="M11.5 11 22.3 14.7 14.8 21.8Z" fill="currentColor" fillOpacity=".12" /></>)
+export const IconTraceLasso = I(<><rect x="3" y="3" width="18" height="18" rx="3.5" /><path d="M5.9 20.5C5.9 15 6.5 13 10 12C13 11.3 14.5 11 16 9.5C17.5 8 17.5 6.5 20 4.5" /></>)
+export const IconTraceDetail = I(<><rect x="3" y="3" width="18" height="18" rx="3.5" /><path d="M17.5 3.9V20.1" strokeWidth="0" /><path d="M18 4H17.5a3 3 0 0 0-.5 0V20H18A3 3 0 0 0 21 17V7A3 3 0 0 0 18 4Z" fill="currentColor" stroke="none" /><g fill="currentColor" stroke="none"><circle cx="12.5" cy="12" r=".9" /><circle cx="14.5" cy="9.5" r=".9" /><circle cx="14.5" cy="14.5" r=".9" /><circle cx="15.5" cy="7" r=".8" /><circle cx="15.5" cy="12" r=".8" /><circle cx="15.5" cy="17" r=".8" /></g></>)
 // Trace glyph: Studio's own Trace icon (original in brand/original-icons/trace.svg).
 export const IconTrace = F(
   <>

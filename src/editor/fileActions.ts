@@ -57,7 +57,7 @@ export function openRecent(id: string) {
 export function exportSvg(selectionOnly = false) {
   const st = useStore.getState()
   const only = selectionOnly && st.selection.length ? selectedShapes(st) : undefined
-  if (!(only ?? st.doc.shapes).length) {
+  if (!(only ?? st.doc.shapes).some((s) => !s.hidden && !s.locked)) {
     st.showToast('Nothing to export yet')
     return
   }

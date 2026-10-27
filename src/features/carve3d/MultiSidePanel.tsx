@@ -2,7 +2,7 @@
 // the bridges that keep the part seated in the block between flips, and the resulting process
 // table (one row per side × stage). Selecting a row points the 3D preview at that stage.
 import type { Units } from '../../model/types'
-import { BITS } from './bits'
+import { BITS, ORIGIN_MAX_DEPTH } from './bits'
 import { Field, NumInput } from './fields'
 import { SIDE_LABEL, STAGE_LABEL, type MultiSidePlan, type StageBits, type StageRole } from './multiSide'
 import type { TabSettings } from './carvePlan'
@@ -19,13 +19,34 @@ export interface MultiSidePanelProps {
   allowance: number
   engraveDepth: number
   stepDown: number
+  onStepDown: (v: number) => void
+  stockMm: number
+  onStock: (v: number) => void
   marginMm: number
   onMargin: (v: number) => void
   onAllowance: (v: number) => void
   onEngraveDepth: (v: number) => void
   bridges: TabSettings
   onBridges: (t: TabSettings) => void
-  plan: MultiSidePlan | null
+  /** The selected layer's plan (the whole block when it is one board). */
+  layerPlan: MultiSidePlan | null
+  /** "Layer 2 of 3" when the block is split, else null. */
+  layerLabel: string | null
+  /** Every layer's warnings. */
+  warnings: string[]
+  shapesCount: number
+  /** Boards the block is split into. */
+  layers: number
+  onLayers: (n: number) => void
+  /** Boards that would bring every top/bottom carve and cut-out within reach, when more are needed. */
+  splitTo: number | null
+  /** Thickest board the chosen bits handle, mm. */
+  layerLimitMm: number | null
+  /** Thickness of each board, mm. */
+  boardMm: number
+  /** Bit length lost to the collet and spindle, mm. */
+  holderMm: number
+  onHolder: (v: number) => void
   planCurrent: boolean
   computing: boolean
   progress: number
@@ -38,9 +59,11 @@ export interface MultiSidePanelProps {
   dec: number
 }
 
-const ROLES: StageRole[] = ['rough', 'detail', 'engrave']
+type BitRole = Exclude<StageRole, 'cutout'>
 
-const ROLE_HINT: Record<StageRole, string> = {
+const ROLES: BitRole[] = ['rough', 'detail', 'engrave']
+
+const ROLE_HINT: Record<BitRole, string> = {
   rough: 'largest owned bit — clears the bulk',
   detail: 'finer bit — finishing pass to the surface',
   engrave: 'V-bit — finest detail at the bottom',
@@ -48,7 +71,7 @@ const ROLE_HINT: Record<StageRole, string> = {
 
 export default function MultiSidePanel(p: MultiSidePanelProps) {
   const carvable = BITS.filter((b) => b.carvable)
-  const stage = (role: StageRole) => (
+  const stage = (role: BitRole) => (
     <Field key={role} label={`${ROLE_HINT[role].split(' — ')[0]} bit`}>
       <select
         className="ss-select"
@@ -70,6 +93,14 @@ export default function MultiSidePanel(p: MultiSidePanelProps) {
     <>
       <div className="c3d-section">
         <div className="ss-section-title">sides</div>
+        <div className="c3d-two">
+          <Field label="stock thickness">
+            <NumInput value={p.toU(p.stockMm)} onChange={(v) => p.onStock(v)} decimals={p.dec} suffix={p.units} ariaLabel="stock thickness" />
+          </Field>
+          <Field label="step-down">
+            <NumInput value={p.toU(p.stepDown)} onChange={(v) => p.onStepDown(v)} decimals={p.dec} suffix={p.units} ariaLabel="step-down" />
+          </Field>
+        </div>
         <Field label="margin">
           <NumInput value={p.toU(p.marginMm)} onChange={(v) => p.onMargin(p.fromU(v))} decimals={p.dec} suffix={p.units} ariaLabel="margin" />
         </Field>
@@ -105,12 +136,40 @@ export default function MultiSidePanel(p: MultiSidePanelProps) {
             <NumInput value={p.toU(p.engraveDepth)} onChange={(v) => p.onEngraveDepth(p.fromU(v))} decimals={p.dec} suffix={p.units} ariaLabel="engrave depth" />
           </Field>
         </div>
-        <span className="ss-muted">Rough clears the bulk, detail finishes the surface, engrave adds the finest detail. Order: rough → detail → engrave.</span>
+        <span className="ss-muted">Rough clears the bulk and leaves the finish allowance, detail finishes the whole surface, engrave adds the finest detail. Order: rough → detail → engrave.</span>
+      </div>
+
+      <div className="c3d-section">
+        <div className="ss-section-title">depth limits</div>
+        <div className="c3d-two">
+          <Field label="layers">
+            <NumInput value={p.layers} decimals={0} onChange={(v) => p.onLayers(v)} ariaLabel="layers" />
+          </Field>
+          <Field label="collet allowance">
+            <NumInput value={p.toU(p.holderMm)} decimals={p.dec} suffix={p.units} onChange={(v) => p.onHolder(v)} ariaLabel="collet allowance" />
+          </Field>
+        </div>
+        <span className="ss-muted">
+          Origin cuts at most {p.L(ORIGIN_MAX_DEPTH)}; a bit reaches its stated max depth, or its length less the collet allowance.
+          {p.layerLimitMm !== null && Number.isFinite(p.layerLimitMm) ? ` Your bits reach ${p.L(p.layerLimitMm)}.` : ''}
+          {p.layers > 1 ? ` ${p.layers} boards of ${p.L(p.boardMm)}, carved one by one and glued up.` : ''}
+        </span>
+        {p.splitTo !== null && (
+          <div className="c3d-warn c3d-split">
+            <span>
+              This block is too deep for your bits. Split it into {p.splitTo} layers of {p.L((p.boardMm * p.layers) / p.splitTo)}: each board is carved
+              from both faces and cut out within reach, then the boards are glued back up.
+            </span>
+            <button type="button" className="ss-btn ss-btn--sm ss-btn--primary" onClick={() => p.onLayers(p.splitTo!)}>
+              Split into {p.splitTo} layers
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="c3d-section">
         <div className="ss-section-title">bridges</div>
-        <span className="ss-muted">Sides that cut through the stock leave bridges, so the part stays seated in the block while you flip it.</span>
+        <span className="ss-muted">The part is cut out once, on the last top/bottom face, leaving bridges so it stays seated in the block while you flip it. No setup cuts through them.</span>
         <div className="c3d-three">
           <Field label="count">
             <NumInput value={p.bridges.count} decimals={0} onChange={(v) => p.onBridges({ ...p.bridges, count: Math.max(0, Math.round(v)) })} ariaLabel="bridge count" />
@@ -129,16 +188,16 @@ export default function MultiSidePanel(p: MultiSidePanelProps) {
           <span style={{ width: `${Math.round(p.progress * 100)}%` }} />
         </div>
       )}
-      {p.plan?.warnings.map((w, i) => (
+      {p.warnings.map((w, i) => (
         <div key={i} className="c3d-warn">
           {w}
         </div>
       ))}
 
-      {p.plan && p.plan.sides.length > 0 && (
+      {p.layerPlan && p.layerPlan.sides.length > 0 && (
         <div className="c3d-section">
-          <div className="ss-section-title">process plan</div>
-          <span className="c3d-order">Run the sides top to bottom, stages in order rough → detail → engrave; flip between sides.</span>
+          <div className="ss-section-title">process plan{p.layerLabel ? ` · ${p.layerLabel}` : ''}</div>
+          <span className="c3d-order">Run the rows top to bottom: each side's stages in order, flipping the block between sides. ⧉ cuts the part out (leave the bridges).</span>
           <table className="c3d-table">
             <thead>
               <tr>
@@ -149,10 +208,12 @@ export default function MultiSidePanel(p: MultiSidePanelProps) {
               </tr>
             </thead>
             <tbody>
-              {p.plan.sides.map((s) =>
+              {p.layerPlan.sides.map((s) =>
                 s.plans.map((plan, k) => {
-                  const lastD = plan.layers[plan.layers.length - 1]?.depth ?? 0
-                  const from = s.stages[k]?.depthFrom ?? 0
+                  // Depths from the stock face, as set on the machine.
+                  const cutout = s.stages[k].role === 'cutout'
+                  const from = cutout ? 0 : s.faceOffset + s.stages[k].depthFrom
+                  const to = cutout ? plan.throughDepth : plan.layers[plan.layers.length - 1]?.depth ?? from
                   const sel = p.selected.side === s.side && p.selected.stage === k
                   return (
                     <tr
@@ -167,10 +228,10 @@ export default function MultiSidePanel(p: MultiSidePanelProps) {
                         <span className="ss-muted"> · {plan.bit.name}</span>
                       </td>
                       <td>
-                        {p.L(from)} → {p.L(lastD)}
-                        {s.freeing && k === s.plans.length - 1 ? ' ⧉' : ''}
+                        {p.L(from)} → {p.L(to)}
+                        {plan.throughCut ? ' ⧉' : ''}
                       </td>
-                      <td>{plan.layers.length}</td>
+                      <td>{cutout ? '—' : plan.layers.length}</td>
                     </tr>
                   )
                 }),
@@ -178,7 +239,7 @@ export default function MultiSidePanel(p: MultiSidePanelProps) {
             </tbody>
           </table>
           <span className="ss-muted">
-            {p.plan.shapes.length} shapes will be added
+            {p.shapesCount} shapes will be added
             {p.planCurrent ? '' : ' (settings changed, recalculating)'}
           </span>
         </div>

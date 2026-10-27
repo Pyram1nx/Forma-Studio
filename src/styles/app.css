@@ -1,4 +1,4 @@
-/* Shaper forma editor chrome — sizes/colours measured from Shaper Studio. */
+/* Forma Studio editor chrome — sizes/colours measured from Shaper Studio. */
 * {
   box-sizing: border-box;
 }
@@ -58,17 +58,14 @@ kbd {
   height: 40px;
   border-radius: 50%;
   border: none;
-  background: var(--gray-900);
-  color: var(--white);
+  background: none;
   display: flex;
-  align-items: center;
-  justify-content: center;
   cursor: pointer;
   padding: 0;
 }
 .theme--plan .app-launcher__logo {
-  background: var(--white);
-  color: var(--gray-900);
+  --logo-disc: var(--white);
+  --logo-mark: var(--gray-900);
 }
 .app-launcher__name {
   font: 500 16px var(--font-ui);
@@ -321,6 +318,30 @@ kbd {
   font-size: 14px;
   font-weight: 500;
 }
+/* Smart Alignment targets: folds out under its row (grid rows 0fr -> 1fr animates the height). */
+.settings-pop__accordion {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease;
+}
+.settings-pop__accordion.is-open {
+  grid-template-rows: 1fr;
+}
+.settings-pop__accordion-inner {
+  overflow: hidden;
+  min-height: 0;
+  padding-left: 32px;
+}
+.settings-pop__subrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+}
+.settings-pop__subrow .settings-pop__label {
+  font-weight: 400;
+  color: var(--gray-700);
+}
 /* ⓘ beside a settings label: muted glyph, the explanation is its title tooltip. */
 .settings-pop__info {
   display: inline-flex;
@@ -349,31 +370,36 @@ kbd {
 .action-bar .hover-btn.is-active .ui-round {
   background: var(--blue-050);
 }
+/* Each stacked pair is a flush dark pill (no padding) that grows upward as the second action flies up. */
 .stacked {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  border-radius: 100px;
-  transition: background 0.12s;
+  background: var(--gray-800);
+  border-radius: 20px;
+}
+.stacked .ui-round--dark {
+  background: transparent;
+}
+.stacked .ui-round--dark:hover {
+  background: var(--gray-900);
+}
+/* Stacked buttons reveal their second action as an icon; no text above the upper button. */
+.stacked .hover-btn__label {
+  display: none;
 }
 .stacked__alt {
-  position: absolute;
-  bottom: 0;
+  height: 0;
+  overflow: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: bottom 0.15s, opacity 0.15s;
-}
-.stacked.is-open {
-  background: var(--gray-700);
+  transition: height 0.15s, opacity 0.15s;
 }
 .stacked.is-open .stacked__alt {
-  bottom: 45px;
+  height: 40px;
   opacity: 1;
   pointer-events: auto;
-}
-.stacked.is-open > .hover-btn > .hover-btn__label {
-  opacity: 0;
 }
 
 /* ---------- Right dock (parameter panels) ---------- */
@@ -395,22 +421,66 @@ kbd {
   overflow-y: auto;
   user-select: none;
 }
+/* Studio's Set As Reference & Lock / Make Editable button (colours from Studio's CSS). */
+:root {
+  --ref-amber: #ebb52e;
+  --ref-orange: #e27718;
+  --ref-hover: rgba(232, 158, 38, 0.12);
+}
 .reference-btn {
+  position: relative;
   width: 42px;
   height: 42px;
+  padding: 8px;
   border-radius: 1000px;
   border: 1px solid var(--gray-200);
   background: var(--gray-100);
-  color: var(--gray-700);
+  color: #161514;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
 }
+.reference-btn:hover {
+  background: var(--ref-hover);
+  color: var(--ref-orange);
+}
+/* A reference is selected: filled orange, turning blue on hover as "Make Editable". */
 .reference-btn.is-active {
-  background: var(--blue-050);
+  background: var(--ref-orange);
+  border-color: var(--ref-orange);
   color: var(--white);
+}
+.reference-btn.is-active:hover {
+  background: var(--blue-050);
   border-color: var(--blue-050);
+  color: var(--white);
+}
+/* Hover label to the left of the button, plain text as in Studio. */
+.reference-btn__label {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 148%;
+  letter-spacing: 0.14px;
+  color: var(--gray-900);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.reference-btn:hover .reference-btn__label,
+.reference-btn:focus-visible .reference-btn__label {
+  opacity: 1;
+}
+@media (hover: none) {
+  .reference-btn__label {
+    display: none;
+  }
 }
 .size-fields {
   display: flex;
@@ -444,6 +514,29 @@ kbd {
 }
 .design-panel .ss-input {
   padding-right: 22px;
+}
+/* Studio's parameter panel metrics (desktop): 12/16/16 padding, 16px between fields, 11px labels,
+   15px inputs with 8px side padding. */
+@media (min-width: 701px) {
+  .right-dock .design-panel {
+    padding: 12px 16px 16px;
+    gap: 16px;
+  }
+  .design-panel .ss-panel__header {
+    line-height: 13px;
+  }
+  .design-panel .ss-label {
+    line-height: 11px;
+    letter-spacing: 0.11px;
+  }
+  .design-panel .ss-input {
+    padding: 0 8px;
+    font-size: 15px;
+    letter-spacing: 0.5px;
+  }
+  .design-panel .ss-input input + .ss-input__adorn {
+    margin-left: -2px;
+  }
 }
 .radius-add {
   height: var(--control-h-lg);
@@ -835,6 +928,30 @@ kbd {
   background: var(--blue-050);
   color: var(--white);
 }
+.shape-creator__icons {
+  display: grid;
+  grid-template-columns: repeat(6, 36px);
+  gap: 10px;
+  margin-top: 8px;
+}
+.icon-result-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: none;
+  background: var(--gray-100);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.icon-result-btn img {
+  width: 24px;
+  height: 24px;
+}
+.icon-result-btn:hover {
+  background: var(--blue-050);
+  filter: invert(1);
+}
 .shape-creator__close {
   position: absolute;
   top: 12px;
@@ -1038,10 +1155,11 @@ kbd {
   position: relative;
 }
 .app-menu__wordmark {
+  font-family: 'Forma Studio', var(--font-ui);
   font-weight: 400;
   font-size: 20px;
-  letter-spacing: 0.32em;
-  padding-left: 0.32em;
+  letter-spacing: 0.04em;
+  padding-left: 0.04em;
 }
 .app-menu__close {
   position: absolute;
@@ -1122,15 +1240,15 @@ kbd {
   background: var(--gray-200);
   margin: 12px 20px;
 }
-/* Export count badge ("n of n", selected of all). */
+/* Export badge: exports are unlimited. */
 .export-count {
   border-radius: 10px;
   padding: 3px 8px;
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
-  color: var(--gray-900);
-  background: var(--export-yellow);
+  color: #fff;
+  background: #1fa971;
 }
 .app-menu__dashboard {
   flex: 1;
@@ -1229,6 +1347,103 @@ kbd {
   animation: ss-fade 0.15s;
   max-width: 80vw;
 }
+/* Studio's guide alert: top centre, path-type icon, message, divider and an info button. */
+.toast.toast--guide {
+  top: 18px;
+  bottom: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 0 12px;
+  height: 32px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: #2a2b2d;
+}
+.toast--guide > .icon {
+  flex: none;
+}
+.toast__info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 8px;
+  margin-left: 6px;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: var(--white);
+  cursor: pointer;
+}
+/* Studio's Reference explainer. */
+.reference-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(253, 253, 254, 0.8);
+}
+.reference-modal__card {
+  position: relative;
+  width: 388px;
+  max-width: calc(100vw - 24px);
+  min-height: 320px;
+  background: #fdfdfe;
+  border: 2px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 48px 56px 40px;
+  color: #72757e;
+}
+.reference-modal__close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  border: none;
+  background: none;
+  color: #2a2b2d;
+  cursor: pointer;
+  display: flex;
+}
+.reference-modal__title {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 32px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  line-height: 16px;
+  color: var(--ref-orange);
+}
+.reference-modal__info {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  font-size: 16px;
+  line-height: 20px;
+  letter-spacing: 0.16px;
+  color: var(--gray-900);
+}
+.reference-modal__info p {
+  margin: 0;
+}
+.reference-modal__more {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.28px;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: #0546f6;
+}
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1277,76 +1492,6 @@ kbd {
   justify-content: center;
 }
 
-/* ---------- Text dialog ---------- */
-.text-dialog__body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 32px;
-}
-.text-dialog__input {
-  width: min(900px, 90vw);
-  border: none;
-  outline: none;
-  resize: none;
-  text-align: center;
-  font-size: 60px;
-  line-height: 1.2;
-  color: var(--gray-900);
-  background: transparent;
-}
-.text-dialog__input::placeholder {
-  color: var(--gray-300);
-}
-.text-dialog__options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-  justify-content: center;
-}
-.text-dialog__height {
-  width: 150px;
-  color: var(--gray-900);
-}
-.text-dialog__height .ss-input {
-  background: var(--gray-100);
-}
-.text-dialog__font {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.text-dialog__font .ss-select {
-  width: 220px;
-  height: 40px;
-  background: var(--gray-100);
-}
-
-/* Empty canvas hint: centred, muted, never intercepts the pointer. */
-.empty-hint {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  max-width: 80%;
-  text-align: center;
-  font-size: 15px;
-  letter-spacing: 0.15px;
-  color: var(--gray-500);
-  pointer-events: none;
-  z-index: 1;
-}
-.empty-hint kbd {
-  font-size: 13px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--gray-300);
-}
-
 /* Zoom: bottom-left, 15px from the corner. */
 .zoom-controls {
   position: absolute;
@@ -1380,137 +1525,7 @@ kbd {
   background: var(--gray-800);
 }
 
-/* Imported group sets (3D / paper / SVG): collapsible card above the zoom controls. */
-.groups-card {
-  position: absolute;
-  /* Clear of the left rail (15px inset + 40px buttons + 20px gap), like the Make Shape popover. */
-  left: 75px;
-  bottom: 64px; /* above the zoom controls */
-  width: 232px;
-  max-height: 40vh;
-  overflow-y: auto;
-  background: var(--gray-100);
-  border: 1px solid var(--gray-200);
-  border-radius: var(--radius-lg);
-  color: var(--gray-800);
-  z-index: 10;
-}
-.groups-card__head {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border: none;
-  background: none;
-  color: inherit;
-  font: 500 14px var(--font-ui);
-  cursor: pointer;
-  text-align: left;
-}
-.groups-card__head > span:first-of-type {
-  flex: 1;
-  text-transform: lowercase;
-  letter-spacing: 0.5px;
-}
-.groups-card__count {
-  font-size: 11px;
-  color: var(--gray-600);
-}
-.groups-card__head .icon {
-  transition: transform 0.15s;
-}
-.groups-card__head .icon.is-collapsed {
-  transform: rotate(-90deg);
-}
-.groups-card__list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 8px 10px;
-}
-.groups-card__group {
-  background: var(--white);
-  border-radius: 8px;
-  padding: 6px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.groups-card__row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.groups-card__name {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.groups-card__eye {
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: var(--gray-100);
-  color: var(--gray-800);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex: none;
-}
-.groups-card__eye[aria-pressed='false'] {
-  color: var(--gray-500);
-}
-.groups-card__role {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border: none;
-  background: none;
-  padding: 2px 0;
-  font: 400 13px var(--font-ui);
-  color: var(--gray-800);
-  cursor: pointer;
-}
-.groups-card__info {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: var(--gray-600);
-}
-.groups-card__info div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-.groups-card__info dd {
-  margin: 0;
-}
-.groups-card__info dt {
-  text-transform: lowercase;
-}
-.theme--plan .groups-card {
-  background: var(--gray-900);
-  border-color: var(--gray-900);
-  color: var(--white);
-}
-.theme--plan .groups-card__group {
-  background: var(--gray-800);
-}
-.theme--plan .groups-card__role,
-.theme--plan .groups-card__name {
-  color: var(--white);
-}
-.theme--plan .groups-card__info {
-  color: var(--gray-300);
-}
-
-@media (max-width: 700px) {
+@media (max-width: 720px) {
   .action-bar {
     gap: 12px;
   }
@@ -1528,15 +1543,6 @@ kbd {
   }
   .app-launcher__name {
     max-width: 120px;
-  }
-  .groups-card {
-    width: min(232px, 60vw);
-  }
-}
-
-@media (max-width: 480px) {
-  .mode-switcher__text {
-    display: none;
   }
 }
 
@@ -1610,4 +1616,184 @@ kbd {
 .modeview__keep.is-active {
   background: var(--blue-light);
   color: var(--blue-070);
+}
+
+/* Template settings: steppers for counts, segmented choices for style/side/spacing/guides. */
+.ss-stepper,
+.ss-segmented {
+  display: flex;
+  align-items: stretch;
+  height: var(--control-h);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+  overflow: hidden;
+}
+.ss-stepper__btn {
+  width: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--input-text);
+  font: 400 18px var(--font-ui);
+  cursor: pointer;
+}
+.ss-stepper {
+  position: relative;
+}
+.ss-stepper__suffix {
+  position: absolute;
+  right: 40px;
+  top: 50%;
+  transform: translateY(-50%);
+  font: 400 8px var(--font-ui);
+  color: var(--gray-500, #8a8f98);
+  pointer-events: none;
+}
+.ss-stepper__value {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  text-align: center;
+  font: 500 15px var(--font-ui);
+  letter-spacing: 0.5px;
+  color: var(--input-text);
+}
+/* Studio's toggle group: a grey track, the active choice a white raised segment with a grey outline,
+   segments overlapping by 4px so a pair is 100px wide. */
+.ss-segmented {
+  width: fit-content;
+  max-width: 100%;
+  height: 34px;
+  padding: 0;
+  gap: 0;
+  background: var(--gray-200);
+  border-radius: 8px;
+  overflow: visible;
+}
+.ss-segmented__btn {
+  flex: none;
+  min-width: 54px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--panel-text);
+  font: 500 13px Roboto, Helvetica, Arial, sans-serif;
+  letter-spacing: 0.37px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ss-segmented__btn + .ss-segmented__btn {
+  margin-left: -4px;
+}
+.ss-segmented__btn.is-active {
+  position: relative;
+  z-index: 1;
+  background: var(--input-bg);
+  border-color: var(--gray-300);
+  color: #2a2b2d;
+}
+.ss-segmented__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ss-segmented__letter {
+  font: inherit;
+  letter-spacing: inherit;
+}
+.ss-segmented__btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Template slider (box joint pin factor): the track fills from the left to the thumb, a tick mark at 0,
+   and the value in a bubble above the thumb only while focused or dragged. --at is the 0..1 position. */
+.ss-slider {
+  --thumb: 20px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 4px;
+}
+/* The slider's label sits 8px in rather than 12px. */
+.ss-field:has(> .ss-slider) > .ss-label {
+  padding-left: 8px;
+}
+.ss-slider__input {
+  --fill: calc(var(--thumb) / 2 + var(--at) * (100% - var(--thumb)));
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: var(--thumb);
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.ss-slider__input::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 12px;
+  background: var(--gray-200);
+}
+.ss-slider__input::-moz-range-track {
+  height: 8px;
+  border-radius: 12px;
+  background: var(--gray-200);
+}
+.ss-slider__input::-moz-range-progress {
+  height: 8px;
+  border-radius: 12px;
+  background: var(--gray-200);
+}
+.ss-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: calc(4px - var(--thumb) / 2);
+  border-radius: 50%;
+  border: 1px solid var(--gray-300);
+  background: var(--input-bg);
+  box-sizing: border-box;
+}
+.ss-slider__input::-moz-range-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: 50%;
+  border: 1px solid var(--gray-300);
+  background: var(--input-bg);
+  box-sizing: border-box;
+}
+.ss-slider__input:focus-visible {
+  outline: 2px solid var(--blue-050);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Tick mark: centred where the thumb sits for that value (the thumb travels inside the track). */
+.ss-slider__mark {
+  position: absolute;
+  z-index: 2;
+  top: calc(50% - 1px);
+  left: calc(4px + var(--thumb) / 2 + var(--at) * (100% - 8px - var(--thumb)) - 1px);
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: var(--gray-400, #8e929f);
+  pointer-events: none;
+}
+.ss-slider__bubble {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(50% + var(--thumb) / 2 + 4px);
+  left: calc(4px + var(--thumb) / 2 + var(--at) * (100% - 8px - var(--thumb)));
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--gray-500, #72757e);
+  color: var(--white);
+  font: 500 14px var(--font-ui);
+  white-space: nowrap;
+  pointer-events: none;
 }

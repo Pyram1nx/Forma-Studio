@@ -1,7 +1,7 @@
 [package]
-name = "shaperforma"
+name = "forma-studio"
 version = "0.1.0"
-description = "Shaper forma: design and cut planning for Shaper Origin"
+description = "Forma Studio: design and cut planning for Shaper Origin"
 edition = "2021"
 rust-version = "1.77.2"
 

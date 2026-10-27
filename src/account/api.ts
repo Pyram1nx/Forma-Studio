@@ -1,4 +1,4 @@
-// Client for the Shaper forma accounts API (see server/index.mjs). Accounts are optional:
+// Client for the Forma Studio accounts API (see server/index.mjs). Accounts are optional:
 // the editor works fully without signing in.
 
 /** Base URL of the accounts API, set at build time. Empty means accounts are off in this build. */
@@ -14,7 +14,7 @@ export interface Session {
   createdAt?: string
 }
 
-const KEY = 'shaperstudio:session'
+const KEY = 'formastudio:session'
 
 export function getSession(): Session | null {
   try {

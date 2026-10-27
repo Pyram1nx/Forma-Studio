@@ -19,35 +19,12 @@
     display: none;
   }
 
-  /* Pill group: [mode dropdown] [plan] [review] */
+  /* Studio's mobile tabs: Design | Plan | Review stay in place; the selected one expands to icon + label
+     (+ chevron), the others collapse to their icon. Same 13px track and 12px tabs as desktop. */
   .top-right {
     top: 15px;
     right: 15px;
     gap: 0;
-  }
-  .mode-switcher {
-    height: 40px;
-    gap: 0;
-    padding: 0;
-    border-radius: 20px;
-    align-items: center;
-    background: var(--gray-50);
-  }
-  .mode-switcher__tab {
-    height: 40px;
-    padding: 0;
-    border-radius: 20px;
-    justify-content: center;
-    border-width: 2px;
-  }
-  .mode-switcher__tab:not(.is-selected) {
-    width: 40px;
-    order: 2;
-  }
-  .mode-switcher__tab.is-selected {
-    order: 1;
-    padding: 0 12px 0 10px;
-    gap: 8px;
   }
   .mode-switcher__tab:not(.is-selected) .mode-switcher__icon {
     display: inline-flex;
@@ -57,8 +34,6 @@
   }
   .mode-switcher__tab.is-selected .mode-switcher__text {
     display: inline;
-    font-size: 13px;
-    letter-spacing: 0.6px;
   }
 
   /* Recenter / zoom-to-selection: second row, far right. */
@@ -95,10 +70,24 @@
   }
 
   /* Settings card below the mode button. */
-  .settings-pop {
-    width: 280px;
-    top: 50px;
+  .settings-pop,
+  .settings-pop--plan {
+    width: 281px;
+    top: 52px;
     right: 0;
+    padding: 20px;
+  }
+  .settings-pop__row {
+    height: 64px;
+  }
+  .settings-pop > .settings-pop__row:first-child {
+    height: 40px;
+  }
+  .settings-pop__label {
+    font-size: 16px;
+  }
+  .settings-pop__subrow {
+    height: 48px;
   }
 }
 

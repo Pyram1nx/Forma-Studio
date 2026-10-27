@@ -12,11 +12,11 @@ export const OPEN_DESIGN_EVENT = 'open-design'
 
 type WindowConfig = NonNullable<ConstructorParameters<typeof WebviewWindow>[1]>
 
-const HOME_URL = '/?view=home'
-const STUDIO_URL = '/'
+const HOME_URL = '/account'
+const STUDIO_URL = '/studio'
 
-const HOME_WINDOW: WindowConfig = { title: 'Shaper forma', url: HOME_URL, width: 1080, height: 700, minWidth: 720, minHeight: 520 }
-const STUDIO_WINDOW: WindowConfig = { title: 'Shaper forma', url: STUDIO_URL, width: 1440, height: 900, minWidth: 960, minHeight: 640 }
+const HOME_WINDOW: WindowConfig = { title: 'Forma Studio', url: HOME_URL, width: 1080, height: 700, minWidth: 720, minHeight: 520 }
+const STUDIO_WINDOW: WindowConfig = { title: 'Forma Studio', url: STUDIO_URL, width: 1440, height: 900, minWidth: 960, minHeight: 640 }
 
 /** Bring an existing window to the front, or create it. */
 async function showOrCreate(label: string, options: WindowConfig) {
@@ -33,7 +33,7 @@ async function showOrCreate(label: string, options: WindowConfig) {
 /** Show the home window (desktop), or open it in a tab (browser). */
 export async function openHome() {
   if (!isDesktop()) {
-    window.open(HOME_URL, 'shaperstudio-home')
+    window.open(HOME_URL, 'formastudio-home')
     return
   }
   await showOrCreate(HOME_LABEL, HOME_WINDOW)
@@ -46,7 +46,7 @@ export async function openHome() {
 export async function openDesignInStudio(id: string) {
   setLastDesign(id)
   if (!isDesktop()) {
-    window.open(STUDIO_URL, 'shaperstudio-studio')
+    window.open(STUDIO_URL, 'formastudio-studio')
     return
   }
   const studio = await WebviewWindow.getByLabel(STUDIO_LABEL)

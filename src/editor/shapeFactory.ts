@@ -1,9 +1,10 @@
 // Create and regenerate parametric shapes.
-import type { Contour, Shape, ShapeKind } from '../model/types'
+import type { Contour, Shape, ShapeKind, Units } from '../model/types'
 import { DEFAULT_CUT, MM_PER_IN } from '../model/types'
 import { uid } from '../model/ids'
 import { ellipse, polygon, rect } from '../geometry/primitives'
-import { TEMPLATES } from '../geometry/templates'
+import { paramDefault, TEMPLATES } from '../geometry/templates'
+import { boxJointKind, DEFAULT_STOCK_ANCHOR } from '../geometry/boxJoints'
 import { recenter } from '../geometry/transform'
 
 export type BasicShape = 'circle' | 'ellipse' | 'rect' | 'roundrect' | 'polygon' | 'triangle'
@@ -66,24 +67,30 @@ export function createBasic(id: BasicShape, x: number, y: number): Shape {
   }
 }
 
-export function createTemplate(templateId: string, x: number, y: number): Shape | null {
+export function createTemplate(templateId: string, x: number, y: number, units: Units = 'in'): Shape | null {
   const t = TEMPLATES.find((tp) => tp.id === templateId)
   if (!t) return null
   const params: Record<string, number | string> = { template: t.id }
-  for (const d of t.params) params[d.key] = d.default
+  const vals: Record<string, number> = {}
+  for (const d of t.params) params[d.key] = vals[d.key] = paramDefault(d, units)
+  const joint = boxJointKind(t.id)
+  if (joint) params.anchor = DEFAULT_STOCK_ANCHOR
   const s: Shape = {
     id: uid(),
     name: t.name,
     kind: 'template',
     params,
-    contours: t.build({}),
+    contours: t.build(vals),
     x: 0,
     y: 0,
     rotation: 0,
     sx: 1,
     sy: 1,
-    cut: { ...DEFAULT_CUT },
+    // Box joints are inside cuts; Studio's pocket path always carries a 1/4 in tool, whatever the bit diameter param.
+    cut: joint ? { ...DEFAULT_CUT, type: 'inside', bitDia: 6.35 } : { ...DEFAULT_CUT },
   }
+  // Box joints keep the board centred on the shape's origin, so their guides and stock anchors line up.
+  if (joint) return { ...s, x, y }
   const r = recenter(s)
   return { ...r, x, y }
 }

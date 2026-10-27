@@ -48,7 +48,7 @@ describe('store', () => {
     const svg = exportSVG(useStore.getState().doc)
     expect(svg).toContain('width="25.4mm"')
     expect(svg).toContain('shaper:cutType="pocket"')
-    expect(svg).toContain('shaper:cutDepth="6mm"')
+    expect(svg).toContain('shaper:cutDepth="0.23622 in"')
   })
 })
 

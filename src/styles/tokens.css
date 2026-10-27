@@ -89,8 +89,8 @@
 }
 /* Shaper's brand face, used for mode titles (Trace). */
 @font-face {
-  font-family: 'Shaper Forma';
-  src: url('/fonts/ShaperForma-Regular.ttf') format('truetype');
+  font-family: 'Forma Studio';
+  src: url('/fonts/FormaStudio-Regular.ttf') format('truetype');
   font-weight: 400;
   font-style: normal;
   font-display: swap;

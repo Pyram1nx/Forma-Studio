@@ -375,3 +375,99 @@
   background: color-mix(in srgb, var(--blue-050) 8%, var(--white));
   cursor: pointer;
 }
+
+/* Layer stack over the 3D view: layers downwards, the selected layer's sides fold out to the
+   right of it one after another. */
+.c3d-stack {
+  position: absolute;
+  left: 16px;
+  top: 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.c3d-stack__row,
+.c3d-stack__sides {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.c3d-stack__sides {
+  perspective: 600px;
+}
+.c3d-tile {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  background: var(--white);
+  box-shadow: 0 1px 3px rgba(10, 10, 11, 0.08);
+  overflow: hidden;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.c3d-tile:hover {
+  border-color: var(--gray-400);
+}
+.c3d-tile.is-on {
+  border-color: var(--blue-050);
+  box-shadow: 0 0 0 2px var(--blue-050);
+}
+.c3d-tile img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.c3d-tile span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1px 4px;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 500;
+  color: var(--gray-700);
+  background: rgba(253, 253, 254, 0.85);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.c3d-tile.is-on span {
+  color: var(--blue-060);
+}
+.c3d-tile--side {
+  width: 56px;
+  height: 56px;
+  transform-origin: left center;
+  animation: c3d-fold-out 190ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+/* Swoosh: each side tile swings out from behind its neighbour. */
+@keyframes c3d-fold-out {
+  from {
+    opacity: 0;
+    transform: translateX(-28px) rotateY(-85deg) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .c3d-tile--side {
+    animation: none;
+  }
+}
+.c3d-split {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}

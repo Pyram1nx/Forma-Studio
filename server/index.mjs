@@ -1,8 +1,9 @@
-// Shaper forma accounts API. Runs as one AWS Lambda behind API Gateway (HTTP API).
+// Forma Studio accounts API. Runs as one AWS Lambda behind API Gateway (HTTP API).
 // Users are stored as one JSON object per account in S3, keyed by a hash of the email.
 // Passwords are hashed with scrypt; sessions are HMAC-signed bearer tokens.
 //
-// Routes: POST /auth/signup, POST /auth/login, GET /auth/me
+// Routes: POST /auth/signup, POST /auth/login, GET /auth/me,
+//         GET /icons/search?q=, GET /icons/svg?id=   (icon search for Find Art, no auth)
 // Env:    USERS_BUCKET, SESSION_SECRET_ARN, ALLOWED_ORIGINS (comma list),
 //         TOKEN_TTL_DAYS (optional, default 30)
 
@@ -174,10 +175,46 @@ async function me(event) {
   return json(200, { email: claims.email, expiresAt: new Date(claims.exp).toISOString(), createdAt: claims.created })
 }
 
+// Icon search for Find Art. Proxies Iconify (open-licensed icon sets, no API key) so the
+// editor only talks to this origin. Only solid, filled sets are allowed: stroke-only icons
+// do not import as shapes.
+const ICON_PREFIXES = 'mdi,bi'
+const ICON_ID_RE = /^(mdi|bi):[a-z0-9-]{1,80}$/
+const ICONIFY = 'https://api.iconify.design'
+
+async function iconSearch(event) {
+  const q = String(event.queryStringParameters?.q ?? '').trim()
+  if (q.length < 2 || q.length > 80) return fail(400, 'Search for at least 2 characters.')
+  const limit = Math.min(Math.max(Number(event.queryStringParameters?.limit) || 36, 1), 60)
+  const params = new URLSearchParams({ query: q, limit: String(limit), prefixes: ICON_PREFIXES })
+  const res = await fetch(`${ICONIFY}/search?${params}`, { signal: AbortSignal.timeout(8000) })
+  if (!res.ok) return fail(502, 'Icon search is unavailable right now.')
+  const data = await res.json()
+  const icons = (data.icons ?? []).filter((id) => ICON_ID_RE.test(id)).map((id) => ({ id }))
+  return { statusCode: 200, headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=3600' }, body: JSON.stringify({ icons }) }
+}
+
+async function iconSvg(event) {
+  const id = String(event.queryStringParameters?.id ?? '')
+  if (!ICON_ID_RE.test(id)) return fail(400, 'Unknown icon.')
+  const [prefix, name] = id.split(':')
+  // Black fill at 24px so the importer reads real geometry, not 1em or currentColor.
+  const params = new URLSearchParams({ color: '#000000', width: '24', height: '24' })
+  const res = await fetch(`${ICONIFY}/${prefix}/${name}.svg?${params}`, { signal: AbortSignal.timeout(8000) })
+  if (!res.ok) return fail(404, 'Icon not found.')
+  return {
+    statusCode: 200,
+    headers: { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' },
+    body: await res.text(),
+  }
+}
+
 const ROUTES = {
   'POST /auth/signup': signup,
   'POST /auth/login': login,
   'GET /auth/me': me,
+  'GET /icons/search': iconSearch,
+  'GET /icons/svg': iconSvg,
 }
 
 export const handler = async (event) => {
