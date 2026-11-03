@@ -1,0 +1,40 @@
+/* Flash shown on a field that just received a caliper reading (src/ui/caliperInput.ts).
+   Same green as Plan mode's selection controls: #1be09e outline over a 30% fill. */
+.caliper-hit {
+  animation: caliper-hit 3s linear forwards;
+}
+/* Fade in and out take 0.25 s each (8.33% of 3 s). The 0% and 100% frames are left out so the field
+   fades from and back to its own colours. */
+@keyframes caliper-hit {
+  8.33%,
+  91.67% {
+    border-color: #1be09e;
+    background-color: rgba(27, 224, 158, 0.3);
+    box-shadow: 0 0 0 1px #1be09e;
+  }
+}
+/* A bare input has no wrapper, so give it a visible edge as well. */
+input.caliper-hit {
+  border-radius: var(--radius, 6px);
+}
+.caliper-badge {
+  position: fixed;
+  z-index: 10000;
+  width: 24px;
+  height: 24px;
+  pointer-events: none;
+  color: #1be09e;
+  animation: caliper-badge 3s linear forwards;
+}
+@keyframes caliper-badge {
+  0% {
+    opacity: 0;
+  }
+  8.33%,
+  91.67% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

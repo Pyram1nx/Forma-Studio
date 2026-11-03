@@ -1,12 +1,12 @@
 // Editing operations shared by the panels and the canvas. Locked shapes are never
 // moved, resized, rotated, mirrored, deleted or boolean'd (offset may read them).
 import type { Contour, FreeOrigin, Pt, Shape } from '../model/types'
-import { DEFAULT_CUT } from '../model/types'
 import { editableIds, useStore } from '../state/store'
+import { newShapeCut } from '../state/prefs'
 import { bake, bboxValid, recenter, type BBox } from '../geometry/transform'
 import { boolean, offsetContours, type JoinStyle } from '../geometry/offset'
 import { uid } from '../model/ids'
-import { buildFromParams, isParametric } from './shapeFactory'
+import { normalizeParametric } from './shapeFactory'
 import { wbbox, world } from './geomCache'
 import { boxJointPartsOf, scaleBoxJoint, syncBoxJointGuides } from './boxJointGuides'
 
@@ -28,6 +28,18 @@ export function selectionBBox(shapes: Shape[]): BBox | null {
   return bboxValid(b) ? b : null
 }
 
+/**
+ * The box anchors are measured against. A lone compass pivots on its star centre, not on its bounds (a star
+ * with an odd number of points is lopsided), so its box is symmetric around the shape's origin.
+ */
+export function anchorBBox(shapes: Shape[], b: BBox): BBox {
+  const s = shapes.length === 1 ? shapes[0] : undefined
+  if (s?.kind !== 'template' || s.params?.template !== 'compass') return b
+  const hx = Math.max(s.x - b.minX, b.maxX - s.x)
+  const hy = Math.max(s.y - b.minY, b.maxY - s.y)
+  return { minX: s.x - hx, maxX: s.x + hx, minY: s.y - hy, maxY: s.y + hy }
+}
+
 /** A pivot: one of the nine bounds points, or a free point given as fractions of the bounds. */
 export type AnchorRef = Anchor | FreeOrigin
 
@@ -36,14 +48,6 @@ export function anchorPoint(b: BBox, a: AnchorRef): Pt {
   const x = a[1] === 'l' ? b.minX : a[1] === 'r' ? b.maxX : (b.minX + b.maxX) / 2
   const y = a[0] === 't' ? b.minY : a[0] === 'b' ? b.maxY : (b.minY + b.maxY) / 2
   return { x, y }
-}
-
-function normalizeParametric(s: Shape): Shape {
-  if (!isParametric(s) || (Math.abs(s.sx) === 1 && Math.abs(s.sy) === 1)) return s
-  const params = { ...s.params!, w: Number(s.params!.w) * Math.abs(s.sx), h: Number(s.params!.h) * Math.abs(s.sy) }
-  const contours = buildFromParams(s.kind, params)
-  if (!contours) return s
-  return { ...s, params, contours, sx: Math.sign(s.sx) || 1, sy: Math.sign(s.sy) || 1 }
 }
 
 /**
@@ -88,7 +92,7 @@ export function rotateSelection(ids: string[], deg: number, anchor: AnchorRef, a
   const b = selectionBBox(shapes)
   if (!b) return
   const delta = absolute && shapes.length === 1 ? deg - shapes[0].rotation : deg
-  const piv = anchorPoint(b, anchor)
+  const piv = anchorPoint(anchorBBox(shapes, b), anchor)
   const r = (delta * Math.PI) / 180
   const cos = Math.cos(r)
   const sin = Math.sin(r)
@@ -124,18 +128,19 @@ function pathShape(name: string, contours: Contour[], template?: Shape): Shape {
     rotation: 0,
     sx: 1,
     sy: 1,
-    cut: template ? { ...template.cut } : { ...DEFAULT_CUT },
+    cut: template ? { ...template.cut } : newShapeCut(),
     groupId: template?.groupId,
   })
 }
 
 /**
- * ShapeShifter: merge the chosen fragments of the shapes into one new shape. Locked
- * shapes never enter the mode, so they are never removed.
+ * ShapeShifter: merge the chosen fragments of the source shapes into one new shape.
+ * Sources may be doc shapes or ephemeral ghosts rebuilt from an earlier merge. Locked
+ * shapes never enter the mode, so they are never removed. `editId` is an older result
+ * being re-edited; it is always replaced by the new shape.
  */
-export function finishShapeShifter(sourceIds: string[], chosen: Contour[][], keepExisting: boolean) {
+export function finishShapeShifter(sources: Shape[], chosen: Contour[][], keepExisting: boolean, editId?: string) {
   const st = useStore.getState()
-  const sources = st.doc.shapes.filter((s) => sourceIds.includes(s.id))
   if (!sources.length || !chosen.length) return
   let acc = chosen[0]
   for (const f of chosen.slice(1)) acc = boolean('union', acc, f)
@@ -144,8 +149,23 @@ export function finishShapeShifter(sourceIds: string[], chosen: Contour[][], kee
     return
   }
   const shape = pathShape('ShapeShifter', acc, sources[0])
-  if (keepExisting) st.addShapes([shape])
-  else st.replaceShapes(sources.map((s) => s.id), [shape])
+  // Record the merge so selecting the result alone can re-open ShapeShifter on it:
+  // the root source ids plus the sources' contours in the result's local frame
+  // (shape.x/y is that frame's origin after recenter), so they follow it as it moves.
+  const provenance = [...new Set(sources.flatMap((s) => (s.meta?.shifterOf?.length ? s.meta.shifterOf : [s.id])))]
+  shape.meta = {
+    ...shape.meta,
+    shifterOf: provenance,
+    shifterSources: sources.map((s) =>
+      world(s).map((ct) => ({ closed: ct.closed, pts: ct.pts.map((p) => ({ x: p.x - shape.x, y: p.y - shape.y })) })),
+    ),
+  }
+  if (keepExisting && !editId) st.addShapes([shape])
+  else {
+    // Ghost ids are not in the doc, so replaceShapes simply ignores them.
+    const removeIds = new Set([...sources.map((s) => s.id), ...(editId ? [editId] : [])])
+    st.replaceShapes([...removeIds], [shape])
+  }
 }
 
 export interface OffsetOptions {

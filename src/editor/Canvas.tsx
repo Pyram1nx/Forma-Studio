@@ -3,17 +3,19 @@ import type { OriginPoint, OriginRef, Pt, Shape } from '../model/types'
 import { activeOrigin, useStore } from '../state/store'
 import { requestCut, subscribeCut, wbbox, world } from './geomCache'
 import { bake, bboxValid, distToContours, emptyBBox, pointInContours, type BBox } from '../geometry/transform'
-import { anchorPoint } from './ops'
-import { alignCoords, snapKindsOn, snapPoint } from './snapTargets'
+import { anchorBBox, anchorPoint } from './ops'
+import { gridShown, gridSizeMm, gridSnaps, labelsShown } from './grid'
+import { GRID_SNAP_PX, OBJECT_SNAP_PX, alignLines, guideFor, orthoDelta, snapAxis, snapKindsOn, snapPoint } from './snapTargets'
 import { fmtLen } from '../model/factory'
 import { uid } from '../model/ids'
-import { DEFAULT_CUT } from '../model/types'
+import { newShapeCut } from '../state/prefs'
 import { contoursToD } from '../geometry/svgPath'
-import { buildFromParams, isParametric } from './shapeFactory'
+import { normalizeParametric } from './shapeFactory'
 import { IconArrowDown } from '../ui/icons'
 import { boxJointForSelection, boxJointPartsOf, scaleBoxJoint, setBoxJointAnchor, stockAnchorOf, stockAnchorWorld, syncBoxJointGuides } from './boxJointGuides'
 import { STOCK_ANCHORS, type StockAnchor } from '../geometry/boxJoints'
 import { DesignShape, PlanShape, ReviewShape } from './canvas/ShapeViews'
+import { isPenShape, usePen } from './canvas/usePen'
 import {
   cornerFactor,
   edgeFactor,
@@ -26,21 +28,46 @@ import {
   wheelZoomFactor,
 } from './canvas/canvasMath'
 
+/** Review sheet grain: a 1200 mm tile of seeded, gently wandering streaks (Studio tiles its own at 300 units). */
+const GRAIN_TILE = 1200
+const GRAIN_LINES = (() => {
+  let seed = 7
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+  const lines: { d: string; w: number }[] = []
+  for (let y = 18; y < GRAIN_TILE - 18; y += 10 + rnd() * 26) {
+    const pts = 12
+    const ys = Array.from({ length: pts }, (_, i) => (i === 0 ? y : y + (rnd() - 0.5) * 34))
+    ys.push(ys[0]) // the streak meets itself at the tile edge
+    let d = `M0 ${ys[0]}`
+    for (let i = 1; i <= pts; i++) {
+      const x0 = ((i - 1) / pts) * GRAIN_TILE
+      const x1 = (i / pts) * GRAIN_TILE
+      d += ` C${x0 + (x1 - x0) / 2} ${ys[i - 1]} ${x0 + (x1 - x0) / 2} ${ys[i]} ${x1} ${ys[i]}`
+    }
+    lines.push({ d, w: 1.2 + rnd() * 2.4 })
+  }
+  return lines
+})()
+
 type Handle = 'tl' | 'tm' | 'tr' | 'rm' | 'br' | 'bm' | 'bl' | 'lm'
 
 type Drag =
   | { kind: 'pan'; sx: number; sy: number; px: number; py: number; moved: boolean; tap: boolean }
   | { kind: 'move'; start: Pt; orig: Map<string, Pt>; bbox: BBox; moved: boolean }
   | { kind: 'marquee'; start: Pt; cur: Pt; additive: boolean }
-  | { kind: 'scale'; handle: Handle; anchor: Pt; ref: Pt; start: Pt; orig: Map<string, Shape>; moved: boolean }
+  | { kind: 'scale'; handle: Handle; anchor: Pt; ref: Pt; start: Pt; orig: Map<string, Shape>; bbox: BBox; moved: boolean }
   | { kind: 'pinch'; dist: number; zoom: number; anchor: Pt }
 
 interface Guide {
   axis: 'x' | 'y'
   at: number
+  /** A grid line (dashed) rather than an object alignment guide. */
+  grid?: boolean
+  /** World extent along the line; an object guide spans the moved thing and its target, as in Studio. */
+  from?: number
+  to?: number
 }
 
-const SNAP_PX = 6
 /** Screen size of one pocket tick tile (Studio shows sparse short diagonal ticks). */
 const TICK_PX = 24
 const HANDLE_MOUSE = 18
@@ -48,6 +75,11 @@ const HANDLE_TOUCH = 28
 const DOUBLE_CLICK_MS = 350
 /** Extra world-space margin (screen px) when deciding whether a shape needs its band. */
 const CULL_PX = 40
+
+/** How many separate objects a selection reads as. In Design a group counts once, as in Studio. */
+function selectionUnitCount(shapes: Shape[], design: boolean): number {
+  return new Set(shapes.map((s) => (design && s.groupId ? 'g:' + s.groupId : s.id))).size
+}
 
 function unionBBox(shapes: Shape[]): BBox {
   const b = emptyBBox()
@@ -61,18 +93,14 @@ function unionBBox(shapes: Shape[]): BBox {
   return b
 }
 
-/** Turn accumulated scale on parametric shapes back into clean params. */
-function normalizeParametric(s: Shape): Shape {
-  if (!isParametric(s) || (s.sx === 1 && s.sy === 1)) return s
-  const params = { ...s.params!, w: Number(s.params!.w) * Math.abs(s.sx), h: Number(s.params!.h) * Math.abs(s.sy) }
-  const contours = buildFromParams(s.kind, params)
-  if (!contours) return s
-  return { ...s, params, contours, sx: Math.sign(s.sx) || 1, sy: Math.sign(s.sy) || 1 }
-}
-
 const ANCHOR_POINTS: OriginPoint[] = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br']
 /** A click this close (screen px) to a bounds point snaps the origin to that point; anywhere else it is a free point. */
 const ANCHOR_SNAP_PX = 10
+/** Studio's anchor squares: 8.5px with 1.25px corners; the picker's points sit 0.875px outside the bounds; hover rings are 15px. */
+const ANCHOR_SIZE = 8.5
+const ANCHOR_RX = 1.25
+const ANCHOR_PICK_OUT = 0.875
+const ANCHOR_RING_R = 15
 
 /** The origin for a click at world point p: the nearest bounds point within the snap distance, else a free point. */
 function originAt(p: Pt, b: BBox, zoom: number): OriginRef {
@@ -132,8 +160,8 @@ function AnchorPickOverlay({
   h: number
   points?: { key: string; x: number; y: number; active: boolean }[]
 }) {
-  const xs = { l: x0, c: (x0 + x1) / 2, r: x1 }
-  const ys = { t: y0, m: (y0 + y1) / 2, b: y1 }
+  const xs = { l: x0 - ANCHOR_PICK_OUT, c: (x0 + x1) / 2, r: x1 + ANCHOR_PICK_OUT }
+  const ys = { t: y0 - ANCHOR_PICK_OUT, m: (y0 + y1) / 2, b: y1 + ANCHOR_PICK_OUT }
   const pts =
     points ??
     ANCHOR_POINTS.map((p) => ({ key: p, x: xs[p[1] as 'l' | 'c' | 'r'], y: ys[p[0] as 't' | 'm' | 'b'], active: p === value }))
@@ -143,8 +171,15 @@ function AnchorPickOverlay({
       {pts.map(({ key, x, y, active }) => (
         <g key={key} className="cv-anchor-point" data-anchor={key}>
           <circle cx={x} cy={y} r={ANCHOR_SNAP_PX} className="cv-anchor-point__hit" />
-          <circle cx={x} cy={y} r={ANCHOR_SNAP_PX - 1} className="cv-anchor-point__ring" />
-          <rect x={x - 4} y={y - 4} width={8} height={8} className={'cv-anchor-point__dot' + (active ? ' is-active' : '')} />
+          <circle cx={x} cy={y} r={ANCHOR_RING_R} className="cv-anchor-point__ring" />
+          <rect
+            x={x - ANCHOR_SIZE / 2}
+            y={y - ANCHOR_SIZE / 2}
+            width={ANCHOR_SIZE}
+            height={ANCHOR_SIZE}
+            rx={ANCHOR_RX}
+            className={'cv-anchor-point__dot' + (active ? ' is-active' : '')}
+          />
         </g>
       ))}
       <g className="cv-anchor-title" transform={`translate(${w / 2} 40)`}>
@@ -194,6 +229,8 @@ export default function Canvas() {
   const tool = useStore((s) => s.tool)
   const view = useStore((s) => s.view)
   const selection = useStore((s) => s.selection)
+  // Plan: the shape lit while its Manage Selection tile is held.
+  const planHighlight = useStore((s) => s.planHighlight)
   const viewport = useStore((s) => s.viewport)
   const anchorPicking = useStore((s) => s.anchorPicking)
 
@@ -212,6 +249,10 @@ export default function Canvas() {
   const [, bumpCut] = useReducer((n: number) => n + 1, 0)
 
   const touches = useRef(new Map<number, { x: number; y: number }>())
+  /** Selection before the first finger went down, so a pinch can undo what that finger picked. */
+  const selectionAtTouch = useRef<string[] | null>(null)
+  /** Plain click on a member of a multi-selection: released without a drag, it takes just that object out. */
+  const toggleOnUp = useRef<string[] | null>(null)
   const lastPtrType = useRef(typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? 'touch' : 'mouse')
   const lastClick = useRef<{ t: number; x: number; y: number } | null>(null)
   const hoverRaf = useRef(0)
@@ -222,6 +263,10 @@ export default function Canvas() {
     setAnchorHover(null)
     setGuides((prev) => (prev.length ? [] : prev))
   }, [anchorPicking])
+  // The draw tool's snap guides go with it.
+  useEffect(() => {
+    if (tool !== 'draw') setGuides((prev) => (prev.length ? [] : prev))
+  }, [tool])
 
   const setDragBoth = (d: Drag | null) => {
     dragRef.current = d
@@ -313,6 +358,23 @@ export default function Canvas() {
   const sx = (x: number) => x * view.zoom + view.panX
   const sy = (y: number) => y * view.zoom + view.panY
 
+  /** Pen anchors snap like the draw tool's points; the node editor leaves the edited path out of the targets. */
+  const snapPen = (raw: Pt, e: { ctrlKey: boolean; altKey: boolean }, exclude?: string): Pt => {
+    const st = useStore.getState()
+    const snap = exclude ? snapSetup(st, e, (q) => q.id !== exclude) : null
+    const hit = snap?.smart ? snapPoint(raw, snap.targets, snap.on, snap.tol, { grid: snap.grid }) : snapFreePoint(raw, st, e)
+    setGuides((prev) => (hit.guides.length || prev.length ? hit.guides : prev))
+    return hit.pt
+  }
+  const pen = usePen({ toWorld, snap: snapPen, clearGuides: () => setGuides((prev) => (prev.length ? [] : prev)) })
+  /** Open the node editor on a pen path: select it and bake its transform (no visible change, no undo step). */
+  const enterPenEdit = (id: string) => {
+    const st = useStore.getState()
+    st.select([id])
+    st.patchShapes([id], bake)
+    st.setPenEdit(id)
+  }
+
   const hitTest = (p: Pt): Shape | null => {
     if (mode === 'review') return null // review shapes are display-only
     const tol = 6 / useStore.getState().view.zoom
@@ -380,7 +442,7 @@ export default function Canvas() {
       rotation: 0,
       sx: 1,
       sy: 1,
-      cut: { ...DEFAULT_CUT, type: close ? 'outside' : 'online' },
+      cut: close ? newShapeCut() : newShapeCut('online'),
     })
     st.addShapes([s])
     st.setTool('select')
@@ -393,6 +455,59 @@ export default function Canvas() {
     const a = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4)
     const len = Math.hypot(dx, dy)
     return { x: from.x + Math.cos(a) * len, y: from.y + Math.sin(a) * len }
+  }
+
+  /**
+   * What a drag snaps to, as in Studio: the lines of the targets on screen while Smart Alignment is on, and the grid
+   * while Snap to grid is on. Ctrl (as in Studio) or Alt holds snapping off. Null when nothing snaps.
+   */
+  const snapSetup = (st: ReturnType<typeof useStore.getState>, e: { ctrlKey: boolean; altKey: boolean }, keep: (s: Shape) => boolean = () => true) => {
+    if (e.ctrlKey || e.altKey) return null
+    const smart = st.doc.settings.smartAlignment
+    const onGrid = gridSnaps(st.doc)
+    if (!smart && !onGrid) return null
+    const z = st.view.zoom
+    const minX = -st.view.panX / z
+    const minY = -st.view.panY / z
+    const maxX = minX + st.viewport.w / z
+    const maxY = minY + st.viewport.h / z
+    const targets = smart
+      ? visible.filter((s) => {
+          if (!keep(s)) return false
+          const b = wbbox(s)
+          return b.maxX >= minX && b.minX <= maxX && b.maxY >= minY && b.minY <= maxY
+        })
+      : []
+    const on = snapKindsOn(st.doc.settings)
+    const { xs, ys } = smart ? alignLines(targets, on) : { xs: [], ys: [] }
+    return { xs, ys, targets, on, smart, tol: OBJECT_SNAP_PX / z, grid: onGrid ? { size: gridSizeMm(st.doc), tol: GRID_SNAP_PX / z } : null }
+  }
+
+  /** A free point (draw tool, anchor pick) snapped to what `snapSetup` allows; `extra` points are aligned with too. */
+  const snapFreePoint = (p: Pt, st: ReturnType<typeof useStore.getState>, e: { ctrlKey: boolean; altKey: boolean }, extra: Pt[] = []): { pt: Pt; guides: Guide[] } => {
+    const snap = snapSetup(st, e)
+    if (!snap) return { pt: p, guides: [] }
+    if (snap.smart) return snapPoint(p, snap.targets, snap.on, snap.tol, { grid: snap.grid, extra })
+    const hx = snapAxis([p.x], 0, [], snap.tol, snap.grid)
+    const hy = snapAxis([p.y], 0, [], snap.tol, snap.grid)
+    const pt = { x: p.x + (hx?.shift ?? 0), y: p.y + (hy?.shift ?? 0) }
+    return { pt, guides: [...(hx ? [guideFor('x', hx, pt.y, pt.y)] : []), ...(hy ? [guideFor('y', hy, pt.x, pt.x)] : [])] }
+  }
+
+  /** The draw tool's point, snapped as Studio's line tool does: each axis to target lines, the path's own points and the grid. */
+  const snapDrawPoint = (p: Pt, e: { ctrlKey: boolean; altKey: boolean }) => snapFreePoint(p, useStore.getState(), e, draftRef.current)
+
+  /**
+   * Whether a click on empty canvas at this screen point clears the selection. With several objects selected,
+   * the gray box around them is the selection's edge: only a click outside it clears.
+   */
+  const clearsSelectionAt = (clientX: number, clientY: number) => {
+    const st = useStore.getState()
+    const sel = st.doc.shapes.filter((s) => st.selection.includes(s.id))
+    if (st.mode !== 'design' || selectionUnitCount(sel, true) < 2) return true
+    const b = unionBBox(sel)
+    const p = toWorld(clientX, clientY)
+    return p.x < b.minX || p.x > b.maxX || p.y < b.minY || p.y > b.maxY
   }
 
   // ---------- drag lifecycle ----------
@@ -430,7 +545,7 @@ export default function Canvas() {
       }
     }
     // A one-finger tap on empty canvas clears the selection; a pan does not.
-    if (d.kind === 'pan' && d.tap && !d.moved) st.select([])
+    if (d.kind === 'pan' && d.tap && !d.moved && clearsSelectionAt(d.sx, d.sy)) st.select([])
     if (d.kind === 'scale' && d.moved) st.patchShapes([...d.orig.keys()], normalizeParametric)
     setGuides((g) => (g.length ? [] : g))
     setDragBoth(null)
@@ -441,8 +556,25 @@ export default function Canvas() {
     const pts = [...touches.current.values()]
     const svg = svgRef.current
     if (pts.length < 2 || !svg) return
-    if (dragRef.current?.kind === 'pan') setDragBoth({ ...dragRef.current, tap: false })
-    endDrag()
+    // The first finger may already have selected or moved something. Undo that, so a pinch changes nothing but the view.
+    const first = dragRef.current
+    if (first?.kind === 'move' && first.moved) {
+      const orig = first.orig
+      useStore.getState().patchShapes([...orig.keys()], (s) => ({ ...s, x: orig.get(s.id)!.x, y: orig.get(s.id)!.y }))
+    }
+    if (first?.kind === 'scale' && first.moved) {
+      const orig = first.orig
+      useStore.getState().patchShapes([...orig.keys()], (s) => orig.get(s.id)!)
+    }
+    if (first?.kind === 'move' || first?.kind === 'scale') {
+      setDragBoth(null)
+      setGuides((g) => (g.length ? [] : g))
+    } else {
+      if (first?.kind === 'pan') setDragBoth({ ...first, tap: false })
+      endDrag()
+    }
+    if (selectionAtTouch.current) useStore.getState().select(selectionAtTouch.current)
+    selectionAtTouch.current = null
     const r = svg.getBoundingClientRect()
     const [a, b] = pts
     const mx = (a.x + b.x) / 2 - r.left
@@ -484,9 +616,7 @@ export default function Canvas() {
         const raw = toWorld(e.clientX, e.clientY)
         const stock = originAt(raw, selBBox, view.zoom)
         // Over a stock point it wins; elsewhere the pick lands where the red dot was snapped.
-        const w = typeof stock === 'string' || !st.doc.settings.smartAlignment
-          ? raw
-          : snapPoint(raw, visible, snapKindsOn(st.doc.settings), SNAP_PX / view.zoom).pt
+        const w = typeof stock === 'string' ? raw : snapAnchorPick(raw, st, e).pt
         const ref = typeof stock === 'string' ? stock : originAt(w, selBBox, view.zoom)
         st.setOriginPoint(ref)
         // A free pick also leaves a custom anchor marker on the canvas until it is cleared.
@@ -498,9 +628,11 @@ export default function Canvas() {
       return
     }
     lastPtrType.current = e.pointerType
+    toggleOnUp.current = null
     if (e.button === 1) e.preventDefault() // stop browser autoscroll on middle click
     svgRef.current?.setPointerCapture?.(e.pointerId)
     if (e.pointerType === 'touch') {
+      if (touches.current.size === 0) selectionAtTouch.current = st.selection
       touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
       if (touches.current.size >= 2) {
         startPinch()
@@ -516,11 +648,20 @@ export default function Canvas() {
       return
     }
 
+    if (tool === 'pen' && mode === 'design') {
+      pen.draftDown(e)
+      return
+    }
+    if (pen.editing) {
+      if (pen.editDown(e)) return
+      // A click away from the path leaves the node editor and then acts as usual.
+      st.setPenEdit(null)
+    }
+
     if (tool === 'draw' && mode === 'design') {
       const dr = draftRef.current
-      let q = p
       const last = dr[dr.length - 1]
-      if (last && e.shiftKey) q = snapAngle(last, q)
+      const q = last && e.shiftKey ? snapAngle(last, p) : snapDrawPoint(p, e).pt
       if (dr.length >= 3 && Math.hypot(dr[0].x - q.x, dr[0].y - q.y) * st.view.zoom < 10) {
         finishDraft(true)
         return
@@ -539,6 +680,17 @@ export default function Canvas() {
     }
 
     const hit = hitTest(p)
+    // Double-click on a pen path opens its node editor.
+    if (hit && mode === 'design' && isPenShape(hit) && !e.shiftKey && !e.metaKey && !e.altKey) {
+      const now = performance.now()
+      const prev = lastClick.current
+      lastClick.current = { t: now, x: e.clientX, y: e.clientY }
+      if (prev && now - prev.t < DOUBLE_CLICK_MS && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 8) {
+        lastClick.current = null
+        enterPenEdit(hit.id)
+        return
+      }
+    }
     if (hit) {
       let sel = st.selection
       if (e.shiftKey || e.metaKey) {
@@ -553,13 +705,31 @@ export default function Canvas() {
         // Alt+click picks this one element out of its group (to edit its cut type, depth or bit).
         sel = [hit.id]
         st.select(sel)
-      } else if (hit.groupId && mode === 'design' && !hit.locked) {
-        // A plain click on a grouped element selects the whole group, so it drags as one.
-        st.selectGroup(hit.groupId)
-        sel = useStore.getState().selection
-      } else if (!sel.includes(hit.id)) {
-        sel = [hit.id]
-        st.select(sel)
+      } else {
+        // A plain click is enough to build up a selection (as in Studio). Once two or more objects are selected,
+        // a click adds an unselected one, and a click on a selected one takes just that one out (on release, if
+        // it did not drag). With a single object, a click on another replaces the selection.
+        const design = mode === 'design'
+        const unit =
+          hit.groupId && design && !hit.locked
+            ? st.doc.shapes.filter((s) => s.groupId === hit.groupId && !s.locked).map((s) => s.id)
+            : [hit.id]
+        const multi = selectionUnitCount(st.doc.shapes.filter((s) => sel.includes(s.id)), design) > 1
+        if (sel.includes(hit.id) && multi) {
+          toggleOnUp.current = unit
+        } else if (multi) {
+          sel = [...new Set([...sel, ...unit])]
+          st.select(sel)
+        } else if (!sel.includes(hit.id)) {
+          if (hit.groupId && design && !hit.locked) {
+            // A plain click on a grouped element selects the whole group, so it drags as one.
+            st.selectGroup(hit.groupId)
+            sel = useStore.getState().selection
+          } else {
+            sel = [hit.id]
+            st.select(sel)
+          }
+        }
       }
       if (mode === 'design' && sel.includes(hit.id)) {
         // References can be selected but never moved, and a selection with one in it stays put (as in Studio).
@@ -578,7 +748,7 @@ export default function Canvas() {
       pan(true)
       return
     }
-    if (!e.shiftKey) st.select([])
+    if (!e.shiftKey && clearsSelectionAt(e.clientX, e.clientY)) st.select([])
     setDragBoth({ kind: 'marquee', start: p, cur: p, additive: e.shiftKey })
   }
 
@@ -586,7 +756,14 @@ export default function Canvas() {
     e.stopPropagation() // the svg handlers do not also run for the handle
     lastPtrType.current = e.pointerType
     svgRef.current?.setPointerCapture?.(e.pointerId)
-    if (e.pointerType === 'touch') touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (e.pointerType === 'touch') {
+      if (touches.current.size === 0) selectionAtTouch.current = useStore.getState().selection
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (touches.current.size >= 2) {
+        startPinch()
+        return
+      }
+    }
     if (!selBBox) return
     const st = useStore.getState()
     const b = selBBox
@@ -607,20 +784,21 @@ export default function Canvas() {
       orig.set(s.id, s.rotation % 360 !== 0 && !keep ? bake(s) : s)
     }
     if (!orig.size) return
-    setDragBoth({ kind: 'scale', handle: h, anchor, ref: pos(h), start: toWorld(e.clientX, e.clientY), orig, moved: false })
+    setDragBoth({ kind: 'scale', handle: h, anchor, ref: pos(h), start: toWorld(e.clientX, e.clientY), orig, bbox: b, moved: false })
   }
 
+  /** A free anchor pick snaps like Studio's custom anchor: to every visible shape (the selection too) and the grid. */
+  const snapAnchorPick = (raw: Pt, st: ReturnType<typeof useStore.getState>, e: { ctrlKey: boolean; altKey: boolean }) => snapFreePoint(raw, st, e)
+
   /** Snap the free-anchor preview to the enabled targets; hidden over the nine stock points and for box joints. */
-  const updateAnchorHover = (raw: Pt, st: ReturnType<typeof useStore.getState>) => {
+  const updateAnchorHover = (raw: Pt, st: ReturnType<typeof useStore.getState>, e: { ctrlKey: boolean; altKey: boolean }) => {
     const joint = boxJointForSelection(st.doc, st.selection)
     if (joint || !selBBox || !bboxValid(selBBox) || typeof originAt(raw, selBBox, st.view.zoom) === 'string') {
       setAnchorHover(null)
       setGuides((prev) => (prev.length ? [] : prev))
       return
     }
-    const hit = st.doc.settings.smartAlignment
-      ? snapPoint(raw, visible, snapKindsOn(st.doc.settings), SNAP_PX / st.view.zoom)
-      : { pt: raw, guides: [] as Guide[] }
+    const hit = snapAnchorPick(raw, st, e)
     setAnchorHover(hit.pt)
     setGuides(hit.guides)
   }
@@ -635,13 +813,25 @@ export default function Canvas() {
     const p = toWorld(e.clientX, e.clientY)
     const st = useStore.getState()
     if (st.anchorPicking) {
-      updateAnchorHover(p, st)
+      updateAnchorHover(p, st, e)
       return
     }
-    if (tool === 'draw') {
+    if (tool === 'pen' && mode === 'design') {
+      pen.draftMove(e)
+      return
+    }
+    if (pen.editing && pen.editMove(e)) return
+    if (tool === 'draw' && !d) {
       const dr = draftRef.current
       const last = dr[dr.length - 1]
-      setCursor(last && e.shiftKey ? snapAngle(last, p) : p)
+      if (last && e.shiftKey) {
+        setCursor(snapAngle(last, p))
+        setGuides((prev) => (prev.length ? [] : prev))
+      } else {
+        const hit = snapDrawPoint(p, e)
+        setCursor(hit.pt)
+        setGuides((prev) => (hit.guides.length || prev.length ? hit.guides : prev))
+      }
     }
     if (!d) {
       if (tool === 'select' && mode !== 'review' && e.pointerType !== 'touch') scheduleHover(p)
@@ -663,34 +853,20 @@ export default function Canvas() {
         let dy = p.y - d.start.y
         if (!d.moved && Math.hypot(dx, dy) * st.view.zoom < 3) return
         if (!d.moved) st.checkpoint()
-        // Shift constrains to the dominant axis; smart snapping then only runs on the free axis.
-        const axis = e.shiftKey ? (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y') : null
-        if (axis === 'x') dy = 0
-        if (axis === 'y') dx = 0
+        // Shift locks the move to an axis or a diagonal, as in Studio; snapping still runs on both axes afterwards.
+        if (e.shiftKey) ({ x: dx, y: dy } = orthoDelta(dx, dy))
         const g: Guide[] = []
-        if (st.doc.settings.smartAlignment && !e.altKey) {
-          const tol = SNAP_PX / st.view.zoom
-          const others = visible.filter((s) => !d.orig.has(s.id))
-          const { xs, ys } = alignCoords(others, snapKindsOn(st.doc.settings))
-          const mb = d.bbox
-          if (axis !== 'y') {
-            const mx = [mb.minX + dx, (mb.minX + mb.maxX) / 2 + dx, mb.maxX + dx]
-            let best = { d: tol, v: 0, at: NaN }
-            for (const a of mx) for (const b of xs) if (Math.abs(a - b) < best.d) best = { d: Math.abs(a - b), v: b - a, at: b }
-            if (!Number.isNaN(best.at)) {
-              dx += best.v
-              g.push({ axis: 'x', at: best.at })
-            }
-          }
-          if (axis !== 'x') {
-            const my = [mb.minY + dy, (mb.minY + mb.maxY) / 2 + dy, mb.maxY + dy]
-            let best = { d: tol, v: 0, at: NaN }
-            for (const a of my) for (const b of ys) if (Math.abs(a - b) < best.d) best = { d: Math.abs(a - b), v: b - a, at: b }
-            if (!Number.isNaN(best.at)) {
-              dy += best.v
-              g.push({ axis: 'y', at: best.at })
-            }
-          }
+        const snap = snapSetup(st, e, (s) => !d.orig.has(s.id))
+        if (snap) {
+          // Studio lines up the selection's left, right and centre (and the anchor) with every target line.
+          const b = d.bbox
+          const ap = anchorPoint(anchorBBox(st.doc.shapes.filter((q) => d.orig.has(q.id)).map((q) => ({ ...q, ...d.orig.get(q.id)! })), b), activeOrigin(st.doc, st.selection) ?? 'mc')
+          const hx = snapAxis([b.minX, b.maxX, (b.minX + b.maxX) / 2, ap.x], dx, snap.xs, snap.tol, snap.grid)
+          const hy = snapAxis([b.minY, b.maxY, (b.minY + b.maxY) / 2, ap.y], dy, snap.ys, snap.tol, snap.grid)
+          if (hx) dx += hx.shift
+          if (hy) dy += hy.shift
+          if (hx) g.push(guideFor('x', hx, b.minY + dy, b.maxY + dy))
+          if (hy) g.push(guideFor('y', hy, b.minX + dx, b.maxX + dx))
         }
         setGuides((prev) => (g.length || prev.length ? g : prev))
         st.patchShapes([...d.orig.keys()], (s) => {
@@ -703,6 +879,28 @@ export default function Canvas() {
       case 'scale': {
         const { anchor, ref, handle, start } = d
         const delta = { x: p.x - start.x, y: p.y - start.y }
+        // Studio snaps only the edge being dragged by a side handle; corners and a rotated shape never snap.
+        const g: Guide[] = []
+        const side = handle === 'tm' || handle === 'bm' || handle === 'lm' || handle === 'rm'
+        const one = d.orig.size === 1 ? [...d.orig.values()][0] : null
+        const snap = side && !(one && one.rotation % 360 !== 0) ? snapSetup(st, e, (s) => !d.orig.has(s.id)) : null
+        if (snap) {
+          const b = d.bbox
+          if (handle === 'lm' || handle === 'rm') {
+            const hx = snapAxis([ref.x], delta.x, snap.xs, snap.tol, snap.grid)
+            if (hx) {
+              delta.x += hx.shift
+              g.push(guideFor('x', hx, b.minY, b.maxY))
+            }
+          } else {
+            const hy = snapAxis([ref.y], delta.y, snap.ys, snap.tol, snap.grid)
+            if (hy) {
+              delta.y += hy.shift
+              g.push(guideFor('y', hy, b.minX, b.maxX))
+            }
+          }
+        }
+        setGuides((prev) => (g.length || prev.length ? g : prev))
         // Edge handles scale one axis about the anchor; an axis through the anchor keeps factor 1.
         let fx = handle === 'tm' || handle === 'bm' ? 1 : edgeFactor(delta.x, anchor.x, ref.x)
         let fy = handle === 'lm' || handle === 'rm' ? 1 : edgeFactor(delta.y, anchor.y, ref.y)
@@ -719,13 +917,14 @@ export default function Canvas() {
           const o = d.orig.get(s.id)!
           if (joints.outlines.has(s.id)) return scaleBoxJoint(o, fx, fy, anchor, st.doc.units)
           if (joints.guides.has(s.id)) return s
-          return {
+          // Parametric shapes are rebuilt each move (as on release) so corner radii stay round while resizing.
+          return normalizeParametric({
             ...o,
             x: anchor.x + (o.x - anchor.x) * fx,
             y: anchor.y + (o.y - anchor.y) * fy,
             sx: o.sx * fx,
             sy: o.sy * fy,
-          }
+          })
         })
         for (const id of joints.outlines) syncBoxJointGuides(id)
         if (!d.moved) setDragBoth({ ...d, moved: true })
@@ -736,16 +935,53 @@ export default function Canvas() {
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     touches.current.delete(e.pointerId)
+    pen.draftUp()
+    pen.editUp()
+    const tog = toggleOnUp.current
+    toggleOnUp.current = null
+    const d = dragRef.current
+    const dragged = !!d && (d.kind === 'move' || d.kind === 'scale') && d.moved
     endDrag()
+    if (tog && !dragged) {
+      const st = useStore.getState()
+      st.select(st.selection.filter((id) => !tog.includes(id)))
+    }
   }
 
   const onLostCapture = (e: React.PointerEvent<SVGSVGElement>) => {
     touches.current.delete(e.pointerId)
+    pen.editUp()
     endDrag()
   }
 
   // ---------- rendering ----------
   const z = view.zoom
+  // Position > Show grid: dashed lines every grid step, with the x / y axes through the origin.
+  let gridEl: JSX.Element | null = null
+  if (doc.settings.showPosition) {
+    const step = gridSizeMm(doc)
+    const px = step * z
+    const ax = sx(0)
+    const ay = sy(0)
+    const lines: JSX.Element[] = []
+    if (gridShown(doc) && px >= 8) {
+      const i0 = Math.ceil(-view.panX / px)
+      const i1 = Math.floor((viewport.w - view.panX) / px)
+      const j0 = Math.ceil(-view.panY / px)
+      const j1 = Math.floor((viewport.h - view.panY) / px)
+      if (i1 - i0 + j1 - j0 < 600) {
+        for (let i = i0; i <= i1; i++) if (i) lines.push(<line key={'v' + i} x1={sx(i * step)} x2={sx(i * step)} y1={0} y2={viewport.h} />)
+        for (let j = j0; j <= j1; j++) if (j) lines.push(<line key={'h' + j} x1={0} x2={viewport.w} y1={sy(j * step)} y2={sy(j * step)} />)
+      }
+    }
+    gridEl = (
+      <g className="cv-grid" pointerEvents="none">
+        {lines}
+        <line className="cv-grid__axis" x1={ax} x2={ax} y1={0} y2={viewport.h} />
+        <line className="cv-grid__axis" x1={0} x2={viewport.w} y1={ay} y2={ay} />
+      </g>
+    )
+  }
   const worldTransform = `matrix(${z} 0 0 ${z} ${view.panX} ${view.panY})`
   const onScreen = visibleWorldRect(view, viewport.w, viewport.h)
   const handleSize = lastPtrType.current === 'touch' ? HANDLE_TOUCH : HANDLE_MOUSE
@@ -774,7 +1010,7 @@ export default function Canvas() {
   } else if (mode === 'plan') {
     shapeEls = visible.map((s) => {
       const selected = selSet.has(s.id)
-      const hovered = hoverSet.has(s.id) && !selected
+      const hovered = (hoverSet.has(s.id) && !selected) || planHighlight === s.id
       const isGuide = s.cut.type === 'guide'
       const showCut = !isGuide && (selected || hovered || cutAll)
       const geom = showCut && inView(s) ? requestCut(s) : undefined
@@ -793,9 +1029,22 @@ export default function Canvas() {
   // selection overlay (screen space)
   // Custom anchor: a free marker that stays on the canvas until cleared (design mode only).
   const customAnchor = doc.settings.customAnchor
+  const activeOrig = activeOrigin(doc, selection) ?? 'mc'
+  const customActive = typeof activeOrig !== 'string'
+  // The free anchor is a fraction of the selection's bounds: the regular overlay draws it, and only while
+  // something is selected. The picker draws it itself so it can show it as chosen.
+  const hasSelBox = !!selBBox && bboxValid(selBBox)
+  const customPt = anchorPicking && customActive && hasSelBox ? anchorPoint(anchorBBox(selShapes, selBBox!), activeOrig) : null
   const customEl =
-    mode === 'design' && customAnchor ? (
-      <rect className="cv-anchor-mark is-free" x={sx(customAnchor.x) - 3} y={sy(customAnchor.y) - 3} width={6} height={6} />
+    mode === 'design' && customPt ? (
+      <rect
+        className={'cv-anchor-point__dot is-custom' + (customActive ? ' is-active' : '')}
+        x={sx(customPt.x) - ANCHOR_SIZE / 2}
+        y={sy(customPt.y) - ANCHOR_SIZE / 2}
+        width={ANCHOR_SIZE}
+        height={ANCHOR_SIZE}
+        rx={ANCHOR_RX}
+      />
     ) : null
   let overlay: React.ReactNode = null
   if (anchorPicking && mode === 'design' && selBBox && bboxValid(selBBox)) {
@@ -819,12 +1068,13 @@ export default function Canvas() {
         points={jointPts}
       />
     )
-  } else if (selBBox && bboxValid(selBBox) && tool === 'select') {
+  } else if (selBBox && bboxValid(selBBox) && tool === 'select' && !pen.editing) {
     const x0 = sx(selBBox.minX)
     const y0 = sy(selBBox.minY)
     const x1 = sx(selBBox.maxX)
     const y1 = sy(selBBox.maxY)
-    const pad = 4
+    // Studio's brackets sit 8px outside the bounds, with 10px arms.
+    const pad = 8
     const L = 10
     const units = doc.units
     if (mode === 'design' && selShapes.some((s) => s.locked)) {
@@ -862,12 +1112,22 @@ export default function Canvas() {
       const cy = (y0 + y1) / 2
       const wLabel = fmtLen(selBBox.maxX - selBBox.minX, units)
       const hLabel = fmtLen(selBBox.maxY - selBBox.minY, units)
-      const pLabel = doc.settings.showPosition ? `x ${fmtLen(selBBox.minX, units)} · y ${fmtLen(selBBox.minY, units)}` : ''
+      // Position labels: the anchor's coordinates, on the axis lines through it (Studio's X / Y pills).
+      const posOn = labelsShown(doc)
+      const xLabel = `X: ${fmtLen(handleAnchor.x, units)}`
+      const yLabel = `Y: ${fmtLen(handleAnchor.y, units)}`
+      const xW = textPillWidth(xLabel)
+      const yW = textPillWidth(yLabel)
       const wW = textPillWidth(wLabel)
       const hW = textPillWidth(hLabel)
-      const pW = textPillWidth(pLabel, 6)
+      const ax = sx(handleAnchor.x)
+      const ay = sy(handleAnchor.y)
+      const hOnLeft = (x0 + x1) / 2 < viewport.w / 2
+      // Keyed on the selection, so the handles play their entrance again on every selection change (as in Studio).
+      // Several objects: the box around them is gray (Studio's group box); the measurements stay blue.
+      const multi = selectionUnitCount(selShapes, true) > 1
       overlay = (
-        <g className="cv-overlay">
+        <g key={selection.join(',')} className={'cv-overlay' + (multi ? ' is-multi' : '')}>
           <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} className="cv-bbox" />
           {H('tl', x0 - pad, y0 - pad, 1, 1)}
           {H('tr', x1 + pad, y0 - pad, -1, 1)}
@@ -880,30 +1140,42 @@ export default function Canvas() {
           {/* The origin marker: the usual centre dot, or the picked point (blue when snapped, red when free). */}
           {(() => {
             const o = activeOrigin(doc, selection) ?? 'mc'
-            const ap = anchorPoint(selBBox, o)
+            const ap = anchorPoint(anchorBBox(selShapes, selBBox), o)
             const free = typeof o !== 'string'
             const cls = o === 'mc' ? 'cv-center' : 'cv-anchor-mark' + (free ? ' is-free' : '')
-            return <rect x={sx(ap.x) - 2.5} y={sy(ap.y) - 2.5} width={5} height={5} className={cls} />
+            return <rect x={sx(ap.x) - ANCHOR_SIZE / 2} y={sy(ap.y) - ANCHOR_SIZE / 2} width={ANCHOR_SIZE} height={ANCHOR_SIZE} rx={ANCHOR_RX} className={cls} />
           })()}
-          <g className="cv-label" transform={`translate(${cx} ${y1 + 24})`}>
+          {/* Width sits above the box; height goes on the side away from the middle of the viewport (as in Studio). */}
+          <g className="cv-label" transform={`translate(${cx} ${y0 - 24})`}>
             <rect x={-wW / 2} y={-10} width={wW} height={18} rx={3} />
             <text textAnchor="middle" y={4}>
               {wLabel}
             </text>
           </g>
-          <g className="cv-label" transform={`translate(${x1 + 24} ${cy}) rotate(90)`}>
+          <g className="cv-label" transform={`translate(${hOnLeft ? x0 - 24 : x1 + 24} ${cy}) rotate(90)`}>
             <rect x={-hW / 2} y={-10} width={hW} height={18} rx={3} />
             <text textAnchor="middle" y={4}>
               {hLabel}
             </text>
           </g>
-          {doc.settings.showPosition && (
-            <g className="cv-label" transform={`translate(${x0} ${y0 - 22})`}>
-              <rect x={0} y={-10} width={pW} height={18} rx={3} />
-              <text x={6} y={4}>
-                {pLabel}
-              </text>
-            </g>
+          {posOn && (
+            <>
+              {/* Y above the box (clear of the width label); X on the side away from the height label. */}
+              <line className="cv-pos-tick" x1={ax} x2={ax} y1={y0 - 6} y2={y0 + 6} />
+              <g className="cv-label" transform={`translate(${ax} ${y0 - 50})`}>
+                <rect x={-yW / 2} y={-10} width={yW} height={18} rx={3} />
+                <text textAnchor="middle" y={4}>
+                  {yLabel}
+                </text>
+              </g>
+              <line className="cv-pos-tick" x1={hOnLeft ? x1 - 6 : x0 - 6} x2={hOnLeft ? x1 + 6 : x0 + 6} y1={ay} y2={ay} />
+              <g className="cv-label" transform={`translate(${hOnLeft ? x1 + 24 + xW / 2 : x0 - 24 - xW / 2} ${ay})`}>
+                <rect x={-xW / 2} y={-10} width={xW} height={18} rx={3} />
+                <text textAnchor="middle" y={4}>
+                  {xLabel}
+                </text>
+              </g>
+            </>
           )}
         </g>
       )
@@ -937,13 +1209,15 @@ export default function Canvas() {
 
   const guideEls = mode === 'review'
     ? null
-    : guides.map((g, i) =>
-        g.axis === 'x' ? (
-          <line key={i} className="cv-guide" x1={sx(g.at)} x2={sx(g.at)} y1={0} y2={viewport.h} />
+    : guides.map((g, i) => {
+        // As in Studio, an object guide runs between the moved thing and its target; a grid guide crosses the view.
+        const span = g.from !== undefined && g.to !== undefined
+        return g.axis === 'x' ? (
+          <line key={i} className={g.grid ? 'cv-guide cv-guide--grid' : 'cv-guide'} x1={sx(g.at)} x2={sx(g.at)} y1={span ? sy(g.from!) : 0} y2={span ? sy(g.to!) : viewport.h} />
         ) : (
-          <line key={i} className="cv-guide" y1={sy(g.at)} y2={sy(g.at)} x1={0} x2={viewport.w} />
-        ),
-      )
+          <line key={i} className={g.grid ? 'cv-guide cv-guide--grid' : 'cv-guide'} y1={sy(g.at)} y2={sy(g.at)} x1={span ? sx(g.from!) : 0} x2={span ? sx(g.to!) : viewport.w} />
+        )
+      })
 
   let draftEl: React.ReactNode = null
   if (tool === 'draw' && (draft.length || cursor)) {
@@ -969,8 +1243,10 @@ export default function Canvas() {
         : 'grab'
       : drag?.kind === 'pinch'
         ? 'grabbing'
-        : tool === 'draw'
+        : tool === 'draw' || tool === 'pen'
           ? 'crosshair'
+          : pen.cursorStyle
+            ? pen.cursorStyle
           : hover && mode === 'design' && !doc.shapes.find((x) => x.id === hover)?.locked
             ? 'move'
             : 'default'
@@ -989,6 +1265,8 @@ export default function Canvas() {
         setAnchorHover(null)
         setHover(null)
         setCursor(null)
+        pen.clearCursor()
+        if (!dragRef.current) setGuides((prev) => (prev.length ? [] : prev))
       }}
       onContextMenu={(e) => e.preventDefault()}
       onAuxClick={(e) => e.preventDefault()}
@@ -1010,13 +1288,16 @@ export default function Canvas() {
             fill="none"
           />
         </pattern>
-        {/* Procedural wood grain, screen-space and built from soft low-alpha strokes (no filter). */}
-        <pattern id="rv-grain" patternUnits="userSpaceOnUse" width={520} height={300}>
-          <path d="M0 40 C150 20 300 70 450 45 S750 20 900 40" transform="scale(.58 1)" stroke="rgba(120,124,138,.07)" strokeWidth="12" fill="none" />
-          <path d="M0 40 C150 20 300 70 450 45 S750 20 900 40" transform="scale(.58 1)" stroke="rgba(120,124,138,.12)" strokeWidth="5" fill="none" />
-          <path d="M0 115 C200 95 330 140 520 120 S780 100 900 115" transform="scale(.58 1)" stroke="rgba(120,124,138,.06)" strokeWidth="9" fill="none" />
-          <path d="M0 115 C200 95 330 140 520 120 S780 100 900 115" transform="scale(.58 1)" stroke="rgba(120,124,138,.10)" strokeWidth="3" fill="none" />
-          <path d="M0 220 C180 200 340 245 520 225 S760 205 900 220" transform="scale(.58 1)" stroke="rgba(120,124,138,.08)" strokeWidth="6" fill="none" />
+        {/* Procedural wood grain, anchored to the workspace like Studio's tile (it pans and zooms with the sheet). */}
+        <pattern id="rv-grain" patternUnits="userSpaceOnUse" width={GRAIN_TILE * z} height={GRAIN_TILE * z} patternTransform={`translate(${view.panX} ${view.panY})`}>
+          <g transform={`scale(${z})`}>
+            {GRAIN_LINES.map((l, i) => (
+              <g key={i} fill="none" strokeLinecap="round">
+                <path d={l.d} stroke="rgba(118,120,128,.10)" strokeWidth={l.w * 2} />
+                <path d={l.d} stroke="rgba(118,120,128,.2)" strokeWidth={l.w} />
+              </g>
+            ))}
+          </g>
         </pattern>
       </defs>
       {mode === 'review' && (
@@ -1025,6 +1306,7 @@ export default function Canvas() {
           <rect width="100%" height="100%" fill="url(#rv-grain)" />
         </>
       )}
+      {mode !== 'review' && gridEl}
       {mode !== 'review' && doc.settings.originAnchor && (
         // Origin Anchor: Studio's red corner marker at the workspace origin (fixed screen size, corner on 0,0).
         <path className="cv-origin" d={`M ${sx(0)} ${sy(0) - 24} V ${sy(0)} H ${sx(0) + 14} Z`} pointerEvents="none" />
@@ -1034,10 +1316,20 @@ export default function Canvas() {
       {overlay}
       {customEl}
       {anchorPicking && mode === 'design' && anchorHover && (
-        <circle className="cv-anchor-hover" cx={sx(anchorHover.x)} cy={sy(anchorHover.y)} r={4} />
+        <g className="cv-anchor-hover">
+          <circle cx={sx(anchorHover.x)} cy={sy(anchorHover.y)} r={ANCHOR_RING_R} className="cv-anchor-hover__halo" />
+          <rect
+            x={sx(anchorHover.x) - ANCHOR_SIZE / 2}
+            y={sy(anchorHover.y) - ANCHOR_SIZE / 2}
+            width={ANCHOR_SIZE}
+            height={ANCHOR_SIZE}
+            rx={ANCHOR_RX}
+          />
+        </g>
       )}
       {marquee}
       {draftEl}
+      {pen.render(sx, sy)}
     </svg>
   )
 }

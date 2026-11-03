@@ -1,7 +1,8 @@
 // Trace intro: welcome screen -> media choice (upload / camera) -> live camera.
 // The three layers stay mounted and cross-fade, so the transitions are pure
 // CSS opacity. The media screen also asks what the drawing is on: a regular
-// sheet of paper, or a Shaper Trace frame (known window size).
+// sheet of paper, a Shaper Trace frame (known window size), or nothing at all —
+// any image (a logo, artwork, a photo) traced as a whole, with no sheet to find.
 //
 // While the camera is up, the sheet detector runs on a small copy of the video
 // several times a second (in a worker) and its outline is drawn live over the
@@ -22,6 +23,7 @@ import type { SheetKind } from './paperSize'
 import { captureFromTrack, type SlotPair } from './traceDots'
 import paperImg from './assets/sheet-paper.png'
 import traceImg from './assets/sheet-trace.png'
+import imageImg from './assets/sheet-image.svg'
 import './traceIntro.css'
 
 type Stage = 'welcome' | 'media' | 'camera'
@@ -142,6 +144,7 @@ function looksLikeDrawing(data: Uint8ClampedArray): boolean {
 const SHEETS: { kind: SheetKind; title: string; sub: string; img: string }[] = [
   { kind: 'paper', title: 'Regular paper', sub: 'Any sheet — size found automatically', img: paperImg },
   { kind: 'trace', title: 'Shaper Trace', sub: 'Drawing inside the Trace frame', img: traceImg },
+  { kind: 'image', title: 'Any image', sub: 'Logo, artwork or photo', img: imageImg },
 ]
 
 export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose }: TraceIntroProps): JSX.Element {
@@ -158,9 +161,9 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
   const [lensReady, setLensReady] = useState(false)
   // A Trace frame must be locked by its dots, and the lens learnt, before
   // capture; plain paper may also go on the simpler "white sheet with
-  // drawing" test.
+  // drawing" test. Any image needs nothing found: the whole frame is traced.
   const locked = !!live?.locked
-  const ready = sheet === 'trace' ? locked && lensReady : drawingReady || locked
+  const ready = sheet === 'image' ? true : sheet === 'trace' ? locked && lensReady : drawingReady || locked
 
   const fileRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -254,6 +257,13 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
         on = hit
         streak = 0
         setDrawingReady(on)
+      }
+      // Any image: there is no sheet to look for.
+      if (sheetRef.current === 'image') {
+        prev = null
+        found = 0
+        setLive(null)
+        return
       }
       if (!liveCtx || detector.busy) return
       const vw = v.videoWidth
@@ -429,7 +439,7 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
           <Ic.IconClose size={22} />
         </button>
         <div className="tintro__choices">
-          <div className="tintro__sheet" role="radiogroup" aria-label="What is the drawing on?">
+          <div className="tintro__sheet" role="radiogroup" aria-label="What are you tracing?">
             {SHEETS.map((o) => (
               <button
                 key={o.kind}
@@ -473,7 +483,7 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
         <button type="button" className="tintro__x tintro__x--left" aria-label="Back" onClick={leaveCamera}>
           <Ic.IconClose size={22} />
         </button>
-        <div className="tintro__sheet tintro__sheet--cam" role="radiogroup" aria-label="What is the drawing on?">
+        <div className="tintro__sheet tintro__sheet--cam" role="radiogroup" aria-label="What are you tracing?">
           {SHEETS.map((o) => (
             <button key={o.kind} type="button" role="radio" aria-checked={sheet === o.kind} className={'tintro__sheet-opt' + (sheet === o.kind ? ' is-on' : '')} onClick={() => onSheet(o.kind)}>
               <strong>{o.title}</strong>
@@ -483,7 +493,7 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
         <div className="tintro__shutter">
           {debug && lensInfo && <div className="tintro__lens-debug">{lensInfo}</div>}
           <div className={'tintro__badge' + (ready || locked ? ' is-on' : '') + (sheet === 'trace' && locked && !lensReady ? ' is-wait' : '')} role="status">
-            {sheet === 'trace' ? (locked ? (lensReady ? 'Trace frame found' : 'Calibrating lens') : 'Ready to capture') : locked ? 'Paper found' : 'Ready to capture'}
+            {sheet === 'trace' ? (locked ? (lensReady ? 'Trace frame found' : 'Calibrating lens') : 'Ready to capture') : sheet === 'paper' && locked ? 'Paper found' : 'Ready to capture'}
           </div>
           <button
             type="button"

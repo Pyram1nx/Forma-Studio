@@ -1,0 +1,419 @@
+/* Systainer Insert dialog. Layout and controls come from components.css and carve3d.css. */
+
+.sys-stage {
+  position: absolute;
+  inset: 0;
+}
+.sys-stage.is-hidden {
+  visibility: hidden;
+}
+
+.sys-overlay {
+  right: 16px;
+  flex-wrap: wrap;
+}
+.sys-overlay__info {
+  font-size: 12px;
+}
+.sys-badge-warn {
+  color: var(--error-text);
+}
+.sys-lid {
+  pointer-events: auto;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.sys-undo {
+  display: flex;
+  gap: 2px;
+  pointer-events: auto;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+/* Small icon buttons: toolbar, undo/redo. */
+.sys-tb-btn {
+  height: 30px;
+  min-width: 30px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gray-900);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sys-tb-btn:hover:not(:disabled) {
+  background: var(--gray-100);
+}
+.sys-tb-btn:disabled {
+  color: var(--gray-300);
+  cursor: default;
+}
+
+/* Floating toolbar under the selected item; the viewer moves it every frame. */
+.sys-toolbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  pointer-events: none;
+  will-change: transform;
+}
+.sys-toolbar__inner {
+  transform: translate(-50%, 10px);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  pointer-events: auto;
+}
+.sys-tb-btn--flip {
+  color: var(--blue-050);
+  padding: 0 10px 0 8px;
+}
+.sys-toolbar__angle {
+  font: 500 12px var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  color: var(--gray-500);
+  min-width: 34px;
+  text-align: center;
+}
+
+/* Catalogue dock along the bottom of the view. */
+.sys-dock {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 10px rgba(10, 10, 11, 0.08);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sys-dock__tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sys-dock__tab {
+  border: none;
+  background: none;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font: 500 13px var(--font-ui);
+  color: var(--gray-600);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sys-dock__tab:hover {
+  background: var(--gray-50);
+}
+.sys-dock__tab.is-active {
+  color: var(--gray-900);
+  background: var(--gray-100);
+}
+.sys-dock__hint {
+  margin-left: auto;
+  font-size: 12px;
+  white-space: nowrap;
+  padding-right: 4px;
+}
+.sys-dock__strip {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.sys-tile {
+  flex: none;
+  width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--gray-50);
+  cursor: grab;
+  touch-action: pan-x;
+  user-select: none;
+  -webkit-user-select: none;
+  font: 500 11px/1.25 var(--font-ui);
+  color: var(--gray-800);
+}
+.sys-tile:hover {
+  border-color: var(--gray-200);
+  background: var(--white);
+}
+.sys-tile:active {
+  cursor: grabbing;
+}
+.sys-tile__img {
+  width: 76px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sys-tile__img img {
+  max-width: 100%;
+  max-height: 100%;
+  pointer-events: none;
+}
+.sys-tile__label {
+  width: 100%;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.5em;
+}
+
+.sys-dragchip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 200;
+  pointer-events: none;
+  margin: 14px 0 0 14px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--blue-050);
+  color: var(--white);
+  font: 500 12px var(--font-ui);
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+}
+
+.sys-empty {
+  position: absolute;
+  left: 50%;
+  top: 72px;
+  transform: translateX(-50%);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  background: var(--white);
+  opacity: 0.94;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  color: var(--gray-600);
+  text-align: center;
+  pointer-events: none;
+}
+.sys-empty strong {
+  color: var(--gray-900);
+  font-weight: 500;
+}
+
+/* Side panel */
+.sys-sizes {
+  display: flex;
+}
+.sys-sizes button {
+  flex: 1;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.sys-link {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.sys-selected__name {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--gray-900);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sys-approx {
+  font: 500 11px var(--font-ui);
+  color: var(--warn-text);
+  background: #fbf1ea;
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+}
+.sys-poses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sys-pose {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--gray-200);
+  background: var(--white);
+  font: 500 12px var(--font-ui);
+  color: var(--gray-900);
+  cursor: pointer;
+}
+.sys-pose[aria-pressed='true'] {
+  background: var(--blue-050);
+  border-color: var(--blue-050);
+  color: var(--white);
+}
+.sys-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sys-list__row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+.sys-list__row.is-selected {
+  background: var(--blue-lighter);
+}
+.sys-list__name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  padding: 5px 6px;
+  font: 13px var(--font-ui);
+  color: var(--gray-900);
+  text-align: left;
+  cursor: pointer;
+}
+.sys-list__name .ss-muted {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.sys-list__del {
+  border: none;
+  background: none;
+  color: var(--gray-400);
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sys-list__del:hover {
+  color: var(--gray-900);
+  background: var(--gray-200);
+}
+.sys-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--error-text);
+  flex: none;
+}
+
+/* SVG preview */
+.sys-svg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 64px 24px 24px;
+}
+.sys-svg__paper {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Always paper white: the cut file is black and grey on white whatever the theme. */
+  background-color: #fdfdfe;
+  background-image: linear-gradient(#edeef2 1px, transparent 1px), linear-gradient(90deg, #edeef2 1px, transparent 1px);
+  background-size: 20px 20px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+.sys-svg__img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.sys-svg__legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--gray-600);
+}
+.sys-key {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  margin-left: 8px;
+}
+.sys-key--outside {
+  background: #000;
+}
+.sys-key--pocket {
+  background: #7f7f7f;
+}
+.sys-svg__dl {
+  margin-left: 12px;
+  height: 32px;
+  text-decoration: none;
+}
+
+@media (max-width: 700px) {
+  .sys-dock {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+  }
+  .sys-dock__hint {
+    display: none;
+  }
+  .sys-tile {
+    width: 78px;
+  }
+  .sys-tile__img {
+    width: 64px;
+    height: 52px;
+  }
+}

@@ -1,4 +1,5 @@
 import type { Contour, Pt, Shape } from '../model/types'
+import { mapPen, penOf } from './pen'
 
 export interface BBox {
   minX: number
@@ -75,6 +76,7 @@ export function recenter(s: Shape): Shape {
     x: w.x,
     y: w.y,
     contours: s.contours.map((ct) => ({ closed: ct.closed, pts: ct.pts.map((p) => ({ x: p.x - c.x, y: p.y - c.y })) })),
+    ...(s.pen && { pen: mapPen(s.pen, (p) => ({ x: p.x - c.x, y: p.y - c.y })) }),
   }
 }
 
@@ -91,8 +93,14 @@ export function bake(s: Shape): Shape {
   const b = bboxOfContours(cs)
   const c = bboxCenter(b)
   const parametric = PARAMETRIC_KINDS.has(s.kind)
+  // Pen paths take the same transform, so a moved, scaled or rotated curve stays editable.
+  const pen = penOf(s)
   return {
     ...s,
+    pen: pen ? mapPen(pen, (p) => {
+      const w = toWorld(s, p)
+      return { x: w.x - c.x, y: w.y - c.y }
+    }) : undefined,
     kind: parametric ? 'path' : s.kind,
     params: parametric ? undefined : s.params,
     x: c.x,

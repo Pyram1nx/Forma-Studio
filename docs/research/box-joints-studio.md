@@ -55,14 +55,14 @@ for each removed k:
    x0 = k·p − g ; x1 = x0 + p + glueGap        // widened by the glue gap, centred on the pin
    rect y from  −r  to  T + r                  // y-up: r below board bottom, r above board top
    points pushed: [x0,−r] [x0,T+r] [x1,T+r] [x1,−r]
-then from the last point go down 2·bit, then left across the full span (first x0 → last x1),
+then from the last point go down 1.2·bit, then left across the full span (first x0 → last x1),
 closing back up to the first point.
 fillet every right turn (convex corners) with radius r. Concave corners stay sharp.
 cutType inside, toolDia = bit diameter.
 ```
 
 So in y-down (board top at y = 0): removed pins rise r above the board top, the floor between
-them sits r below the board bottom, and a channel 2·bit deep runs under the whole span.
+them sits r below the board bottom, and a channel 1.2·bit deep runs under the whole span.
 Verified on canvas: W 254, T 19.05, bit 8 → pin tops 4 above board top, floor 4 below board
 bottom, return edge 16 below the floor, corner radius 4.
 
@@ -87,10 +87,10 @@ nominal width of pin k = k even ? odd : even;  nominal boundaries = running sum 
 
 Pocket: same as basic, but each removed pin k is centred on its nominal segment:
 `c = b[k] + w[k]/2`, half = `(w[k] + glueGap)/2`, x0 = c − half, x1 = c + half. Same y levels,
-same 2·bit channel, same fillets. Removed = side A ? k odd : k even.
+same 1.2·bit channel, same fillets. Removed = side A ? k odd : k even.
 
 Check (defaults, inches): W 10, N 5, bit .25, ratio −.75 → odd .70625, even 3.940625. Side A
-pocket spans x .70625 → 9.29375, pin tops .125 above board, floor .125 below, bottom 2·bit below floor.
+pocket spans x .70625 → 9.29375, pin tops .125 above board, floor .125 below, bottom 1.2·bit below floor.
 
 ## Guides (both)
 

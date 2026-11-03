@@ -55,7 +55,7 @@ function segCount(len: number, tol: number) {
   return Math.max(2, Math.min(256, Math.ceil(Math.sqrt(len / Math.max(tol, 1e-6)) * 1.2)))
 }
 
-function cubic(out: Pt[], p0: Pt, p1: Pt, p2: Pt, p3: Pt, tol: number) {
+export function cubic(out: Pt[], p0: Pt, p1: Pt, p2: Pt, p3: Pt, tol: number) {
   const len = Math.hypot(p1.x - p0.x, p1.y - p0.y) + Math.hypot(p2.x - p1.x, p2.y - p1.y) + Math.hypot(p3.x - p2.x, p3.y - p2.y)
   const n = segCount(len, tol)
   for (let i = 1; i <= n; i++) {

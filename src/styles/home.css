@@ -23,9 +23,18 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px;
-  font-weight: 600;
-  font-size: 15px;
+  padding: 0 4px;
+  min-width: 0;
+}
+.home__brand svg {
+  flex: none;
+}
+/* The Forma face is all-caps and wide: keep it on one line at a size that fits the 220px sidebar.
+   Weight stays pinned to 400 by .forma-wordmark (tokens.css). */
+.home__brand .forma-wordmark {
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
 }
 .home__nav {
   display: flex;
@@ -154,6 +163,8 @@
 .home-card__thumb {
   height: 140px;
   display: grid;
+  /* A definite single cell, so the image can be sized to it (an auto track lets big designs overflow). */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   background: var(--gray-50);
   border-bottom: 1px solid var(--gray-200);
@@ -162,8 +173,8 @@
   box-sizing: border-box;
 }
 .home-card__thumb img {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 .home-card__name {
@@ -214,4 +225,177 @@
 }
 .home-account__card .account-panel {
   margin-top: 0;
+}
+
+/* Phone-only top bar (brand + avatar). Hidden on wider screens, where the sidebar carries both. */
+.home__topbar {
+  display: none;
+}
+
+/* ---- tablets: a narrower sidebar and less gutter ---- */
+
+@media (max-width: 900px) {
+  .home__main {
+    padding: 24px 28px;
+  }
+  .home-grid {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 16px;
+  }
+}
+
+/* ---- phones (matches the studio's 700px mobile breakpoint): top bar, content, bottom tab bar ---- */
+
+@media (max-width: 700px) {
+  .home {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'top'
+      'main'
+      'nav';
+  }
+
+  .home__topbar {
+    grid-area: top;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 56px;
+    padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) 0
+      max(16px, env(safe-area-inset-left, 0px));
+    background: var(--gray-50);
+    border-bottom: 1px solid var(--gray-200);
+  }
+  .home__topbar .home__brand {
+    padding: 0;
+  }
+  .home__topbar .forma-wordmark {
+    font-size: 14px;
+    letter-spacing: 0.02em;
+  }
+  .home__topbar-account {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+  }
+  .home__topbar-account .home__avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+  .home__topbar-account:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+
+  .home__main {
+    grid-area: main;
+    padding: 20px max(16px, env(safe-area-inset-right, 0px)) 32px max(16px, env(safe-area-inset-left, 0px));
+    overscroll-behavior: contain;
+  }
+  .home__main h1 {
+    font-size: 22px;
+  }
+
+  /* The sidebar becomes the bottom tab bar: same gray rail and white selected pill as on desktop. */
+  .home__side {
+    grid-area: nav;
+    flex-direction: row;
+    gap: 0;
+    padding: 6px max(8px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px))
+      max(8px, env(safe-area-inset-left, 0px));
+    border-right: 0;
+    border-top: 1px solid var(--gray-200);
+  }
+  .home__side .home__brand,
+  .home__account-chip {
+    display: none;
+  }
+  .home__nav {
+    flex: 1;
+    flex-direction: row;
+    gap: 4px;
+    min-width: 0;
+  }
+  .home__nav-item {
+    flex: 1 1 0;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    height: auto;
+    min-height: 52px;
+    padding: 6px 4px;
+    color: var(--gray-500);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+    text-align: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .home__nav-item:hover {
+    background: transparent;
+  }
+  .home__nav-item[aria-current='page'] {
+    color: var(--gray-900);
+    background: var(--white);
+  }
+  .home__nav-item:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* Designs: the title and "New design" share a row (wrapping if needed); two-up card grid. */
+  .home__head {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .home__head > div {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .home__head .ss-btn {
+    flex: none;
+    min-height: 40px;
+  }
+  .home-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .home-card__thumb {
+    height: 112px;
+  }
+  .home-card__name {
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  .home-card__meta {
+    padding: 0 12px;
+    font-size: 11px;
+    line-height: 1.35;
+    white-space: normal;
+  }
+  .home-empty {
+    margin-top: 48px;
+  }
+
+  /* Account: full-width card. */
+  .home-account {
+    max-width: none;
+  }
+  .home-account__card {
+    margin-top: 16px;
+    padding: 16px;
+  }
 }

@@ -52,11 +52,11 @@
     display: none;
   }
 
-  /* Undo / redo: second row, far left. */
+  /* Undo / redo: second row, far left, stacked vertically. */
   .undo-redo {
     top: 66px;
     left: 15px;
-    flex-direction: row;
+    flex-direction: column;
     gap: 4px;
   }
   .undo-redo .ui-round {

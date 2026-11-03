@@ -1,4 +1,4 @@
-# Shaper forma — Design-Language Fidelity Audit
+# Forma Studio — Design-Language Fidelity Audit
 
 Ground truth: `docs/research/shaper-studio-design.md`. All findings are read-only observations; nothing was modified.
 
@@ -19,7 +19,7 @@ Fix: `stroke-width: 4px`.
 Fix: `border-radius: 12px` (or `var(--radius-pill)`).
 
 **A4. minor — `src/editor/Chrome.tsx:167` — chevron only on the Design tab**
-Doc: the selected mode tab shows "icon + label + **chevron** (opens settings)". The replica renders the chevron (and settings popover) only for `design`; selected Plan/Review tabs have no chevron and clicking them does nothing, even though Units (used by Plan fields) and the other settings are presented as global.
+Doc: the selected mode tab shows "icon + label + **chevron** (opens settings)". Forma Studio renders the chevron (and settings popover) only for `design`; selected Plan/Review tabs have no chevron and clicking them does nothing, even though Units (used by Plan fields) and the other settings are presented as global.
 Fix: render the chevron on whichever tab is selected and let it open the settings popover in all modes (or consciously update the doc).
 
 **A5. minor — `src/editor/AppMenu.tsx:68-71` + `src/styles/app.css:1144-1152` — export badge shows "for Origin", doc says "(n of n)"**
@@ -27,11 +27,11 @@ Doc: "Export (n of n)" with the yellow count badge. The badge is yellow (correct
 Fix: compute exported path count and render e.g. `{n} of {total}` inside `.export-count`.
 
 **A6. minor — `src/editor/Chrome.tsx:100-123` — "Find Art" missing from the left rail**
-Doc rail order: Find Art, Draw, Make Shape, Add Text, File Import. The replica starts at Draw. (3D Carve / Paper Scan with the red "new" dot are extensions, not the issue.) If Find Art is intentionally out of scope, it should be recorded in the research doc; today it just reads as a missing button to anyone comparing against Studio.
+Doc rail order: Find Art, Draw, Make Shape, Add Text, File Import. Forma Studio starts at Draw. (3D Carve / Paper Scan with the red "new" dot are extensions, not the issue.) If Find Art is intentionally out of scope, it should be recorded in the research doc; today it just reads as a missing button to anyone comparing against Studio.
 Fix: add the Find Art rail button (or a stub) above Draw, or document the omission.
 
 **A7. minor — `src/editor/AppMenu.tsx:63-75,118-122` — menu sections diverge from doc**
-Doc upper section: Rename / **Move** / Export / **Share Design**, divider, Duplicate / New / Open Recent. Lower "GO TO": Trace / My Files / ShaperHub / Forum / Shop / Account + avatar/email/Sign Out. The replica replaces Move/Share Design and the whole Go-To list with local-app entries (3D Carve, Paper Scan, Shortcuts). Understandable for a local, unaffiliated clone, but it's a measurable deviation: no "GO TO" list items from the doc survive, and there is no user footer.
+Doc upper section: Rename / **Move** / Export / **Share Design**, divider, Duplicate / New / Open Recent. Lower "GO TO": Trace / My Files / ShaperHub / Forum / Shop / Account + avatar/email/Sign Out. Forma Studio replaces Move/Share Design and the whole Go-To list with local-app entries (3D Carve, Paper Scan, Shortcuts). Understandable for a local, unaffiliated clone, but it's a measurable deviation: no "GO TO" list items from the doc survive, and there is no user footer.
 Fix: if deliberate, note it in the design doc; otherwise add disabled entries for Move/Share Design.
 
 **A8. minor — `src/editor/Canvas.tsx:444-448` — review mode shades cuts *darker* with depth; doc says "cut areas lighter"**

@@ -12,6 +12,23 @@ export interface Contour {
   closed: boolean
 }
 
+/**
+ * One anchor of a pen (Bézier) path. Handles are absolute positions in the same frame as the anchor;
+ * a missing handle means the segment leaves that side straight. `smooth` keeps both handles collinear.
+ */
+export interface PenNode {
+  x: number
+  y: number
+  in?: Pt
+  out?: Pt
+  smooth?: boolean
+}
+
+export interface PenContour {
+  nodes: PenNode[]
+  closed: boolean
+}
+
 export type CutType = 'online' | 'outside' | 'inside' | 'pocket' | 'guide'
 
 export interface CutSettings {
@@ -46,6 +63,10 @@ export interface ShapeMeta {
   role?: 'contour' | 'toolpath' | 'pocket' | 'outline' | 'paper' | 'guide' | 'guideLabel'
   /** Bit used to generate this shape (see features/carve3d/bits.ts). */
   bitId?: string
+  /** ShapeShifter: ids of the shapes this result was merged from, so the merge can be re-edited. */
+  shifterOf?: string[]
+  /** ShapeShifter: those sources' contours in this shape's local frame, so the mode can rebuild them once the originals are gone. */
+  shifterSources?: Contour[][]
   /** Free-form note shown in the panel. */
   note?: string
 }
@@ -65,6 +86,8 @@ export interface Shape {
   sy: number
   /** Parametric data used to regenerate contours (e.g. rect w/h/r, text string). */
   params?: Record<string, number | string | boolean>
+  /** Pen tool paths: the editable Bézier source of `contours` (one per contour, same local frame). */
+  pen?: PenContour[]
   cut: CutSettings
   hidden?: boolean
   locked?: boolean
@@ -101,6 +124,12 @@ export interface DocSettings {
   /** Per-target Smart Alignment toggles; a missing entry means on. */
   snap?: Partial<Record<SnapKind, boolean>>
   showPosition: boolean
+  /** Position sub-options (Studio's Show grid / Snap to grid / Show position labels); a missing entry means off. */
+  showGrid?: boolean
+  snapToGrid?: boolean
+  positionLabels?: boolean
+  /** Grid spacing in mm; a missing entry means 1 in or 10 mm by the document units. */
+  gridSize?: number
   originAnchor: boolean
   /** Optional so documents saved before the picker existed load with the centre. */
   originPoint?: OriginRef

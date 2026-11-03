@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { confirmDiscard } from './fileActions'
 import { groupAction, selectionHasReference, useStore } from '../state/store'
 import * as Ic from '../ui/icons'
-import { SNAP_KINDS, type DocSettings, type Mode, type SnapKind, type Units } from '../model/types'
+import { MM_PER_IN, SNAP_KINDS, type DocSettings, type Mode, type SnapKind, type Units } from '../model/types'
 import { importSVGFile } from '../io/svgImport'
 import { parseDoc, pickFile } from '../io/projectFile'
 import { shapesBBox } from '../geometry/transform'
+import { gridSizeMm } from './grid'
 
 /** Unsaved work needs confirmation before it is replaced (New / Open / Recent / Import of a design file). */
 
@@ -80,10 +81,11 @@ function HoverButton(props: {
   active?: boolean
   labelSide?: 'right' | 'top'
   pressed?: boolean
+  style?: CSSProperties
 }) {
   const side = props.labelSide ?? 'right'
   return (
-    <div className={'hover-btn hover-btn--' + side + (props.active ? ' is-active' : '')}>
+    <div className={'hover-btn hover-btn--' + side + (props.active ? ' is-active' : '')} style={props.style}>
       <button className={props.className ?? 'ui-round'} onClick={props.onClick} aria-label={props.label} aria-pressed={props.pressed}>
         {props.children}
       </button>
@@ -95,10 +97,14 @@ function HoverButton(props: {
 }
 
 // ---------- Left action rail ----------
+// Each rail item's position in the ladder; CSS turns it into a staggered transition delay.
+const rung = (i: number) => ({ '--i': i }) as CSSProperties
+
 export function LeftRail() {
   const mode = useStore((s) => s.mode)
   const tool = useStore((s) => s.tool)
   const popover = useStore((s) => s.popover)
+  const hasSel = useStore((s) => s.selection.length > 0)
   // Find Art and Make Shape open the same popover; the origin decides which button is active.
   const [shapesOrigin, setShapesOrigin] = useState<'find' | 'make' | null>(null)
   if (mode !== 'design') return null
@@ -118,8 +124,8 @@ export function LeftRail() {
     // The picker takes focus and gives no outside pointer-down, so close the popover first.
     st().setPopover(null)
     try {
-      const f = await pickFile('.svg,image/svg+xml,.formastudio,.shaperstudio,.json')
-      if (/\.(formastudio|shaperstudio|json)$/i.test(f.name)) {
+      const f = await pickFile('.svg,image/svg+xml,.forma,.formastudio,.shaperstudio,.json')
+      if (/\.(forma|formastudio|shaperstudio|json)$/i.test(f.name)) {
         if (!confirmDiscard()) return
         st().setDoc(parseDoc(await f.text()))
         return
@@ -136,35 +142,48 @@ export function LeftRail() {
     <MobileCreate
       items={[
         { label: 'Find Art', icon: <Ic.IconSearch />, onClick: () => toggleShapes('find') },
+        { label: 'Pen', icon: <Ic.IconPen />, onClick: () => st().setTool('pen') },
         { label: 'Draw', icon: <Ic.IconDraw />, onClick: () => st().setTool('draw') },
         { label: 'Make Shape', icon: <Ic.IconShapes />, onClick: () => toggleShapes('make') },
         { label: 'Add Text', icon: <Ic.IconText />, onClick: () => (st().setEditingText(null), st().openDialog('text')) },
         { label: 'File Import', icon: <Ic.IconImportFile />, onClick: importFile },
         { label: 'Trace', icon: <Ic.IconTrace />, onClick: () => st().openDialog('trace') },
+        { label: 'Dovetails', icon: <Ic.IconDovetail />, onClick: () => st().openDialog('dovetail') },
+        { label: 'Systainer Insert', icon: <Ic.IconSystainer />, onClick: () => st().openDialog('systainer') },
       ]}
     />
-    <nav className="canvas-action-menu" aria-label="Tools">
-      <HoverButton label="Find Art" className="rail-btn" active={shapesActive('find')} onClick={() => toggleShapes('find')}>
+    {/* While something is selected the rail ladders off to the left, one tool at a time (see .ladder). */}
+    <nav className={'canvas-action-menu ladder' + (hasSel ? ' is-hidden' : '')} aria-label="Tools" aria-hidden={hasSel} inert={hasSel}>
+      <HoverButton style={rung(0)} label="Find Art" className="rail-btn" active={shapesActive('find')} onClick={() => toggleShapes('find')}>
         <Ic.IconSearch />
       </HoverButton>
-      <HoverButton label="Draw" className="rail-btn" active={tool === 'draw'} pressed={tool === 'draw'} onClick={() => st().setTool(tool === 'draw' ? 'select' : 'draw')}>
+      <HoverButton style={rung(1)} label="Pen" className="rail-btn" active={tool === 'pen'} pressed={tool === 'pen'} onClick={() => st().setTool(tool === 'pen' ? 'select' : 'pen')}>
+        <Ic.IconPen />
+      </HoverButton>
+      <HoverButton style={rung(2)} label="Draw" className="rail-btn" active={tool === 'draw'} pressed={tool === 'draw'} onClick={() => st().setTool(tool === 'draw' ? 'select' : 'draw')}>
         <Ic.IconDraw />
       </HoverButton>
-      <HoverButton label="Make Shape" className="rail-btn" active={shapesActive('make')} onClick={() => toggleShapes('make')}>
+      <HoverButton style={rung(3)} label="Make Shape" className="rail-btn" active={shapesActive('make')} onClick={() => toggleShapes('make')}>
         <Ic.IconShapes />
       </HoverButton>
-      <HoverButton label="Add Text" className="rail-btn" onClick={() => (st().setEditingText(null), st().openDialog('text'))}>
+      <HoverButton style={rung(4)} label="Add Text" className="rail-btn" onClick={() => (st().setEditingText(null), st().openDialog('text'))}>
         <Ic.IconText />
       </HoverButton>
-      <HoverButton label="File Import" className="rail-btn" onClick={importFile}>
+      <HoverButton style={rung(5)} label="File Import" className="rail-btn" onClick={importFile}>
         <Ic.IconImportFile />
       </HoverButton>
-      <div className="canvas-action-menu__divider" role="separator" />
-      <HoverButton label="3D Carve" className="rail-btn rail-btn--new" onClick={() => st().openDialog('carve3d')}>
+      <div className="canvas-action-menu__divider" style={rung(6)} role="separator" />
+      <HoverButton style={rung(7)} label="3D Carve" className="rail-btn rail-btn--new" onClick={() => st().openDialog('carve3d')}>
         <Ic.IconCube />
       </HoverButton>
-      <HoverButton label="Trace" className="rail-btn rail-btn--new" onClick={() => st().openDialog('trace')}>
+      <HoverButton style={rung(8)} label="Trace" className="rail-btn rail-btn--new" onClick={() => st().openDialog('trace')}>
         <Ic.IconTrace />
+      </HoverButton>
+      <HoverButton style={rung(9)} label="Dovetails" className="rail-btn rail-btn--new" onClick={() => st().openDialog('dovetail')}>
+        <Ic.IconDovetail />
+      </HoverButton>
+      <HoverButton style={rung(10)} label="Systainer Insert" className="rail-btn rail-btn--new" onClick={() => st().openDialog('systainer')}>
+        <Ic.IconSystainer />
       </HoverButton>
     </nav>
     </>
@@ -333,6 +352,87 @@ function SnapAccordion() {
   )
 }
 
+type PositionOpt = 'showGrid' | 'snapToGrid' | 'positionLabels'
+const POSITION_OPTS: { k: PositionOpt; label: string }[] = [
+  { k: 'showGrid', label: 'Show grid' },
+  { k: 'snapToGrid', label: 'Snap to grid' },
+  { k: 'positionLabels', label: 'Show position labels' },
+]
+
+/** Grid spacing field beside Show grid: shown in the document units, commits on Enter or blur. */
+function GridSizeInput() {
+  const units = useStore((s) => s.doc.units)
+  const size = useStore((s) => gridSizeMm(s.doc))
+  const fmt = (mm: number) => (units === 'in' ? (mm / MM_PER_IN).toFixed(3) : String(+mm.toFixed(3)))
+  const [text, setText] = useState(fmt(size))
+  const editing = useRef(false)
+  useEffect(() => {
+    if (!editing.current) setText(fmt(size))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size, units])
+  const commit = () => {
+    editing.current = false
+    const v = parseFloat(text.replace(',', '.'))
+    if (Number.isFinite(v) && v > 0) useStore.getState().setGridSize(units === 'in' ? v * MM_PER_IN : v)
+    else setText(fmt(size))
+  }
+  return (
+    <div className="settings-pop__grid-input">
+      <input
+        aria-label="Grid size"
+        inputMode="decimal"
+        value={text}
+        onFocus={(e) => e.target.select()}
+        onChange={(e) => {
+          editing.current = true
+          setText(e.target.value)
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') {
+            editing.current = false
+            setText(fmt(size))
+            ;(e.target as HTMLInputElement).blur()
+          }
+          e.stopPropagation()
+        }}
+      />
+      <span>{units}</span>
+    </div>
+  )
+}
+
+/** What Position adds (grid, grid snapping, labels on the canvas); folds out under the Position row while it is on. */
+function PositionAccordion() {
+  const open = useStore((s) => s.doc.settings.showPosition)
+  const settings = useStore((s) => s.doc.settings)
+  return (
+    <div className={'settings-pop__accordion' + (open ? ' is-open' : '')} aria-hidden={!open}>
+      <div className="settings-pop__accordion-inner">
+        {POSITION_OPTS.map(({ k, label }) => {
+          const on = settings[k] === true
+          return (
+            <div key={k} className="settings-pop__subrow">
+              <span className="settings-pop__label">{label}</span>
+              {k === 'showGrid' && <GridSizeInput />}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                aria-label={label}
+                tabIndex={open ? 0 : -1}
+                className={'ss-switch ss-switch--sm' + (on ? ' is-on' : '')}
+                onClick={() => useStore.getState().setSetting(k, !on)}
+              />
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /** Studio switch: 48x24 pill. `dark` is the Plan (dark) variant. */
 export function Switch({ k, label, dark }: { k: keyof DocSettings; label: string; dark?: boolean }) {
   const on = useStore((s) => s.doc.settings[k]) === true
@@ -405,6 +505,7 @@ function SettingsPopover({ plan }: { plan: boolean }) {
           <SettingsRow icon={<Ic.IconPosition size={20} />} label="Position">
             <Switch k="showPosition" label="Position" />
           </SettingsRow>
+          <PositionAccordion />
           <SettingsRow icon={<Ic.IconAnchor size={20} />} label="Origin Anchor" info={ORIGIN_ANCHOR_INFO}>
             <Switch k="originAnchor" label="Origin Anchor" />
           </SettingsRow>
@@ -445,26 +546,39 @@ export function ActionBar() {
   const groupAct = useStore((s) => groupAction(s.doc, s.selection))
   // Studio hides the selection actions while a reference is selected.
   const hasRef = useStore((s) => selectionHasReference(s.doc, s.selection))
-  if (mode !== 'design' || !selection.length || tool !== 'select' || anchorPicking || hasRef) return null
+  const visible = mode === 'design' && selection.length > 0 && tool === 'select' && !anchorPicking && !hasRef
+  const textShape = selection.length === 1 ? shapes.find((s) => s.id === selection[0]) : undefined
+  // ShapeShifter applies to two or more shapes, or to a single result of an earlier merge (to re-edit it).
+  // Locked text can't be re-typeset.
+  const live = {
+    groupAct,
+    canShapeShift: selection.length >= 2 || !!textShape?.meta?.shifterOf?.length,
+    isText: textShape?.kind === 'text' && !textShape.locked,
+  }
+  // The desktop bar stays mounted so it can ladder out; it keeps the last selection's tools while it leaves.
+  const frozen = useRef(live)
+  if (visible) frozen.current = live
+  if (mode !== 'design') return null
+  const { canShapeShift, isText } = frozen.current
   const st = useStore.getState
   const groupItem =
-    groupAct === 'group'
+    frozen.current.groupAct === 'group'
       ? { label: 'Group', icon: <Ic.IconGroup />, onClick: () => st().groupSelected() }
-      : groupAct === 'ungroup'
+      : frozen.current.groupAct === 'ungroup'
         ? { label: 'Ungroup', icon: <Ic.IconUngroup />, onClick: () => st().ungroupSelected() }
         : null
-  const textShape = selection.length === 1 ? shapes.find((s) => s.id === selection[0]) : undefined
-  // Locked text can't be re-typeset.
-  const isText = textShape?.kind === 'text' && !textShape.locked
+  let n = 0
+  const next = () => rung(n++)
   return (
     <>
+    {visible && (
     <div className="m-selbar">
       <MobileStack
         dark
         fabClass="m-fab--blue"
         fabIcon={<IconWrench />}
         items={[
-          { label: 'ShapeShifter', icon: <Ic.IconShapeShifter />, onClick: () => st().enterShapeShifter() },
+          ...(canShapeShift ? [{ label: 'ShapeShifter', icon: <Ic.IconShapeShifter />, onClick: () => st().enterShapeShifter() }] : []),
           { label: 'Offset', icon: <Ic.IconOffset />, onClick: () => st().openDialog('offset') },
           { label: 'Mirror', icon: <Ic.IconMirrorH />, onClick: () => st().mirrorSelected('h') },
           ...(groupItem ? [groupItem] : []),
@@ -484,42 +598,50 @@ export function ActionBar() {
         <Ic.IconPencil size={20} />
       </button>
     </div>
-    <div className="action-bar" role="toolbar" aria-label="Selection actions">
-      <HoverButton label="Offset" labelSide="top" className="ui-round ui-round--dark" onClick={() => st().openDialog('offset')}>
+    )}
+    {/* Tools fly up one at a time, left to right, when something is selected, and drop away the same way. */}
+    <div className={'action-bar ladder' + (visible ? '' : ' is-hidden')} role="toolbar" aria-label="Selection actions" aria-hidden={!visible} inert={!visible}>
+      <HoverButton style={next()} label="Offset" labelSide="top" className="ui-round ui-round--dark" onClick={() => st().openDialog('offset')}>
         <Ic.IconOffset />
       </HoverButton>
       {isText && (
-        <HoverButton label="Edit Text" labelSide="top" className="ui-round ui-round--dark" onClick={() => (st().setEditingText(selection[0]), st().openDialog('text'))}>
+        <HoverButton style={next()} label="Edit Text" labelSide="top" className="ui-round ui-round--dark" onClick={() => (st().setEditingText(selection[0]), st().openDialog('text'))}>
           <Ic.IconText />
         </HoverButton>
       )}
-      <HoverButton
-        label="ShapeShifter"
-        labelSide="top"
-        className="ui-round ui-round--dark"
-        onClick={() => st().enterShapeShifter()}
-      >
-        <Ic.IconShapeShifter />
-      </HoverButton>
+      {canShapeShift && (
+        <HoverButton
+          style={next()}
+          label="ShapeShifter"
+          labelSide="top"
+          className="ui-round ui-round--dark"
+          onClick={() => st().enterShapeShifter()}
+        >
+          <Ic.IconShapeShifter />
+        </HoverButton>
+      )}
       {groupItem && (
-        <HoverButton label={groupItem.label} labelSide="top" className="ui-round ui-round--dark" onClick={groupItem.onClick}>
+        <HoverButton style={next()} label={groupItem.label} labelSide="top" className="ui-round ui-round--dark" onClick={groupItem.onClick}>
           {groupItem.icon}
         </HoverButton>
       )}
       {/* Each stacked pair is its own flush dark pill that grows as the second action flies up. */}
       <Stacked
+        style={next()}
         a={{ label: 'Mirror Horizontal', icon: <Ic.IconMirrorH />, onClick: () => st().mirrorSelected('h') }}
         b={{ label: 'Mirror Vertical', icon: <Ic.IconMirrorV />, onClick: () => st().mirrorSelected('v') }}
       />
       <Stacked
+        style={next()}
         a={{ label: 'Duplicate', icon: <Ic.IconDuplicate />, onClick: () => st().duplicateSelected(false) }}
         b={{ label: 'Duplicate in Place', icon: <Ic.IconDuplicateInPlace />, onClick: () => st().duplicateSelected(true) }}
       />
       <Stacked
+        style={next()}
         a={{ label: 'Bring to Front', icon: <Ic.IconFront />, onClick: () => st().bringToFront() }}
         b={{ label: 'Send to Back', icon: <Ic.IconBack />, onClick: () => st().sendToBack() }}
       />
-      <HoverButton label="Delete Object" labelSide="top" className="ui-round ui-round--dark" onClick={() => st().deleteSelected()}>
+      <HoverButton style={next()} label="Delete Object" labelSide="top" className="ui-round ui-round--dark" onClick={() => st().deleteSelected()}>
         <Ic.IconDelete />
       </HoverButton>
     </div>
@@ -533,13 +655,16 @@ type Act = { label: string; icon: ReactNode; onClick: () => void }
  * Studio's stacked button: hover (mouse) or a first tap (touch) reveals a second action above.
  * Labels appear above each button.
  */
-function Stacked({ a, b }: { a: Act; b: Act }) {
+function Stacked({ a, b, style }: { a: Act; b: Act; style?: CSSProperties }) {
   const [open, setOpen] = useState(false)
+  // Which action the pointer is on; its name shows above the whole pill.
+  const [hot, setHot] = useState<'a' | 'b' | null>(null)
   const touch = useRef(false)
   const t = useRef<ReturnType<typeof setTimeout>>(undefined)
   return (
     <div
       className={'stacked' + (open ? ' is-open' : '')}
+      style={style}
       onPointerDown={(e) => {
         touch.current = e.pointerType === 'touch'
       }}
@@ -553,7 +678,10 @@ function Stacked({ a, b }: { a: Act; b: Act }) {
         t.current = setTimeout(() => setOpen(false), 120)
       }}
     >
-      <div className="stacked__alt">
+      <span className={'stacked__label' + (hot && !touch.current ? ' is-shown' : '')} aria-hidden="true">
+        {hot === 'b' ? b.label : a.label}
+      </span>
+      <div className="stacked__alt" onMouseEnter={() => setHot('b')} onMouseLeave={() => setHot(null)}>
         <HoverButton
           label={b.label}
           labelSide="top"
@@ -566,6 +694,7 @@ function Stacked({ a, b }: { a: Act; b: Act }) {
           {b.icon}
         </HoverButton>
       </div>
+      <div onMouseEnter={() => setHot('a')} onMouseLeave={() => setHot(null)}>
       <HoverButton
         label={a.label}
         labelSide="top"
@@ -582,6 +711,7 @@ function Stacked({ a, b }: { a: Act; b: Act }) {
       >
         {a.icon}
       </HoverButton>
+      </div>
     </div>
   )
 }

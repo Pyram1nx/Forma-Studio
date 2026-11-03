@@ -1,0 +1,236 @@
+/* Account Settings tab: presets for new designs. Cards like the Account page's, rows like the studio's settings popover. */
+.home-settings {
+  max-width: 680px;
+}
+.prefs-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.prefs-card {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.prefs-card__head {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--gray-100);
+}
+.prefs-card__head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.prefs-card__head p {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--gray-500);
+}
+.prefs-card__body {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 20px 8px;
+}
+
+.prefs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 0;
+  border-top: 1px solid var(--gray-100);
+}
+.prefs-card__body > .prefs-row:first-child,
+.prefs-card__body > .prefs-block:first-child {
+  border-top: 0;
+}
+.prefs-row__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  color: var(--gray-700);
+}
+.prefs-row__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.prefs-row__label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gray-900);
+}
+.prefs-row__hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--gray-500);
+}
+.prefs-row__control {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+/* Sub-options fold under their switch, indented past the icon column. */
+.prefs-sub {
+  margin: -4px 0 6px 36px;
+  padding: 2px 12px;
+  border-radius: var(--radius);
+  background: var(--gray-50);
+}
+.prefs-row--sub {
+  min-height: 40px;
+  padding: 4px 0;
+  border-top-color: var(--gray-200);
+}
+.prefs-sub > .prefs-row--sub:first-child {
+  border-top: 0;
+}
+.prefs-row--sub .prefs-row__label {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--gray-700);
+}
+
+/* Blocks hold a label, a hint and a wider control under them. */
+.prefs-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 0;
+  border-top: 1px solid var(--gray-100);
+}
+.prefs-block > .prefs-row__hint + .prefs-tiles,
+.prefs-block > .prefs-row__hint + .prefs-chips {
+  margin-top: 2px;
+}
+
+.prefs-num {
+  width: 120px;
+  height: 32px;
+  background: var(--gray-100);
+}
+.prefs-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.prefs-clear {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gray-500);
+  cursor: pointer;
+}
+.prefs-clear:hover {
+  background: var(--gray-100);
+  color: var(--gray-900);
+}
+
+.prefs-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+.prefs-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 4px 10px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  background: var(--white);
+  color: var(--gray-700);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+.prefs-tile:hover {
+  border-color: var(--gray-300);
+}
+.prefs-tile.is-active {
+  border-color: var(--blue-050);
+  background: var(--blue-lighter);
+  color: var(--blue-070);
+}
+
+.prefs-bits {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.prefs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prefs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--gray-200);
+  border-radius: 16px;
+  background: var(--white);
+  color: var(--gray-800);
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+}
+.prefs-chip:hover {
+  border-color: var(--gray-300);
+}
+.prefs-chip.is-active {
+  border-color: var(--blue-050);
+  background: var(--blue-lighter);
+  color: var(--blue-070);
+}
+
+.prefs-tile:focus-visible,
+.prefs-chip:focus-visible,
+.prefs-clear:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .home-settings .home__head {
+    flex-wrap: wrap;
+  }
+  .prefs-card__head {
+    padding: 14px 16px 10px;
+  }
+  .prefs-card__body {
+    padding: 2px 16px 6px;
+  }
+  .prefs-row {
+    min-height: 56px;
+  }
+  .prefs-row__icon {
+    display: none;
+  }
+  .prefs-sub {
+    margin-left: 0;
+  }
+  .prefs-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .prefs-chip {
+    height: 40px;
+  }
+  .prefs-num {
+    width: 104px;
+    height: 40px;
+  }
+}

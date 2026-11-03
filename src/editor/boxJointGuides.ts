@@ -4,9 +4,9 @@
 // at all while guides are hidden. They are separate guide-type shapes in the outline's group, so
 // they move with the cut path; selecting the group shows the outline's template panel.
 import type { Group, Pt, Shape, StudioDoc, Units } from '../model/types'
-import { DEFAULT_CUT } from '../model/types'
 import { uid } from '../model/ids'
 import { groupForSelection, useStore, withoutCheckpoint } from '../state/store'
+import { newShapeCut } from '../state/prefs'
 import { shapesBBox, toWorld } from '../geometry/transform'
 import { TEMPLATES, paramDefault } from '../geometry/templates'
 import {
@@ -95,8 +95,8 @@ export function boxJointGuideShapes(outline: Shape, groupId: string, reuse: Shap
         name,
         kind: 'path',
         contours: [...contours],
-        // Studio's guide paths carry a 1/8 in tool (DEFAULT_CUT's) and cut type guide.
-        cut: prev ? { ...prev.cut, type: 'guide' } : { ...DEFAULT_CUT, type: 'guide' },
+        // Guide paths are cut type guide, with the preset bit and depth (Studio's carry a 1/8 in tool, the default).
+        cut: prev ? { ...prev.cut, type: 'guide' } : newShapeCut('guide'),
         locked: prev ? prev.locked : outline.locked,
         meta: { role },
       })

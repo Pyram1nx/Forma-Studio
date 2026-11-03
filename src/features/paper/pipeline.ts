@@ -3,6 +3,7 @@
 // so slider changes never queue up stale work. Falls back to the main thread,
 // where the work yields to the UI between steps.
 import { buildInkMask, type InkOptions } from './ink'
+import { imageInkMask, type ImageMaskOptions } from './imageMask'
 import { vectorise, type VectorMode, type VectorResult } from './trace'
 import type { WorkerRequest } from './worker'
 
@@ -97,6 +98,21 @@ export async function runInk(gray: Uint8Array, w: number, h: number, opts: InkOp
   }
   if (pending) cancelPaperJobs()
   return buildInkMask(gray, w, h, opts)
+}
+
+/** Design mask for any image (no sheet of paper involved). */
+export async function runImageMask(img: ImageData, opts: ImageMaskOptions): Promise<Uint8Array> {
+  const id = nextId++
+  if (getWorker()) {
+    try {
+      const copy = img.data.slice()
+      return await dispatch<Uint8Array>({ id, type: 'image', rgba: copy, w: img.width, h: img.height, opts }, [copy.buffer])
+    } catch (err) {
+      if (err instanceof CancelledError) throw err
+    }
+  }
+  if (pending) cancelPaperJobs()
+  return imageInkMask(img.data, img.width, img.height, opts)
 }
 
 /** Millimetre geometry for an ink mask. */

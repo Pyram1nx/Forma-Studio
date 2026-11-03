@@ -3,7 +3,8 @@ import { useStore } from '../state/store'
 import * as Ic from '../ui/icons'
 import { DEFAULT_FONT, DEFAULT_STYLE } from '../io/text'
 import { uid } from '../model/ids'
-import { DEFAULT_CUT, MM_PER_IN } from '../model/types'
+import { MM_PER_IN } from '../model/types'
+import { newShapeCut } from '../state/prefs'
 import { IconEditText } from './fontIcons'
 import { FALLBACK_FONT_MESSAGE, applyText, textName, typeset } from './textOps'
 
@@ -80,7 +81,7 @@ export default function TextDialog() {
             rotation: 0,
             sx: 1,
             sy: 1,
-            cut: { ...DEFAULT_CUT },
+            cut: newShapeCut(),
           },
         ])
         if (r.changed) st().showToast(FALLBACK_FONT_MESSAGE)

@@ -130,9 +130,10 @@ kbd {
 .ui-round--dark {
   background: var(--gray-800);
   color: var(--white);
+  transition: background 0.12s, color 0.12s;
 }
 .ui-round--dark:hover {
-  background: var(--gray-900);
+  background: var(--blue-050);
   filter: none;
 }
 .undo-redo {
@@ -179,6 +180,34 @@ kbd {
   opacity: 1;
 }
 
+/* ---------- Ladder (staggered toolbar enter/exit) ----------
+   Children of a .ladder fly off one after another when it gains .is-hidden, then pop back
+   in on a tighter stagger. Each child sets --i (its rung); the toolbar sets --ladder-out.
+   The delay belongs to the state being entered, so the base rule times the entrance and
+   .is-hidden times the exit. */
+.ladder > * {
+  transition:
+    transform 0.26s cubic-bezier(0.34, 1.4, 0.64, 1) calc(var(--i, 0) * 22ms),
+    opacity 0.16s ease-out calc(var(--i, 0) * 22ms);
+}
+.ladder.is-hidden {
+  pointer-events: none;
+}
+.ladder.is-hidden > * {
+  transform: var(--ladder-out);
+  opacity: 0;
+  transition:
+    transform 0.22s cubic-bezier(0.55, 0, 0.75, 0.2) calc(var(--i, 0) * 35ms),
+    opacity 0.18s ease-in calc(var(--i, 0) * 35ms + 40ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ladder > *,
+  .ladder.is-hidden > * {
+    transform: none;
+    transition: opacity 0.12s;
+  }
+}
+
 /* ---------- Left rail ---------- */
 .canvas-action-menu {
   position: absolute;
@@ -189,6 +218,10 @@ kbd {
   flex-direction: column;
   gap: 25px;
   z-index: 10;
+}
+/* While something is selected the rail ladders off to the left (see .ladder). */
+.canvas-action-menu {
+  --ladder-out: translateX(-72px);
 }
 /* Divider takes part in the column's 25px gap rhythm (no negative margins). */
 .canvas-action-menu__divider {
@@ -214,7 +247,7 @@ kbd {
 .hover-btn:hover .rail-btn,
 .hover-btn.is-active .rail-btn {
   background: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
 }
 .hover-btn.is-active .hover-btn__label {
   opacity: 1;
@@ -342,6 +375,36 @@ kbd {
   font-weight: 400;
   color: var(--gray-700);
 }
+/* Show grid spacing: a small field with its unit, between the label and the switch. */
+.settings-pop__grid-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--gray-700);
+  font-size: 12px;
+}
+.settings-pop__grid-input:focus-within {
+  background: var(--white);
+  box-shadow: inset 0 0 0 1px var(--blue-050);
+}
+.settings-pop__grid-input input {
+  width: 48px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: 500 12px var(--font-ui);
+  color: var(--gray-900);
+  text-align: right;
+}
+.settings-pop__subrow:has(.settings-pop__grid-input) .settings-pop__label {
+  flex: none;
+}
+.settings-pop__subrow:has(.settings-pop__grid-input) .settings-pop__grid-input {
+  margin-right: auto;
+}
 /* ⓘ beside a settings label: muted glyph, the explanation is its title tooltip. */
 .settings-pop__info {
   display: inline-flex;
@@ -363,6 +426,7 @@ kbd {
   gap: 25px;
   align-items: flex-end;
   z-index: 10;
+  --ladder-out: translateY(72px);
 }
 .action-bar .hover-btn__label {
   color: var(--gray-800);
@@ -383,11 +447,28 @@ kbd {
   background: transparent;
 }
 .stacked .ui-round--dark:hover {
-  background: var(--gray-900);
+  background: var(--blue-050);
 }
-/* Stacked buttons reveal their second action as an icon; no text above the upper button. */
+/* One name label above the whole pill (it rises as the pill grows), for whichever action is hovered. */
 .stacked .hover-btn__label {
   display: none;
+}
+.stacked__label {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.15px;
+  color: var(--gray-800);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.stacked__label.is-shown {
+  opacity: 1;
 }
 .stacked__alt {
   height: 0;
@@ -427,6 +508,22 @@ kbd {
   --ref-orange: #e27718;
   --ref-hover: rgba(232, 158, 38, 0.12);
 }
+.right-dock__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.selection-count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 1000px;
+  background: var(--blue-light);
+  color: var(--blue-050);
+  font: 500 15px var(--font-ui);
+}
 .reference-btn {
   position: relative;
   width: 42px;
@@ -435,7 +532,7 @@ kbd {
   border-radius: 1000px;
   border: 1px solid var(--gray-200);
   background: var(--gray-100);
-  color: #161514;
+  color: var(--gray-900);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -450,12 +547,12 @@ kbd {
 .reference-btn.is-active {
   background: var(--ref-orange);
   border-color: var(--ref-orange);
-  color: var(--white);
+  color: var(--on-accent);
 }
 .reference-btn.is-active:hover {
   background: var(--blue-050);
   border-color: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
 }
 /* Hover label to the left of the button, plain text as in Studio. */
 .reference-btn__label {
@@ -515,6 +612,44 @@ kbd {
 .design-panel .ss-input {
   padding-right: 22px;
 }
+/* Desktop: the aspect lock (and the anchor button of the Position fields) is a 32px badge centred on the
+   right edge of the paired inputs, sticking out 8px, with the unit text moved left to make room (Studio). */
+@media (min-width: 701px) {
+  .size-fields {
+    display: block;
+    position: relative;
+  }
+  .size-fields .lock-ratio,
+  .size-fields .anchor-btn {
+    position: absolute;
+    right: -8px;
+    top: 50%;
+    transform: translateY(-50%);
+    box-sizing: border-box;
+    width: 32px;
+    height: 32px;
+    padding: 3px;
+    background: var(--white);
+    z-index: 1;
+  }
+  .size-fields .lock-ratio {
+    color: var(--gray-600);
+  }
+  .size-fields .lock-ratio.is-active {
+    color: var(--blue-050);
+    border-color: var(--blue-050);
+  }
+  .size-fields .anchor-btn {
+    grid-template-columns: repeat(3, 8px);
+    grid-template-rows: repeat(3, 8px);
+    gap: 0;
+    padding: 3px;
+    place-content: center;
+  }
+  .design-panel .size-fields .ss-input .ss-input__adorn:last-child {
+    margin-right: 22px;
+  }
+}
 /* Studio's parameter panel metrics (desktop): 12/16/16 padding, 16px between fields, 11px labels,
    15px inputs with 8px side padding. */
 @media (min-width: 701px) {
@@ -556,6 +691,66 @@ kbd {
 .radius-add svg {
   color: var(--blue-050);
 }
+.radius-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.radius-row .ss-input {
+  flex: 1;
+  min-width: 0;
+}
+.radius-edit {
+  flex: none;
+  width: 32px;
+  height: var(--control-h-lg);
+  border-radius: 8px;
+  border: 1px solid var(--gray-100);
+  background: var(--white);
+  color: var(--blue-050);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.radius-edit:hover {
+  background: var(--gray-200);
+}
+/* Studio's preset list under the radius field: opens on focus, picks a radius in one click. */
+.radius-presets {
+  /* Studio opens it to the left of the panel, centred on the radius field, in the focus blue. */
+  position: fixed;
+  transform: translateY(-50%);
+  z-index: 20;
+  box-sizing: border-box;
+  width: 180px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 2px solid #2c65ff;
+  background: var(--gray-200);
+}
+.radius-presets__title {
+  font: 500 14px var(--font-ui);
+  color: var(--gray-600);
+  margin-bottom: 8px;
+}
+.radius-presets__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
+  gap: 12px;
+}
+.radius-presets__item {
+  height: 40px;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--gray-600);
+  font: 500 14px var(--font-ui);
+  cursor: pointer;
+}
+.radius-presets__item:hover {
+  background: var(--gray-100);
+}
 .anchor-row {
   display: flex;
   align-items: center;
@@ -584,6 +779,11 @@ kbd {
   gap: 4px;
   cursor: pointer;
   place-items: center;
+}
+@media (max-width: 700px) {
+  .design-panel .size-fields .anchor-btn {
+    order: 2;
+  }
 }
 .anchor-btn__dot {
   width: 2px;
@@ -831,6 +1031,98 @@ kbd {
   border-top: 1px solid var(--gray-800);
   padding-top: 10px;
 }
+/* Plan dock: Studio's selection count sits above the cut properties; Manage Selection replaces both. */
+.selection-editor-button {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 1000px;
+  border: 1px solid #1be09e;
+  background: rgba(27, 224, 158, 0.3);
+  color: #1be09e;
+  font: 500 16px var(--font-ui);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.plan-dock__edit {
+  display: none;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  border-radius: 1000px;
+  background: var(--white);
+  color: var(--gray-900);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.plan-dock.is-manage .plan-dock__edit {
+  display: flex;
+}
+/* Studio's title row: only the mobile sheet shows it, and the Manage Selection view always does. */
+.plan-sheet-head {
+  display: none;
+}
+.manage-panel .plan-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.manage-panel .ss-panel__header {
+  text-transform: none;
+}
+.manage-panel {
+  width: 220px;
+  color: var(--white);
+}
+.right-dock .manage-panel {
+  width: 220px;
+}
+.manage-panel__hint {
+  display: none;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--gray-300);
+}
+.manage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.manage-tile {
+  aspect-ratio: 1;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--gray-700);
+  background: var(--gray-800);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.manage-tile:hover {
+  border-color: #1be09e;
+}
+.manage-tile__svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.manage-tile__svg path {
+  fill: none;
+  stroke: #1be09e;
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
 .theme--plan .ss-input input::placeholder {
   color: var(--white);
 }
@@ -903,7 +1195,7 @@ kbd {
 }
 .basic-shape-btn:hover {
   background: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
 }
 .shape-creator__templates {
   display: grid;
@@ -926,7 +1218,7 @@ kbd {
 }
 .template-btn:hover {
   background: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
 }
 .shape-creator__icons {
   display: grid;
@@ -1102,7 +1394,7 @@ kbd {
   border: none;
   border-radius: var(--radius);
   background: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
   font: 500 12px var(--font-ui);
   cursor: pointer;
 }
@@ -1157,6 +1449,7 @@ kbd {
 .app-menu__wordmark {
   font-family: 'Forma Studio', var(--font-ui);
   font-weight: 400;
+  font-synthesis: none;
   font-size: 20px;
   letter-spacing: 0.04em;
   padding-left: 0.04em;
@@ -1247,7 +1540,7 @@ kbd {
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
-  color: #fff;
+  color: var(--on-accent);
   background: #1fa971;
 }
 .app-menu__dashboard {
@@ -1358,7 +1651,7 @@ kbd {
   height: 32px;
   font-size: 12px;
   border-radius: 6px;
-  background: #2a2b2d;
+  background: var(--gray-800);
 }
 .toast--guide > .icon {
   flex: none;
@@ -1371,7 +1664,7 @@ kbd {
   padding: 0 8px;
   margin-left: 6px;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 1px solid color-mix(in srgb, var(--white) 16%, transparent);
   background: transparent;
   color: var(--white);
   cursor: pointer;
@@ -1384,18 +1677,18 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(253, 253, 254, 0.8);
+  background: color-mix(in srgb, var(--white) 80%, transparent);
 }
 .reference-modal__card {
   position: relative;
   width: 388px;
   max-width: calc(100vw - 24px);
   min-height: 320px;
-  background: #fdfdfe;
+  background: var(--white);
   border: 2px solid var(--gray-200);
   border-radius: 10px;
   padding: 48px 56px 40px;
-  color: #72757e;
+  color: var(--gray-500);
 }
 .reference-modal__close {
   position: absolute;
@@ -1403,7 +1696,7 @@ kbd {
   right: 16px;
   border: none;
   background: none;
-  color: #2a2b2d;
+  color: var(--gray-800);
   cursor: pointer;
   display: flex;
 }
@@ -1442,7 +1735,7 @@ kbd {
   letter-spacing: 0.28px;
   text-transform: uppercase;
   text-decoration: none;
-  color: #0546f6;
+  color: var(--blue-060);
 }
 .modal-backdrop {
   position: fixed;
@@ -1560,6 +1853,15 @@ kbd {
   stroke: var(--blue-060);
   stroke-width: 2px;
 }
+.modeview__handle {
+  fill: var(--white);
+  stroke: var(--blue-060);
+  stroke-width: 2px;
+  cursor: pointer;
+}
+.modeview__handle.is-picked {
+  fill: var(--blue-060);
+}
 .modeview__dist {
   display: flex;
   align-items: center;
@@ -1658,9 +1960,12 @@ kbd {
   letter-spacing: 0.5px;
   color: var(--input-text);
 }
-/* Studio's toggle group: a grey track, the active choice a white raised segment with a grey outline,
-   segments overlapping by 4px so a pair is 100px wide. */
+/* Studio's toggle group (an MUI toggle-button group): a grey track, 54 x 34 segments overlapping by 4px.
+   The idle segments are track-grey with a faint outline on their outer edges; the chosen one is a raised
+   white segment with a grey outline, and its A/B glyph is a 20px icon. */
 .ss-segmented {
+  display: inline-flex;
+  align-items: stretch;
   width: fit-content;
   max-width: 100%;
   height: 34px;
@@ -1671,129 +1976,224 @@ kbd {
   overflow: visible;
 }
 .ss-segmented__btn {
-  flex: none;
-  min-width: 54px;
-  padding: 0 16px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--panel-text);
-  font: 500 13px Roboto, Helvetica, Arial, sans-serif;
-  letter-spacing: 0.37px;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.ss-segmented__btn + .ss-segmented__btn {
-  margin-left: -4px;
-}
-.ss-segmented__btn.is-active {
   position: relative;
-  z-index: 1;
-  background: var(--input-bg);
-  border-color: var(--gray-300);
-  color: #2a2b2d;
-}
-.ss-segmented__btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  flex: none;
+  margin: 0;
+  padding: 4px 16px;
+  border: 1.5px solid var(--gray-100);
+  border-radius: 8px;
+  background: var(--gray-200);
+  color: var(--gray-600);
+  font: 500 13px/1.75 Roboto, Helvetica, Arial, sans-serif;
+  letter-spacing: 0.02857em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: 0;
 }
-.ss-segmented__letter {
-  font: inherit;
-  letter-spacing: inherit;
+.ss-segmented__btn:first-child:not(:last-child) {
+  margin-right: -4px;
+  border-right-color: var(--gray-200);
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.ss-segmented__btn:last-child:not(:first-child) {
+  margin-left: -4px;
+  border-left-color: var(--gray-200);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.ss-segmented__btn:not(:first-child):not(:last-child) {
+  margin: 0 -4px;
+  border-left-color: var(--gray-200);
+  border-right-color: var(--gray-200);
+  border-radius: 0;
+}
+.ss-segmented > .ss-segmented__btn.is-active {
+  z-index: 1;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-color: var(--gray-300);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--gray-800);
 }
 .ss-segmented__btn svg {
+  flex: none;
   width: 20px;
   height: 20px;
 }
-
-/* Template slider (box joint pin factor): the track fills from the left to the thumb, a tick mark at 0,
-   and the value in a bubble above the thumb only while focused or dragged. --at is the 0..1 position. */
-.ss-slider {
-  --thumb: 20px;
-  position: relative;
-  display: flex;
-  align-items: center;
-  height: 30px;
-  padding: 0 4px;
+.ss-segmented__btn svg path {
+  fill: currentColor;
 }
+
 /* The slider's label sits 8px in rather than 12px. */
 .ss-field:has(> .ss-slider) > .ss-label {
   padding-left: 8px;
 }
-.ss-slider__input {
-  --fill: calc(var(--thumb) / 2 + var(--at) * (100% - var(--thumb)));
+/* Studio's slider (MUI): the 20px thumb's centre travels the whole 8px rail, so at either end it overhangs
+   the rail by half its width. The fill is the rail's own colour. The value bubble opens on hover, focus
+   and drag. */
+.ss-slider {
   position: relative;
-  z-index: 1;
-  width: 100%;
-  height: var(--thumb);
-  margin: 0;
-  background: transparent;
-  appearance: none;
-  -webkit-appearance: none;
+  display: block;
+  box-sizing: content-box;
+  width: calc(100% - 8px);
+  height: 4px;
+  margin: 0 4px;
+  padding: 13px 0;
+  border-radius: 12px;
   cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
-.ss-slider__input::-webkit-slider-runnable-track {
+.ss-slider__rail {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
   height: 8px;
-  border-radius: 12px;
+  border-radius: inherit;
   background: var(--gray-200);
+  transform: translateY(-50%);
 }
-.ss-slider__input::-moz-range-track {
-  height: 8px;
-  border-radius: 12px;
-  background: var(--gray-200);
-}
-.ss-slider__input::-moz-range-progress {
-  height: 8px;
-  border-radius: 12px;
-  background: var(--gray-200);
-}
-.ss-slider__input::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: var(--thumb);
-  height: var(--thumb);
-  margin-top: calc(4px - var(--thumb) / 2);
-  border-radius: 50%;
-  border: 1px solid var(--gray-300);
-  background: var(--input-bg);
-  box-sizing: border-box;
-}
-.ss-slider__input::-moz-range-thumb {
-  width: var(--thumb);
-  height: var(--thumb);
-  border-radius: 50%;
-  border: 1px solid var(--gray-300);
-  background: var(--input-bg);
-  box-sizing: border-box;
-}
-.ss-slider__input:focus-visible {
-  outline: 2px solid var(--blue-050);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-/* Tick mark: centred where the thumb sits for that value (the thumb travels inside the track). */
 .ss-slider__mark {
   position: absolute;
-  z-index: 2;
-  top: calc(50% - 1px);
-  left: calc(4px + var(--thumb) / 2 + var(--at) * (100% - 8px - var(--thumb)) - 1px);
+  top: 50%;
   width: 2px;
   height: 2px;
   border-radius: 50%;
-  background: var(--gray-400, #8e929f);
+  background: var(--gray-400);
+  transform: translate(-1px, -50%);
   pointer-events: none;
+}
+.ss-slider__mark.is-active {
+  background: #abc1ff;
+}
+.ss-slider__thumb {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--gray-300);
+  border-radius: 50%;
+  outline: 0;
+  background: var(--white);
+  transform: translate(-50%, -50%);
+  transition:
+    box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    left 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ss-slider.is-dragging .ss-slider__thumb {
+  transition: none;
+}
+.ss-slider__thumb::before {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  box-shadow:
+    0 3px 1px -2px rgba(0, 0, 0, 0.2),
+    0 2px 2px 0 rgba(0, 0, 0, 0.14),
+    0 1px 5px 0 rgba(0, 0, 0, 0.12);
+}
+.ss-slider__thumb::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.ss-slider__thumb:hover {
+  border-color: var(--blue-060);
+  background: var(--blue-light);
+}
+.ss-slider.is-dragging .ss-slider__thumb {
+  border-color: var(--blue-070);
+  background: var(--blue-050);
 }
 .ss-slider__bubble {
   position: absolute;
-  z-index: 2;
-  bottom: calc(50% + var(--thumb) / 2 + 4px);
-  left: calc(4px + var(--thumb) / 2 + var(--at) * (100% - 8px - var(--thumb)));
-  transform: translateX(-50%);
+  top: -10px;
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 4px 8px;
   border-radius: 4px;
-  background: var(--gray-500, #72757e);
+  background: var(--gray-500);
   color: var(--white);
-  font: 500 14px var(--font-ui);
+  font: 500 14px/20px var(--font-condensed);
   white-space: nowrap;
   pointer-events: none;
+  transform: translate(-50%, -100%) scale(0);
+  transform-origin: center bottom;
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ss-slider__bubble.is-open {
+  transform: translate(-50%, -100%) scale(1);
+}
+.ss-slider__bubble::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  transform: translate(-50%, 50%) rotate(45deg);
+}
+
+/* Bit library dropdown (Plan panel): owned dot, suggestion row, gallery link. */
+.bit-lib__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cut-green);
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.bit-lib__sugg {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  background: var(--gray-700);
+}
+.bit-lib__sugg:hover {
+  background: var(--gray-600);
+}
+.bit-lib__sugg-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cut-green);
+}
+.bit-lib__sugg-why {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--gray-300);
+}
+.bit-lib__open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue-soft);
 }

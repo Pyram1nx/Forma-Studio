@@ -1,7 +1,7 @@
 # Plan & Review mode — behaviour measured in Shaper Studio (2026-10-18)
 
 Measured by setting each cut type on real shapes in studio.shapertools.com and
-reading the rendered DOM/computed styles. This is the spec Shaper forma must match.
+reading the rendered DOM/computed styles. This is the spec Forma Studio must match.
 
 ## Plan mode settings popover (click the selected PLAN tab)
 Dark popover under the mode switcher: bg `#2a2b2d`, 2px border `#0a0a0b`, radius 12,

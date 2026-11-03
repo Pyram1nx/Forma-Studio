@@ -16,6 +16,9 @@ export const boxJointKind = (templateId: unknown): BoxJointKind | undefined =>
 /** Studio's bit tolerance: a pin is never narrower than 1.1 bit diameters. */
 export const BIT_TOL = 1.1
 
+/** Depth of the channel under the pocket floor, in bit diameters (bit + 20%). */
+export const CHANNEL_DEPTH = 1.2
+
 export type BoxJointParams = Record<string, number>
 
 const num = (p: BoxJointParams, k: string, d: number) => (Number.isFinite(p[k]) ? p[k] : d)
@@ -181,7 +184,7 @@ export function filletConvex(pts: Pt[], r: number): Pt[] {
 /**
  * The pocket (Studio's buildPocketModel): one closed contour. Each removed pin rises r above the
  * board top and drops r below the board bottom (widened by the glue gap, centred on its nominal
- * pin), the floor between them sits r below the board, and a channel 2·bit deep runs under the
+ * pin), the floor between them sits r below the board, and a channel 1.2·bit deep (bit + 20%) runs under the
  * whole span. Convex corners are filleted with r = bit/2, concave ones stay sharp.
  */
 export function boxJointPocket(kind: BoxJointKind, p: BoxJointParams): Contour[] {
@@ -202,7 +205,7 @@ export function boxJointPocket(kind: BoxJointKind, p: BoxJointParams): Contour[]
     pts.push({ x: x0, y: -r }, { x: x0, y: v.T + r }, { x: x1, y: v.T + r }, { x: x1, y: -r })
   }
   if (!pts.length) return []
-  const bottom = -r - 2 * v.bit
+  const bottom = -r - CHANNEL_DEPTH * v.bit
   pts.push({ x: last, y: bottom }, { x: first, y: bottom })
   // The start point (first, -r) sits on the straight run from the channel up to the first pin, so it stays a plain point.
   const loop = filletConvex(pts, r)

@@ -1,4 +1,4 @@
-# Units audit — Shaper forma
+# Units audit — Forma Studio
 
 Internal model is mm everywhere (`src/model/types.ts:1`), with conversion helpers `toUnits`/`fromUnits`/`fmtLen` in `src/model/factory.ts:31-33`. Below: findings first, verified items at the end.
 

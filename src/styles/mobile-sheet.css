@@ -164,9 +164,119 @@
     margin-top: 0;
   }
 
-  /* Plan panel: full-width sheet, no header */
-  .plan-panel {
+  /* Plan panel: Studio's cut properties sheet. One tab at a time, labels hidden, collapsible. */
+  .plan-panel,
+  .manage-panel {
     max-height: 60vh;
     overflow-y: auto;
+  }
+  .plan-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .plan-sheet-head .ss-panel__header {
+    font-size: 15px;
+    color: var(--white);
+  }
+  .plan-sheet-head .sheet-collapse {
+    color: var(--white);
+  }
+  .plan-panel .ss-label {
+    display: none;
+  }
+  .plan-panel .sheet-tabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .plan-panel .sheet-tabs__tab,
+  .plan-panel .sheet-tabs__tab:last-child {
+    min-width: 40px;
+    height: 40px;
+    padding: 0 12px;
+    margin-left: 0;
+    border: none;
+    border-radius: 10px;
+    background: none;
+    color: var(--white);
+    font: 500 14px var(--font-ui);
+    letter-spacing: 0.5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .plan-panel .sheet-tabs__tab.is-active {
+    background: var(--gray-800);
+    text-transform: uppercase;
+  }
+  .sheet-tabs__label {
+    display: none;
+  }
+  .sheet-tabs__tab.is-active .sheet-tabs__label {
+    display: inline;
+  }
+  /* Only the active tab's fields are shown */
+  .plan-panel[data-ptab] [data-ptab-field] {
+    display: none;
+  }
+  .plan-panel[data-ptab='type'] [data-ptab-field='type'],
+  .plan-panel[data-ptab='depth'] [data-ptab-field='depth'],
+  .plan-panel[data-ptab='offset'] [data-ptab-field='offset'],
+  .plan-panel[data-ptab='bit'] [data-ptab-field='bit'] {
+    display: block;
+  }
+  .plan-panel .cut-type-select__btn,
+  .plan-panel .offset-field__flip,
+  .plan-panel .stepper,
+  .plan-panel .ss-input,
+  .plan-panel .offset-field .ss-input {
+    height: 48px;
+  }
+  .plan-panel .cut-type-select__btn {
+    font-size: 17px;
+  }
+  .plan-panel .stepper button {
+    width: 48px;
+    font-size: 22px;
+  }
+  .plan-panel .ss-input {
+    font-size: 18px;
+  }
+  .plan-panel .bit-presets {
+    margin-top: 8px;
+  }
+
+  /* Mobile dock: the count and the pencil float above the sheet. Collapsed, only the pencil is left. */
+  .plan-dock .selection-editor-button,
+  .plan-dock .plan-dock__edit {
+    position: absolute;
+    right: 16px;
+    bottom: calc(100% + 12px);
+  }
+  .plan-dock .plan-dock__edit {
+    display: flex;
+    background: var(--blue-050);
+    color: var(--on-accent);
+  }
+  .plan-dock:not(.is-manage) .plan-dock__edit {
+    display: none;
+  }
+  .plan-dock.is-sheet-closed .plan-dock__edit {
+    display: flex;
+  }
+  .plan-dock.is-sheet-closed .selection-editor-button,
+  .plan-dock.is-sheet-closed .plan-panel,
+  .plan-dock.is-sheet-closed .manage-panel {
+    display: none;
+  }
+  .manage-panel__hint {
+    display: block;
+  }
+  .manage-grid {
+    grid-template-columns: repeat(4, 1fr);
+    max-height: none;
   }
 }

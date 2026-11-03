@@ -7,7 +7,7 @@
 /* ---------- Canvas shapes: design ---------- */
 .cv-shape {
   fill: var(--path-fill);
-  stroke: #56575d;
+  stroke: var(--gray-600);
   stroke-width: 1px;
 }
 .cv-shape.is-hover {
@@ -25,8 +25,9 @@
 }
 .cv-bbox {
   fill: none;
-  stroke: rgba(44, 101, 255, 0.4);
+  stroke: rgba(var(--blue-050-rgb), 0.4);
   stroke-width: 1;
+  mix-blend-mode: darken;
   pointer-events: none;
 }
 /* Reference paths (Studio's measured strokes): amber 1.5px, orange 2px when selected, 12px halo. */
@@ -61,7 +62,144 @@
   stroke: var(--blue-050);
   stroke-width: 3;
   fill: none;
-  stroke-linecap: square;
+  stroke-linecap: round;
+}
+/* Selection handles spring in from 2.5px inside the box and fade up, on every selection change (Studio's focus_handle_* keyframes). */
+.cv-overlay .cv-handle {
+  animation-duration: 0.3s;
+  animation-timing-function: cubic-bezier(0.28, 0.9, 0.35, 1.36);
+  animation-iteration-count: 1;
+}
+.cv-overlay .cv-handle--tl {
+  animation-name: cv-focus-tl;
+}
+.cv-overlay .cv-handle--tr {
+  animation-name: cv-focus-tr;
+}
+.cv-overlay .cv-handle--bl {
+  animation-name: cv-focus-bl;
+}
+.cv-overlay .cv-handle--br {
+  animation-name: cv-focus-br;
+}
+.cv-overlay .cv-handle--tm {
+  animation-name: cv-focus-tm;
+}
+.cv-overlay .cv-handle--bm {
+  animation-name: cv-focus-bm;
+}
+.cv-overlay .cv-handle--lm {
+  animation-name: cv-focus-lm;
+}
+.cv-overlay .cv-handle--rm {
+  animation-name: cv-focus-rm;
+}
+/* Several objects selected: the box and its handles go gray; the dimension labels stay blue. */
+.cv-overlay.is-multi .cv-bbox {
+  stroke: #b9bcc6;
+}
+.cv-overlay.is-multi .cv-handle path,
+.cv-overlay.is-multi .cv-handle line,
+.cv-overlay.is-multi .cv-center {
+  stroke: #b9bcc6;
+  fill: #b9bcc6;
+}
+.cv-overlay .cv-center {
+  animation: 0.3s cubic-bezier(0.28, 0.9, 0.35, 1.36) 0s 1 normal none running cv-focus-fade;
+}
+@keyframes cv-focus-tl {
+  0% {
+    transform: translate(2.5px, 2.5px);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-tr {
+  0% {
+    transform: translate(-2.5px, 2.5px);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-bl {
+  0% {
+    transform: translate(2.5px, -2.5px);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-br {
+  0% {
+    transform: translate(-2.5px, -2.5px);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-tm {
+  0% {
+    transform: translateY(2.5px);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-bm {
+  0% {
+    transform: translateY(-2.5px);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-lm {
+  0% {
+    transform: translate(2.5px, 0);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-rm {
+  0% {
+    transform: translate(-2.5px, 0);
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cv-focus-fade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cv-overlay .cv-handle,
+  .cv-overlay .cv-center {
+    animation: none;
+  }
 }
 .cv-handle--tl,
 .cv-handle--br {
@@ -92,8 +230,8 @@
 }
 .cv-anchor-point__ring {
   fill: none;
-  stroke: rgba(44, 101, 255, 0.35);
-  stroke-width: 2;
+  stroke: rgba(44, 101, 255, 0.2);
+  stroke-width: 2px;
   opacity: 0;
   pointer-events: none;
 }
@@ -101,57 +239,63 @@
   opacity: 1;
 }
 .cv-anchor-point__dot {
-  fill: #fff;
-  stroke: rgba(44, 101, 255, 0.9);
-  stroke-width: 1;
+  fill: var(--white);
+  stroke: #0546f6;
+  stroke-width: 1.5px;
   pointer-events: none;
 }
 .cv-anchor-point__dot.is-active {
-  fill: rgb(44, 101, 255);
+  fill: #abc1ff;
+}
+.cv-anchor-point__dot.is-custom {
+  stroke: #ff274e;
+}
+.cv-anchor-point__dot.is-custom.is-active {
+  fill: #fbd1db;
 }
 .cv-anchor-clear {
   cursor: default;
 }
 .cv-anchor-clear rect {
-  fill: #eceef2;
+  fill: var(--gray-100);
 }
 .cv-anchor-clear text {
-  fill: #2b2c30;
+  fill: var(--gray-800);
   font-size: 13px;
   pointer-events: none;
 }
 /* Unselected shapes recede while a point is being picked. */
 .ui-viewport.is-anchor-picking .cv-shape:not(.is-selected) {
-  opacity: 0.3;
+  opacity: 0.2;
 }
 .cv-anchor-title text {
-  fill: #2b2c30;
+  fill: var(--gray-800);
   font-size: 14px;
   font-weight: 500;
   pointer-events: none;
 }
 .cv-anchor-hint text {
-  fill: #6b6e78;
+  fill: var(--gray-500);
   font-size: 13px;
   text-anchor: middle;
   pointer-events: none;
 }
 /* The origin marker outside the centre: blue when snapped to a point, red when free. */
 .cv-anchor-mark {
-  fill: rgb(44, 101, 255);
+  fill: var(--blue-050);
   pointer-events: none;
 }
 .cv-anchor-mark.is-free {
-  fill: #e5484d;
+  fill: #ff274e;
 }
 .cv-anchor-hint__close {
   cursor: default;
 }
 .cv-anchor-hint__close circle {
-  fill: rgba(22, 21, 20, 0.08);
+  fill: color-mix(in srgb, var(--gray-900) 8%, transparent);
 }
 .cv-anchor-hint__close path {
-  stroke: #2b2c30;
+  stroke: var(--gray-800);
   stroke-width: 1.5;
   stroke-linecap: round;
 }
@@ -161,23 +305,50 @@
 .cv-label {
   pointer-events: none;
 }
+/* Dimension labels fade in over 0.2s, as Studio's bounding-box labels do. */
+.cv-overlay .cv-label {
+  animation: cv-label-in 0.2s linear both;
+}
+@keyframes cv-label-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 .cv-label rect {
-  fill: rgba(253, 253, 254, 0.75);
+  fill: color-mix(in srgb, var(--white) 75%, transparent);
 }
 .cv-label text {
   fill: var(--blue-050);
   font: 500 13.5px var(--font-ui);
 }
+/* Marquee: Studio's selection net, a solid 2px box with a 30% tint. */
 .cv-marquee {
-  fill: rgba(44, 101, 255, 0.08);
-  stroke: var(--blue-050);
-  stroke-width: 1;
-  stroke-dasharray: 4 3;
+  fill: rgba(97, 133, 224, 0.3);
+  stroke: rgb(97, 133, 224);
+  stroke-width: 2px;
+  pointer-events: none;
 }
 .cv-guide {
   stroke: var(--snap-red);
-  stroke-width: 1;
+  /* Studio's alignment guide: 1.5px, non-scaling, darkening what it crosses. */
+  stroke-width: 1.5px;
+  mix-blend-mode: darken;
+  vector-effect: non-scaling-stroke;
   pointer-events: none;
+}
+/* Studio's grid snap line: dashed, 1.5px, non-scaling. */
+.cv-guide--grid {
+  stroke-width: 1.5px;
+  stroke-dasharray: 5;
+  mix-blend-mode: darken;
+  vector-effect: non-scaling-stroke;
+}
+/* On the dark design canvas, darken would hide them: lighten instead. */
+[data-theme='dark'] .theme--design :is(.cv-bbox, .cv-guide, .cv-guide--grid) {
+  mix-blend-mode: lighten;
 }
 .cv-draft path {
   fill: none;
@@ -193,8 +364,38 @@
   fill: var(--blue-050);
 }
 .cv-draft-cursor {
-  fill: rgba(44, 101, 255, 0.18);
+  fill: rgba(var(--blue-050-rgb), 0.18);
   stroke: none;
+  pointer-events: none;
+}
+/* Pen tool: the segment that follows the cursor, Bézier handles, and the node editor's anchors. */
+.cv-pen {
+  pointer-events: none;
+}
+.cv-draft path.cv-pen-rubber {
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+  opacity: 0.8;
+}
+.cv-pen-handle line {
+  stroke: var(--blue-050);
+  stroke-width: 1px;
+}
+.cv-pen-handle circle {
+  fill: var(--blue-050);
+  stroke: var(--white);
+  stroke-width: 1px;
+}
+.cv-pen-edit rect.is-smooth {
+  rx: 4px;
+}
+.cv-pen-edit rect.is-picked {
+  fill: var(--blue-050);
+}
+.cv-pen-hint {
+  fill: var(--gray-500);
+  font-size: 13px;
+  text-anchor: middle;
   pointer-events: none;
 }
 
@@ -334,8 +535,24 @@
 
 /* Snapped preview of a free anchor pick: a red dot under the cursor. */
 .cv-anchor-hover {
-  fill: #e5484d;
-  stroke: #fff;
-  stroke-width: 1.5;
+  fill: #ff274e;
+  pointer-events: none;
+}
+.cv-anchor-hover__halo {
+  fill: rgba(255, 39, 78, 0.1);
+}
+
+/* Position > Show grid: dashed steps and the solid axes through the origin. */
+.cv-grid line {
+  stroke: var(--gray-300);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.cv-grid .cv-grid__axis {
+  stroke-dasharray: none;
+}
+.cv-pos-tick {
+  stroke: var(--blue-050);
+  stroke-width: 2;
   pointer-events: none;
 }

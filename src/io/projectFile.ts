@@ -1,16 +1,17 @@
 // Save / open designs on the user's computer, plus local autosave + "Open Recent".
 // Uses the File System Access API when the browser supports it (Chrome, Edge) so
 // "Save" writes back to the same file; falls back to download / file input.
-import type { Contour, CutType, Group, Shape, ShapeKind, StudioDoc, Units } from '../model/types'
+import type { Contour, CutType, FreeOrigin, Group, OriginPoint, Shape, ShapeKind, StudioDoc, Units } from '../model/types'
 import { DEFAULT_CUT, SNAP_KINDS } from '../model/types'
 import { uid } from '../model/ids'
+import { parsePen } from '../geometry/pen'
 import { useStore } from '../state/store'
 import { isDesktop } from '../desktop/runtime'
 import { desktopPickOpen, desktopPickSave, desktopRead, desktopWrite, type DesktopFileHandle } from '../desktop/files'
 
-export const FILE_EXT = '.formastudio'
-/** Extension and app marker of designs saved before the rename to Forma Studio. Still opened. */
-export const LEGACY_FILE_EXT = '.shaperstudio'
+export const FILE_EXT = '.forma'
+/** Extensions of designs saved under earlier names. Still opened, never written. */
+export const LEGACY_FILE_EXTS = ['.formastudio', '.shaperstudio']
 const LEGACY_APP = 'ShaperStudio'
 const MIME = 'application/json'
 
@@ -18,7 +19,7 @@ const MIME = 'application/json'
 export type DocHandle = FileSystemFileHandle | DesktopFileHandle
 const isDesktopHandle = (h: DocHandle): h is DesktopFileHandle => (h as DesktopFileHandle).kind === 'desktop'
 
-const pickerTypes = [{ description: 'Forma Studio design', accept: { [MIME]: [FILE_EXT, LEGACY_FILE_EXT, '.json'] } }]
+const pickerTypes = [{ description: 'Forma Studio design', accept: { [MIME]: [FILE_EXT, ...LEGACY_FILE_EXTS, '.json'] } }]
 
 type FSWindow = Window & {
   showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle>
@@ -38,6 +39,9 @@ const CUT_TYPES: CutType[] = ['online', 'outside', 'inside', 'pocket', 'guide']
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const numOr = (v: unknown, d: number) => (finite(v) ? v : d)
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+
+const ORIGIN_POINTS: OriginPoint[] = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br']
+const freeOrigin = (v: unknown): FreeOrigin | null => (isObj(v) && finite(v.fx) && finite(v.fy) ? { fx: v.fx, fy: v.fy } : null)
 
 /** Rebuild one shape from untrusted JSON, dropping bad contours. Null = unusable. */
 function repairShape(raw: unknown): Shape | null {
@@ -82,6 +86,8 @@ function repairShape(raw: unknown): Shape | null {
   if (raw.locked === true) shape.locked = true
   if (typeof raw.groupId === 'string') shape.groupId = raw.groupId
   if (isObj(raw.meta)) shape.meta = raw.meta as Shape['meta']
+  const pen = parsePen(raw.pen)
+  if (pen) shape.pen = pen
   return shape
 }
 
@@ -115,6 +121,8 @@ export function parseDoc(text: string): StudioDoc {
         const grp: Group = { id: g.id, name: g.name }
         if (g.source === '3d' || g.source === 'paper' || g.source === 'svg' || g.source === 'user') grp.source = g.source
         if (isObj(g.info)) grp.info = g.info as Group['info']
+        const ga = freeOrigin(g.anchor)
+        if (ga) grp.anchor = ga
         groups.push(grp)
       }
     }
@@ -135,7 +143,24 @@ export function parseDoc(text: string): StudioDoc {
         ? { snap: Object.fromEntries(SNAP_KINDS.filter((k) => (st.snap as Record<string, unknown>)[k] === false).map((k) => [k, false])) }
         : {}),
       showPosition: st.showPosition === true,
+      ...(st.showGrid === true ? { showGrid: true } : {}),
+      ...(st.snapToGrid === true ? { snapToGrid: true } : {}),
+      ...(st.positionLabels === true ? { positionLabels: true } : {}),
+      ...(typeof st.gridSize === 'number' && st.gridSize > 0 && Number.isFinite(st.gridSize) ? { gridSize: st.gridSize } : {}),
       originAnchor: st.originAnchor === true,
+      ...(ORIGIN_POINTS.includes(st.originPoint as OriginPoint)
+        ? { originPoint: st.originPoint as OriginPoint }
+        : freeOrigin(st.originPoint)
+          ? { originPoint: freeOrigin(st.originPoint) as FreeOrigin }
+          : {}),
+      ...(isObj(st.customAnchor) && finite(st.customAnchor.x) && finite(st.customAnchor.y)
+        ? {
+            customAnchor: { x: st.customAnchor.x, y: st.customAnchor.y },
+            ...(Array.isArray(st.customAnchorFor)
+              ? { customAnchorFor: st.customAnchorFor.filter((i): i is string => typeof i === 'string') }
+              : {}),
+          }
+        : {}),
       cutPathDisplay: st.cutPathDisplay === true,
     },
     createdAt: typeof d.createdAt === 'string' ? d.createdAt : now,
@@ -171,7 +196,7 @@ export async function saveDoc(doc: StudioDoc, handle: DocHandle | null, saveAs =
 
 export async function openDocFromComputer(): Promise<{ doc: StudioDoc; handle: DocHandle | null }> {
   if (isDesktop()) {
-    const h = await desktopPickOpen([FILE_EXT.slice(1), LEGACY_FILE_EXT.slice(1), 'json'])
+    const h = await desktopPickOpen([FILE_EXT, ...LEGACY_FILE_EXTS].map((e) => e.slice(1)).concat('json'))
     return { doc: parseDoc(await desktopRead(h)), handle: h }
   }
   if (typeof w.showOpenFilePicker === 'function') {
@@ -179,7 +204,7 @@ export async function openDocFromComputer(): Promise<{ doc: StudioDoc; handle: D
     const f = await h.getFile()
     return { doc: parseDoc(await f.text()), handle: h }
   }
-  const f = await pickFile(FILE_EXT + ',' + LEGACY_FILE_EXT + ',.json,' + MIME)
+  const f = await pickFile([FILE_EXT, ...LEGACY_FILE_EXTS].join(',') + ',.json,' + MIME)
   return { doc: parseDoc(await f.text()), handle: null }
 }
 

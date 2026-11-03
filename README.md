@@ -1,8 +1,7 @@
 # Forma Studio
 
-A lightweight, fully client-side design studio for the Shaper Origin, modelled on
-Shaper Tools' Studio (layout, colours, IBM Plex Sans type, Design / Plan / Review
-modes), with two extras:
+A lightweight, fully client-side design studio for the Shaper Origin, inspired by
+Shaper Tools' Studio (Design / Plan / Review modes), with two extras:
 
 - **3D Carve:** drop in an STL / OBJ / GLB model, pick a bit from the gallery, and
   it slices the model into layers. For each layer it calculates the cut depth and the
@@ -20,10 +19,11 @@ the build is configured with an accounts API.
 | Area | What you get |
 | --- | --- |
 | Design | Pen tool, Make Shape (circle, ellipse, rectangle, rounded rect, polygon, triangle + 14 templates), text to outlines (IBM Plex Sans or your own font), SVG import (hidden layers skipped, local `<use>` resolved, unsupported content reported), move / scale / rotate / anchor, smart-alignment snapping, Offset (open paths are stroked), ShapeShifter (union, subtract, intersect, exclude), mirror, duplicate (copies get their own groups), z-order, lock / unlock all. Units (in or mm) are set per design in the settings menu, and new designs start in the last unit you chose. |
-| Plan | Cut type (on line, guide, inside, pocket, outside), depth, offset, bit diameter (⅛ ¼ ½ presets + bit library), live tool-width preview. The cut path can be shown for every shape (Cut path display setting), drawn as marching cut paths. Units are also switchable here. |
+| Plan | Cut type (on line, guide, inside, pocket, outside), depth, offset, bit diameter (⅛ ¼ ½ presets + bit library: owned bits first, with a suggestion for the current cut and a link into the bit gallery), live tool-width preview. The cut path can be shown for every shape (Cut path display setting), drawn as marching cut paths. Units are also switchable here. |
 | Review | Depth-shaded material preview |
-| Files | Autosave + Open Recent (browser storage), **Save / Open `.formastudio` files on your computer** (writes back to the same file in Chrome / Edge), Export SVG for Origin. New, Open, Import and Open Recent ask before discarding unsaved changes. |
-| 3D Carve | STL/OBJ/GLB/GLTF, units + up-axis + fit-to-size, Shaper's real catalogue of 20 bits (`docs/research/shaper-bits.json`, including the 3 that come in the box), step-down / layers / stock / margin, per-layer contour (guide) + compensated toolpath (on line) + pocket region (pocket), optional through-cut |
+| Files | Autosave + Open Recent (browser storage), **Save / Open `.forma` files on your computer** (writes back to the same file in Chrome / Edge), Export SVG for Origin. New, Open, Import and Open Recent ask before discarding unsaved changes. |
+| 3D Carve | STL/OBJ/GLB/GLTF, units + up-axis + fit-to-size, Shaper's real catalogue of 20 bits (`docs/research/shaper-bits.json`, including the 3 that come in the box), step-down / layers / stock / margin, per-layer contour (guide) + compensated toolpath (on line) + pocket region (pocket), optional through-cut. Stage bits default to what you own in the **bit gallery** |
+| Bits | **Bit gallery** (route `/bits`, the home window, the studio menu): every Shaper bit with photo, specs and product link, plus your own additions. Mark what you own (quantity, notes) and Plan and 3D Carve suggest the best bit for each cut from the ones you have. Kept in this browser; product photos stay on Shaper's CDN (`scripts/fetch-bit-images.mjs` fetches local, git-ignored copies) |
 | Paper Scan | Camera or photo upload, automatic paper corner detection with draggable corners, A3/A4/A5/Letter/Legal/Tabloid/custom, lighting correction, adaptive ink threshold, centerline or outline tracing, stroke-width estimate |
 
 ### How cuts are encoded in the SVG
@@ -132,10 +132,10 @@ src/
   styles/       design tokens + component styles
 src-tauri/      Tauri desktop shell (Rust): window, native file dialogs, updater
 server/         accounts API (AWS Lambda), stores users in S3
-docs/research/  design measurements taken from Shaper Studio
+docs/research/  design notes
 ```
 
-Forma Studio is an independent project and is not affiliated with Shaper Tools.
+Forma Studio is an independent project and is not affiliated with, endorsed by, or sponsored by Shaper Tools. "Shaper" and "Shaper Origin" are trademarks of Shaper Tools.
 
 ## Contributing
 
@@ -144,4 +144,4 @@ your change on a branch, and open a pull request. Releases are made by the maint
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+[AGPL-3.0](LICENSE). You are free to use, modify and share it, but anyone who distributes it or runs a modified version as a hosted service must publish their complete source under the same license. For a commercial license without those terms, contact the author.

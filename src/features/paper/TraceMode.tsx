@@ -22,9 +22,16 @@
 // Ink extraction is fully automatic: lighting is normalised, shadows are
 // divided out, and hysteresis keeps sensor noise and paper texture out of the
 // mask (see ink.ts). Reuses the shared full-screen mode layout (modeview).
+//
+// "Any image" skips the sheet entirely: the whole picture (a logo, artwork, a
+// screenshot, a photo) goes straight to working, split into design and
+// background by imageMask.ts. It has no real size, so it starts at
+// IMAGE_LONG_MM and Resize (in place of Paper Outline) scales the traced design
+// to the size it should be.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, JSX, PointerEvent, ReactNode } from 'react'
-import { DEFAULT_CUT, MM_PER_IN, type Contour, type ImportPayload, type Pt, type Shape, type Units } from '../../model/types'
+import { MM_PER_IN, type Contour, type ImportPayload, type Pt, type Shape, type Units } from '../../model/types'
+import { newShapeCut } from '../../state/prefs'
 import { fmtLen, fromUnits, shapeFromWorld } from '../../model/factory'
 import { COLORS } from '../../ui/colors'
 import * as Ic from '../../ui/icons'
@@ -33,7 +40,7 @@ import { Detector } from './detectClient'
 import { computeHomography, warpPerspective } from './homography'
 import { grayFromImageData } from './ink'
 import { estimateAspect, guessPaper, PRESETS, TRACE_FRAME, type PaperPreset, type SheetKind } from './paperSize'
-import { CancelledError, cancelPaperJobs, runInk, runVector } from './pipeline'
+import { CancelledError, cancelPaperJobs, runImageMask, runInk, runVector } from './pipeline'
 import { captureFromTrack, defaultTrack, traceFrameFromTrack } from './traceDots'
 import type { VectorMode, VectorResult } from './trace'
 import TraceIntro from './TraceIntro'
@@ -68,11 +75,23 @@ const SHEET_KEY = 'forma.trace.sheet'
 
 function loadSheet(): SheetKind {
   try {
-    return localStorage.getItem(SHEET_KEY) === 'trace' ? 'trace' : 'paper'
+    const v = localStorage.getItem(SHEET_KEY)
+    return v === 'trace' || v === 'image' ? v : 'paper'
   } catch {
     return 'paper'
   }
 }
+
+/** Any image: long side (mm) it is traced at until Resize says otherwise. */
+const IMAGE_LONG_MM: Record<Units, number> = { mm: 150, in: 6 * MM_PER_IN }
+
+/**
+ * Any image: long side (px) of the copy that is traced. Small images are
+ * scaled up (smoothly, so their edges trace as curves rather than pixel
+ * steps); big ones down, to keep tracing quick.
+ */
+const IMAGE_MIN_SIDE = 1200
+const IMAGE_MAX_SIDE = 2000
 
 
 /** The flattened paper plus the scale it was made at. */
@@ -125,6 +144,15 @@ function imageFileSize(file: File): Promise<{ w: number; h: number }> {
   })
 }
 
+/** Vectors (mm) scaled about the sheet's top-left corner. */
+function scaleVector(v: VectorResult, f: number): VectorResult {
+  return {
+    ...v,
+    groups: v.groups.map((g) => g.map((c) => ({ ...c, pts: c.pts.map((p) => ({ x: p.x * f, y: p.y * f })) }))),
+    strokeWidthMm: Math.round(v.strokeWidthMm * f * 100) / 100,
+  }
+}
+
 /** Shape objects in ImportPayload carry no id. */
 function withoutId(s: Shape): Omit<Shape, 'id'> {
   const out: Partial<Shape> = { ...s }
@@ -132,8 +160,9 @@ function withoutId(s: Shape): Omit<Shape, 'id'> {
   return out as Omit<Shape, 'id'>
 }
 
+/** Centerlines are open paths and stay On Line; outlines are closed and take the preset cut type. */
 function cutFor(type: 'online' | 'outside') {
-  return { ...DEFAULT_CUT, type }
+  return type === 'online' ? newShapeCut('online') : newShapeCut()
 }
 
 /** Preset size in the document units: inches to 2 decimals (A4 8.27 in), mm to 1 decimal (A4 210 mm). */
@@ -596,11 +625,11 @@ function FlattenMorph({ src, from, to, onDone }: { src: HTMLCanvasElement; from:
 type Phase = 'pick' | 'detect' | 'frame' | 'flatten' | 'working' | 'result'
 type ResultMode = 'view' | 'outline' | 'modify' | 'adjust'
 
-/** The header dropdown's sub-modes, in menu order. */
-const SUB_MODES: { mode: Exclude<ResultMode, 'view'>; label: string }[] = [
+/** The header dropdown's sub-modes, in menu order. Any image has no paper: Resize instead. */
+const subModes = (image: boolean): { mode: Exclude<ResultMode, 'view'>; label: string }[] => [
   { mode: 'modify', label: 'Modify Vector' },
-  { mode: 'adjust', label: 'Adjust Scan' },
-  { mode: 'outline', label: 'Paper Outline' },
+  { mode: 'adjust', label: image ? 'Adjust Image' : 'Adjust Scan' },
+  { mode: 'outline', label: image ? 'Resize' : 'Paper Outline' },
 ]
 /**
  * The reveal: the black & white page shows while the vectors are computed
@@ -658,8 +687,14 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
   const [detail, setDetail] = useState(50)
   const [adjustReady, setAdjustReady] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const snap = useRef<{ detail: number; vec: VectorResult | null; smooth: number }>({ detail: 50, vec: null, smooth: 0 })
+  const snap = useRef<{ detail: number; vec: VectorResult | null; smooth: number; invert: boolean }>({ detail: 50, vec: null, smooth: 0, invert: false })
   const appliedDetail = useRef(50)
+  // Any image: swap design and background, and the size being typed in Resize.
+  const [invert, setInvert] = useState(false)
+  const appliedInvert = useRef(false)
+  const [sizeDraft, setSizeDraft] = useState<{ w: string; h: string } | null>(null)
+  const resizeSnap = useRef<{ scan: ScanImage; vec: VectorResult } | null>(null)
+  const isImage = sheet === 'image'
   const [brushAt, setBrushAt] = useState<Pt | null>(null)
 
   const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[1]
@@ -742,7 +777,44 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
   function startFromPhoto(c: HTMLCanvasElement) {
     setPhoto(c)
     resetFromPhoto()
-    void autoScan(c)
+    if (sheet === 'image') startImage(c)
+    else void autoScan(c)
+  }
+
+  /**
+   * Any image: no sheet to find or flatten. The picture (resampled to a
+   * comfortable tracing size) is the scan, IMAGE_LONG_MM on its long side,
+   * traced as filled shapes, which suits logos and artwork best.
+   */
+  function startImage(p: HTMLCanvasElement) {
+    ++flow.current
+    const long = Math.max(p.width, p.height)
+    const k = long < IMAGE_MIN_SIDE ? IMAGE_MIN_SIDE / long : long > IMAGE_MAX_SIDE ? IMAGE_MAX_SIDE / long : 1
+    const c = document.createElement('canvas')
+    c.width = Math.max(1, Math.round(p.width * k))
+    c.height = Math.max(1, Math.round(p.height * k))
+    const ctx = c.getContext('2d', { willReadFrequently: true })
+    if (!ctx) {
+      setError('Could not read that image.')
+      return
+    }
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(p, 0, 0, c.width, c.height)
+    const longMm = IMAGE_LONG_MM[units]
+    const wMm = c.width >= c.height ? longMm : (longMm * c.width) / c.height
+    const hMm = (wMm * c.height) / c.width
+    const s: ScanImage = { img: ctx.getImageData(0, 0, c.width, c.height), ppmX: c.width / wMm, ppmY: c.height / hMm, wMm, hMm, label: 'Image' }
+    setInvert(false)
+    appliedInvert.current = false
+    setMode('outline')
+    setScan(s)
+    setFlat(c)
+    setBw(c)
+    setSweep('wait')
+    setResultMode('view')
+    setPhase('working')
+    void vectorise(s, 'outline', false)
   }
 
   /* ----- photo loading ----- */
@@ -1006,30 +1078,45 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
     void vectorise(s)
   }
 
-  async function vectorise(s: ScanImage) {
+  /**
+   * Ink (or, for any image, design) mask and vectors for a scan. Resolves
+   * null when a newer job has started meanwhile.
+   */
+  async function traceScan(s: ScanImage, myJob: number, md: VectorMode = mode, inv: boolean = invert, det: number = detail): Promise<VectorResult | null> {
+    const w = s.img.width
+    const h = s.img.height
+    const m =
+      sheet === 'image'
+        ? await runImageMask(s.img, { detail: det, invert: inv })
+        : // Raw grayscale: the ink pipeline does its own lighting normalisation.
+          await runInk(grayFromImageData(s.img), w, h, {
+            ppm: s.ppmX,
+            sensitivity: det,
+            cOffset: 0,
+            marginMm: MARGIN_MM,
+            minBlobMm2: 3,
+            closeGaps: false,
+          })
+    if (myJob !== job.current) return null
+    const r = await runVector(m, w, h, s.ppmX, md, s.ppmY)
+    if (myJob !== job.current) return null
+    if (sheet === 'image') setError(r.groups.length ? null : 'Nothing to trace was found in this image. Try Adjust Image.')
+    return r
+  }
+
+  async function vectorise(s: ScanImage, md: VectorMode = mode, inv: boolean = invert) {
     const myJob = ++job.current
     setBusy('Converting to vectors…')
     try {
-      // Raw grayscale: the ink pipeline does its own lighting normalisation.
-      const gray = grayFromImageData(s.img)
-      const m = await runInk(gray, s.img.width, s.img.height, {
-        ppm: s.ppmX,
-        sensitivity: detail,
-        cOffset: 0,
-        marginMm: MARGIN_MM,
-        minBlobMm2: 3,
-        closeGaps: false,
-      })
-      if (myJob !== job.current) return
-      const r = await runVector(m, s.img.width, s.img.height, s.ppmX, mode, s.ppmY)
-      if (myJob !== job.current) return
+      const r = await traceScan(s, myJob, md, inv)
+      if (!r) return
       setVec(r)
       setKeep(new Set(r.groups.map((_, i) => i)))
       setBusy(null)
     } catch (err) {
       if (myJob !== job.current || err instanceof CancelledError) return
       setBusy(null)
-      setError('Could not trace the drawing. Try another photo.')
+      setError(sheet === 'image' ? 'Could not trace this image. Try another one.' : 'Could not trace the drawing. Try another photo.')
     }
   }
 
@@ -1039,18 +1126,8 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
     const myJob = ++job.current
     void (async () => {
       try {
-        const gray = grayFromImageData(scan.img)
-        const m = await runInk(gray, scan.img.width, scan.img.height, {
-          ppm: scan.ppmX,
-          sensitivity: detail,
-          cOffset: 0,
-          marginMm: MARGIN_MM,
-          minBlobMm2: 3,
-          closeGaps: false,
-        })
-        if (myJob !== job.current) return
-        const r = await runVector(m, scan.img.width, scan.img.height, scan.ppmX, mode, scan.ppmY)
-        if (myJob !== job.current) return
+        const r = await traceScan(scan, myJob)
+        if (!r) return
         setVec(r)
         setKeep(new Set(r.groups.map((_, i) => i)))
       } catch {
@@ -1191,13 +1268,19 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
     outlineSnap.current = { quad, track, sheet, presetId, customW, customH, landscape, ppm }
     // Modify / Adjust reached from here through the menu cancel back to this state.
     keepSnap.current = new Set(keep)
-    snap.current = { detail, vec, smooth }
+    snap.current = { detail, vec, smooth, invert }
     appliedDetail.current = detail
+    appliedInvert.current = invert
     setMenuOpen(false)
+    if (sheet === 'image') openResize()
     setResultMode('outline')
   }
 
   function restoreOutline() {
+    if (sheet === 'image') {
+      restoreResize()
+      return
+    }
     const o = outlineSnap.current
     if (!o) return
     setQuad(o.quad)
@@ -1221,6 +1304,13 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
   function applyOutline() {
     const o = outlineSnap.current
     setMenuOpen(false)
+    if (sheet === 'image') {
+      // Resize applies as it is typed: nothing to rescan.
+      resizeSnap.current = null
+      setSizeDraft(null)
+      setResultMode('view')
+      return
+    }
     const same =
       !!o &&
       o.sheet === sheet &&
@@ -1240,35 +1330,83 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
     }
   }
 
+  /* ----- any image: Resize ----- */
+
+  /** Resize: the traced design's size, typed in the document units. */
+  function openResize() {
+    if (scan && vec) resizeSnap.current = { scan, vec }
+    setSizeDraft(keptBox ? { w: fmtInput(keptBox.x1 - keptBox.x0), h: fmtInput(keptBox.y1 - keptBox.y0) } : null)
+  }
+
+  function restoreResize() {
+    const r = resizeSnap.current
+    resizeSnap.current = null
+    setSizeDraft(null)
+    if (!r) return
+    setScan(r.scan)
+    setVec(r.vec)
+  }
+
+  /** A length in mm as the inputs show it: 2 decimals in inches, 1 in mm. */
+  function fmtInput(mm: number): string {
+    return units === 'in' ? String(Math.round((mm / MM_PER_IN) * 100) / 100) : String(Math.round(mm * 10) / 10)
+  }
+
+  /**
+   * Typed a width or height: the image and its vectors scale together, about
+   * the top-left corner, so the kept design gets that size (aspect locked).
+   * Scaling the result is exact; the next re-trace runs at the new scale too.
+   */
+  function onSizeInput(axis: 'w' | 'h', text: string) {
+    if (!keptBox || !scan || !vec) return
+    const cur = axis === 'w' ? keptBox.x1 - keptBox.x0 : keptBox.y1 - keptBox.y0
+    const ratio = (keptBox.y1 - keptBox.y0) / (keptBox.x1 - keptBox.x0)
+    const v = Number(text)
+    const mm = fromUnits(v, units)
+    if (!(v > 0) || !(mm >= 1) || !(cur > 0)) {
+      setSizeDraft((d) => (d ? { ...d, [axis]: text } : d))
+      return
+    }
+    const f = mm / cur
+    const other = axis === 'w' ? mm * ratio : mm / ratio
+    setSizeDraft(axis === 'w' ? { w: text, h: fmtInput(other) } : { w: fmtInput(other), h: text })
+    setScan({ ...scan, wMm: scan.wMm * f, hMm: scan.hMm * f, ppmX: scan.ppmX / f, ppmY: scan.ppmY / f })
+    setVec(scaleVector(vec, f))
+  }
+
+  const sizeInputs = sizeDraft && (
+    <div className="trace-row">
+      <input className="ss-select" type="number" min={0} step="any" value={sizeDraft.w} onChange={(e) => onSizeInput('w', e.target.value)} aria-label="Width" />
+      <span className="modeview__label">×</span>
+      <input className="ss-select" type="number" min={0} step="any" value={sizeDraft.h} onChange={(e) => onSizeInput('h', e.target.value)} aria-label="Height" />
+      <span className="modeview__label">{units}</span>
+    </div>
+  )
+
   function cancelSub() {
     setKeep(new Set(keepSnap.current))
     setSmooth(snap.current.smooth)
     setDetail(snap.current.detail)
     appliedDetail.current = snap.current.detail
+    setInvert(snap.current.invert)
+    appliedInvert.current = snap.current.invert
     setVec(snap.current.vec)
     setMenuOpen(false)
     setResultMode('view')
   }
 
-  // Re-trace with the new detail once the slider settles.
+  // Re-trace with the new detail (or, for any image, inversion) once the slider settles.
   useEffect(() => {
-    if (resultMode !== 'adjust' || !adjustReady || !scan || detail === appliedDetail.current) return
+    if (resultMode !== 'adjust' || !adjustReady || !scan) return
+    if (detail === appliedDetail.current && invert === appliedInvert.current) return
     const t = window.setTimeout(() => {
       appliedDetail.current = detail
+      appliedInvert.current = invert
       void (async () => {
         const myJob = ++job.current
         try {
-          const m = await runInk(grayFromImageData(scan.img), scan.img.width, scan.img.height, {
-            ppm: scan.ppmX,
-            sensitivity: detail,
-            cOffset: 0,
-            marginMm: MARGIN_MM,
-            minBlobMm2: 3,
-            closeGaps: false,
-          })
-          if (myJob !== job.current) return
-          const r = await runVector(m, scan.img.width, scan.img.height, scan.ppmX, mode, scan.ppmY)
-          if (myJob !== job.current) return
+          const r = await traceScan(scan, myJob)
+          if (!r) return
           setVec(r)
           setKeep(new Set(r.groups.map((_, i) => i)))
         } catch {
@@ -1278,7 +1416,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
     }, 220)
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail, resultMode, adjustReady])
+  }, [detail, invert, resultMode, adjustReady])
 
   /** Brush: groups with any stroke within the thumb-sized circle at the pointer. */
   function brushAtPointer(e: PointerEvent<SVGSVGElement>) {
@@ -1319,8 +1457,9 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
 
   function openModify(mobile: boolean) {
     keepSnap.current = new Set(keep)
-    snap.current = { detail, vec, smooth }
+    snap.current = { detail, vec, smooth, invert }
     appliedDetail.current = detail
+    appliedInvert.current = invert
     setPickMode(mobile ? 'remove' : 'toggle')
     setPickTool('tap')
     setResultMode('modify')
@@ -1400,12 +1539,12 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
       {phase === 'result' && resultMode !== 'view' && (
         <div className="trace__menu">
           <button type="button" className="trace__menu-btn" aria-haspopup="listbox" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
-            {SUB_MODES.find((m) => m.mode === resultMode)?.label}
+            {subModes(isImage).find((m) => m.mode === resultMode)?.label}
             <Ic.IconChevronDown size={12} />
           </button>
           {menuOpen && (
             <ul className="trace__menu-list" role="listbox">
-              {SUB_MODES.map((m) => (
+              {subModes(isImage).map((m) => (
                 <li key={m.mode} role="option" aria-selected={resultMode === m.mode} onClick={() => chooseSub(m.mode)}>
                   {m.label}
                 </li>
@@ -1458,7 +1597,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
         )}
         {statusText && <div className="trace-converting">{statusText}</div>}
 
-        {phase === 'result' && resultMode === 'view' && scan && (
+        {phase === 'result' && (resultMode === 'view' || (isImage && resultMode === 'outline')) && scan && (
           <Stage aspect={scan.img.width / scan.img.height}>
             {(size) => (
               <>
@@ -1471,7 +1610,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
           </Stage>
         )}
 
-        {phase === 'result' && resultMode === 'outline' && photo && quad && (
+        {phase === 'result' && resultMode === 'outline' && !isImage && photo && quad && (
           <Stage aspect={photo.width / photo.height}>
             {(size) => (
               <>
@@ -1577,7 +1716,24 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
           Trace
         </div>
 
-        {(phase === 'frame' || (phase === 'result' && resultMode === 'outline')) && (
+        {phase === 'result' && resultMode === 'outline' && isImage && (
+          <>
+            <p className="modeview__hint">Set the size of the traced design. Width and height stay in proportion.</p>
+            <div className="modeview__label">size</div>
+            {sizeInputs ?? <p className="modeview__hint">Keep at least one part of the trace to size it.</p>}
+            <div className="modeview__spacer" />
+            <div className="trace-row">
+              <button type="button" className="modeview__pill modeview__pill--back" onClick={cancelOutline}>
+                Cancel
+              </button>
+              <button type="button" className="modeview__finish" onClick={applyOutline}>
+                Done
+              </button>
+            </div>
+          </>
+        )}
+
+        {(phase === 'frame' || (phase === 'result' && resultMode === 'outline' && !isImage)) && (
           <>
             <p className="modeview__hint">
               {sheet === 'trace'
@@ -1653,7 +1809,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
 
         {(phase === 'working' || phase === 'flatten') && (
           <>
-            <p className="modeview__hint">Finding the ink and converting it to vectors.</p>
+            <p className="modeview__hint">{isImage ? 'Separating the design from its background and converting it to vectors.' : 'Finding the ink and converting it to vectors.'}</p>
           </>
         )}
 
@@ -1680,18 +1836,31 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
                 </div>
               )}
               <div className="trace-stat">
-                <span>Paper</span>
-                <strong>{scan ? `${scan.label} · ${fmtLen(scan.wMm, units)} × ${fmtLen(scan.hMm, units)}` : '–'}</strong>
+                <span>{isImage ? 'Image' : 'Paper'}</span>
+                <strong>{scan ? (isImage ? '' : `${scan.label} · `) + `${fmtLen(scan.wMm, units)} × ${fmtLen(scan.hMm, units)}` : '–'}</strong>
               </div>
               {sizeNote && <div className="trace-warn">{sizeNote}</div>}
             </div>
             {resultMode === 'adjust' && (
               <>
-                <div className="modeview__label">ink detail</div>
+                <div className="modeview__label">{isImage ? 'detail' : 'ink detail'}</div>
                 {adjustReady ? (
                   <TraceSlider value={detail} min={1} max={100} onChange={setDetail} label="Detail" />
                 ) : (
-                  <p className="modeview__hint">Retrieving the original scan…</p>
+                  <p className="modeview__hint">{isImage ? 'Retrieving the original image…' : 'Retrieving the original scan…'}</p>
+                )}
+                {isImage && adjustReady && (
+                  <>
+                    <p className="modeview__hint">More detail takes in fainter parts of the image. Invert traces the background instead of the design.</p>
+                    <div className="ss-seg trace-seg" role="group" aria-label="Trace">
+                      <button type="button" className={!invert ? 'is-active' : ''} onClick={() => setInvert(false)}>
+                        Design
+                      </button>
+                      <button type="button" className={invert ? 'is-active' : ''} onClick={() => setInvert(true)}>
+                        Invert
+                      </button>
+                    </div>
+                  </>
                 )}
                 <div className="trace-row">
                   <button type="button" className="modeview__pill" onClick={cancelSub}>
@@ -1723,7 +1892,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
             <div className="modeview__spacer" />
             {resultMode === 'view' && (
               <button type="button" className="modeview__pill" disabled={!vec} onClick={openOutline}>
-                Edit Scan
+                {isImage ? 'Resize' : 'Edit Scan'}
               </button>
             )}
             {resultMode === 'view' && (
@@ -1748,7 +1917,19 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
       {/* Mobile control panel: display row, then Edit Scan / Confirm / Modify. */}
       {phase === 'result' && (
         <nav className={'trace-controls' + (revealed ? ' is-in' : '')} aria-label="Trace controls">
-          {resultMode === 'outline' ? (
+          {resultMode === 'outline' && isImage ? (
+            <>
+              <div className="trace-controls__row trace-controls__row--modes">{sizeInputs}</div>
+              <div className="trace-controls__row">
+                <button type="button" className="trace-controls__text" onClick={cancelOutline}>
+                  Cancel
+                </button>
+                <button type="button" className="trace-controls__text trace-controls__text--done" onClick={applyOutline}>
+                  Done
+                </button>
+              </div>
+            </>
+          ) : resultMode === 'outline' ? (
             <>
               <div className="trace-controls__row trace-controls__row--modes">
                 <select
@@ -1790,6 +1971,16 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
             adjustReady ? (
               <>
                 <TraceSlider value={detail} min={1} max={100} onChange={setDetail} label="Detail" />
+                {isImage && (
+                  <div className="trace-controls__row trace-controls__row--modes" role="group" aria-label="Trace">
+                    <button type="button" className={'trace-chip' + (!invert ? ' is-active' : '')} onClick={() => setInvert(false)}>
+                      Design
+                    </button>
+                    <button type="button" className={'trace-chip' + (invert ? ' is-active' : '')} onClick={() => setInvert(true)}>
+                      Invert
+                    </button>
+                  </div>
+                )}
                 <div className="trace-controls__row">
                   <button type="button" className="trace-controls__text" onClick={cancelSub}>
                     Cancel
@@ -1805,7 +1996,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
                 </div>
               </>
             ) : (
-              <div className="trace-controls__status">RETRIEVING ORIGINAL SCAN</div>
+              <div className="trace-controls__status">{isImage ? 'RETRIEVING ORIGINAL IMAGE' : 'RETRIEVING ORIGINAL SCAN'}</div>
             )
           ) : resultMode === 'modify' ? (
             <>
@@ -1853,7 +2044,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
             </button>
           </div>
           <div className="trace-controls__row">
-            <button type="button" className="trace-controls__icon" aria-label="Edit scan" disabled={!vec} onClick={openOutline}>
+            <button type="button" className="trace-controls__icon" aria-label={isImage ? 'Resize' : 'Edit scan'} disabled={!vec} onClick={openOutline}>
               <Ic.IconTraceEditScan size={30} strokeWidth={2} />
             </button>
             <button

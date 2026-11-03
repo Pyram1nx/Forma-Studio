@@ -1,7 +1,7 @@
 # Shaper Studio — design research notes
 
 Captured from studio.shapertools.com (logged in, 1440×900 viewport). These are the
-measurements and tokens the replica UI is built from.
+measurements and tokens the Forma Studio UI is built from.
 
 ## Typography
 - UI font: **IBM Plex Sans** (fallback sans-serif). Condensed variant used in a few spots.
@@ -71,4 +71,4 @@ Light gray (`#8e929f` track) over a `#dfe1e7` canvas with soft wood grain. Cuts 
 Shaper Origin reads `xmlns:shaper="http://www.shapertools.com/namespaces/shaper"` attributes on paths:
 `shaper:cutType` (online|outside|inside|pocket|guide), `shaper:cutDepth` (e.g. `6.35mm`). Fill/stroke colour also implies cut type
 (black fill = exterior, white fill + black stroke = interior, black stroke no fill = on-line, grey = pocket, blue = guide).
-The tool offset can't be relied on from the SVG, so Shaper forma generates explicit offset paths instead.
+The tool offset can't be relied on from the SVG, so Forma Studio generates explicit offset paths instead.

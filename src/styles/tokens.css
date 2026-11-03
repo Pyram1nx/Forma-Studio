@@ -3,6 +3,16 @@
   --font-ui: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-condensed: 'IBM Plex Sans Condensed', var(--font-ui);
 
+  /* Text and marks on a coloured fill (blue, green, red buttons and badges): white in both appearances. */
+  --on-accent: #fdfdfe;
+}
+
+/* The light palette. Also set again, in the dark appearance, on the canvas and chrome of Plan mode
+   (dark in both appearances) and Review mode (a light material sheet in both), which are styled
+   against these values. */
+:root,
+:root[data-theme='dark'] :is(.theme--plan, .theme--review) :is(.ui-layer, .app-launcher, .top-right, .plan-dock, .plan-panel, .zoom-controls, .help-launcher) {
+  color-scheme: light;
   --white: #fdfdfe;
   --gray-50: #f6f7f9;
   --gray-100: #edeef2;
@@ -15,9 +25,16 @@
   --gray-800: #2a2b2d;
   --gray-900: #0a0a0b;
 
+  /* Studio blues. Shaper's own blue (#0038d1, from the "Start Designing" button on shapertools.com/studio)
+     is kept in --shaper-blue below and is only used on the landing page. */
   --blue-050: #2c65ff;
+  --blue-050-rgb: 44, 101, 255;
   --blue-060: #0546f6;
   --blue-070: #0038d1;
+  /* Shaper's blue, read from the "Start Designing" button on shapertools.com/studio (rgb 0, 56, 209).
+     Used by the landing page (.landing in landing.css). Mirror in src/ui/colors.ts only if the canvas needs it. */
+  --shaper-blue: #0038d1;
+  --shaper-blue-rgb: 0, 56, 209;
   --blue-light: #e2eaff;
   --blue-lighter: #eef3ff;
   --blue-tint: #d5e0ff;
@@ -32,7 +49,7 @@
   /* Error text (Carve3D and Paper validation). */
   --error-text: #d61f3f;
   --switch-dark-on: #2d3f70;
-  --blue-040-a: rgba(44, 101, 255, 0.4);
+  --blue-040-a: rgba(var(--blue-050-rgb), 0.4);
   --focus-ring: var(--blue-050);
 
   --sel-fill: rgba(184, 202, 255, 0.5);
@@ -66,7 +83,45 @@
   --input-text: var(--gray-900);
 }
 
-.theme--plan {
+/* Dark appearance (state/theme.ts sets data-theme on <html>; the landing page never does). The
+   grey ramp flips, so a rule written as "--white surface, --gray-900 text" reads the same either way.
+   Plan and Review keep the light palette above on their canvas and chrome, so they look as they do
+   in the light appearance; only the menus and dialogs over them go dark. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --white: #18191b;
+  --gray-50: #1e1f22;
+  --gray-100: #232428;
+  --gray-200: #34363b;
+  --gray-300: #4a4d54;
+  --gray-400: #6b6f79;
+  --gray-500: #8d919b;
+  --gray-600: #a8abb4;
+  --gray-700: #c5c8cf;
+  --gray-800: #dcdee3;
+  --gray-900: #f1f2f4;
+
+  --blue-light: #1d2947;
+  --blue-lighter: #19213a;
+  --blue-tint: #26355f;
+  --blue-soft: #7d9fff;
+  /* Blue text and hover fills on dark: a step lighter than the light appearance's, not darker. */
+  --blue-060: #4a7bff;
+  --blue-070: #6a92ff;
+
+  --warn-text: #f0a35e;
+  --error-text: #ff6b83;
+
+  --sel-fill: rgba(70, 110, 235, 0.3);
+  --sel-stroke: #4a7bff;
+  --path-fill: rgba(150, 156, 176, 0.14);
+
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.theme--plan,
+:root[data-theme='dark'] .theme--plan :is(.ui-layer, .app-launcher, .top-right, .plan-dock, .plan-panel, .zoom-controls, .help-launcher) {
   --canvas-bg: var(--gray-700);
   --ui-text: var(--white);
   --ui-btn-bg: var(--gray-700);
@@ -82,7 +137,8 @@
   --input-text: var(--white);
 }
 
-.theme--review {
+.theme--review,
+:root[data-theme='dark'] .theme--review :is(.ui-layer, .app-launcher, .top-right, .zoom-controls, .help-launcher) {
   /* Review sheet colour (measured in Studio). */
   --canvas-bg: #dfe1e7;
   --mode-track: var(--gray-400);
@@ -94,4 +150,12 @@
   font-weight: 400;
   font-style: normal;
   font-display: swap;
+}
+/* Shaper Studio's heading face (Dosis, bold), used for headings across the site. */
+:root { --font-heading: 'Dosis', var(--font-ui); }
+/* The Forma face has one weight. Pin it so bold is never faked or applied. */
+.forma-wordmark {
+  font-family: 'Forma Studio', var(--font-ui);
+  font-weight: 400;
+  font-synthesis: none;
 }

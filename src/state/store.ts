@@ -2,10 +2,12 @@ import { create } from 'zustand'
 import type { Contour, CutSettings, FreeOrigin, Group, ImportPayload, Mode, OriginRef, OriginPoint, Pt, Shape, SnapKind, StudioDoc, Units } from '../model/types'
 import { uid } from '../model/ids'
 import type { DocHandle } from '../io/projectFile'
+import { mapPen } from '../geometry/pen'
 import { bake, bboxCenter, bboxH, bboxValid, bboxW, shapesBBox, type BBox } from '../geometry/transform'
+import { getPrefs, newDocSettings } from './prefs'
 
-export type Tool = 'select' | 'draw'
-export type Dialog = null | 'text' | 'carve3d' | 'trace' | 'offset' | 'shortcuts' | 'account' | 'reference'
+export type Tool = 'select' | 'pen' | 'draw'
+export type Dialog = null | 'text' | 'carve3d' | 'trace' | 'offset' | 'radius' | 'shortcuts' | 'account' | 'reference' | 'bits' | 'dovetail' | 'systainer'
 export type Popover = null | 'shapes' | 'settings'
 
 export interface View {
@@ -28,6 +30,9 @@ export function lastUnits(): Units {
   return 'in'
 }
 
+/** Units new designs start in: the account's preset, else the units last picked. */
+export const defaultUnits = (): Units => getPrefs().units ?? lastUnits()
+
 function rememberUnits(u: Units) {
   try {
     localStorage.setItem(UNITS_KEY, u)
@@ -43,10 +48,10 @@ export function newDoc(name = 'Untitled-1'): StudioDoc {
     version: 1,
     id: uid('d'),
     name,
-    units: lastUnits(),
+    units: defaultUnits(),
     shapes: [],
     groups: [],
-    settings: { smartAlignment: true, showPosition: false, originAnchor: false, cutPathDisplay: false },
+    settings: newDocSettings(),
     createdAt: now,
     updatedAt: now,
   }
@@ -190,6 +195,10 @@ interface State {
   tool: Tool
   /** Shape Anchor mode: the canvas shows the selection's nine anchor points until one is picked. */
   anchorPicking: boolean
+  /** The pen path whose nodes are being edited on the canvas (double-click a pen path), if any. */
+  penEditId: string | null
+  /** Plan mode: a shape lit on the canvas while its Manage Selection tile is held down. */
+  planHighlight: string | null
   selection: string[]
   view: View
   viewport: { w: number; h: number }
@@ -199,8 +208,8 @@ interface State {
   lastNudge: number
   dialog: Dialog
   popover: Popover
-  /** Ids of the shapes being edited in ShapeShifter (null = mode is off). */
-  shifter: string[] | null
+  /** Doc ids + ephemeral ghosts (rebuilt sources no longer in the doc) whose fragments ShapeShifter is combining; editId = an older result being re-edited (removed on finish). null = mode is off. */
+  shifter: { ids: string[]; ghosts?: Shape[]; editId?: string } | null
   menuOpen: boolean
   /** Text shape being edited (null = new text). */
   editingTextId: string | null
@@ -221,6 +230,8 @@ interface State {
   setUnits: (u: Units) => void
   setSetting: (k: keyof StudioDoc['settings'], v: boolean) => void
   setSnapKind: (k: SnapKind, v: boolean) => void
+  /** Grid spacing in mm (Position > Show grid). */
+  setGridSize: (mm: number) => void
   setOriginPoint: (p: OriginRef) => void
   setGroupAnchor: (groupId: string, anchor: FreeOrigin) => void
   setCustomAnchor: (p: Pt) => void
@@ -264,6 +275,8 @@ interface State {
   setMode: (m: Mode) => void
   setTool: (t: Tool) => void
   setAnchorPicking: (on: boolean) => void
+  setPenEdit: (id: string | null) => void
+  setPlanHighlight: (id: string | null) => void
   setView: (v: Partial<View>) => void
   setViewport: (w: number, h: number) => void
   zoomToFit: (bbox?: BBox) => void
@@ -327,6 +340,8 @@ export const useStore = create<State>((set, get) => {
     mode: 'design',
     tool: 'select',
     anchorPicking: false,
+    penEditId: null,
+    planHighlight: null,
     selection: [],
     view: { zoom: 4, panX: 0, panY: 0 },
     viewport: { w: 1200, h: 800 },
@@ -363,7 +378,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     setDoc: (doc, handle = null) => {
-      set({ doc, past: [], future: [], selection: [], shifter: null, fileHandle: handle, dirty: false, mode: 'design', tool: 'select', popover: null, lastNudge: 0 })
+      set({ doc, past: [], future: [], selection: [], shifter: null, fileHandle: handle, dirty: false, mode: 'design', tool: 'select', popover: null, lastNudge: 0, penEditId: null })
       setTimeout(() => get().zoomToFit(), 0)
     },
     rename: (name) => {
@@ -378,6 +393,10 @@ export const useStore = create<State>((set, get) => {
     },
     setSetting: (k, v) => {
       commitDoc({ ...get().doc, settings: { ...get().doc.settings, [k]: v } })
+    },
+    setGridSize: (mm) => {
+      if (!(mm > 0) || !Number.isFinite(mm)) return
+      commitDoc({ ...get().doc, settings: { ...get().doc.settings, gridSize: mm } })
     },
     setSnapKind: (k, v) => {
       const { doc } = get()
@@ -526,6 +545,7 @@ export const useStore = create<State>((set, get) => {
         return {
           ...s,
           contours: flip(s.contours),
+          pen: s.pen && mapPen(s.pen, (p) => (axis === 'h' ? { x: -p.x, y: p.y } : { x: p.x, y: -p.y })),
           x: axis === 'h' ? 2 * c.x - s.x : s.x,
           y: axis === 'v' ? 2 * c.y - s.y : s.y,
           // Text keeps its params (it can be re-typeset); every other kind becomes a plain path.
@@ -649,10 +669,12 @@ export const useStore = create<State>((set, get) => {
       }
       // References exist only in Design: they are hidden in Plan and Review, so they leave the selection.
       if (mode !== 'design') next = next.filter((id) => !doc.shapes.find((s) => s.id === id)?.locked)
-      set({ mode, selection: next, tool: 'select', popover: null, anchorPicking: false })
+      set({ mode, selection: next, tool: 'select', popover: null, anchorPicking: false, penEditId: null })
     },
-    setTool: (tool) => set({ tool, popover: null }),
+    setTool: (tool) => set({ tool, popover: null, penEditId: null }),
     setAnchorPicking: (anchorPicking) => set({ anchorPicking }),
+    setPenEdit: (penEditId) => set({ penEditId }),
+    setPlanHighlight: (planHighlight) => set({ planHighlight }),
     setView: (v) => set({ view: { ...get().view, ...v } }),
     setViewport: (w, h) => set({ viewport: { w, h } }),
     zoomToFit: (bbox) => {
@@ -687,12 +709,31 @@ export const useStore = create<State>((set, get) => {
     openDialog: (dialog) => set({ dialog, popover: null, menuOpen: false }),
     setPopover: (popover) => set({ popover }),
     enterShapeShifter: () => {
-      const ids = editableIds(get().selection)
-      if (ids.length < 2) {
+      const sel = editableIds(get().selection)
+      // A lone result of an earlier merge re-opens ShapeShifter on its surviving sources,
+      // or rebuilds them from the snapshot in its meta once they are gone; finish replaces it.
+      if (sel.length === 1) {
+        const shape = get().doc.shapes.find((s) => s.id === sel[0])
+        if (!shape?.meta?.shifterOf?.length) {
+          get().showToast('Select two or more overlapping shapes')
+          return
+        }
+        const alive = editableIds(shape.meta.shifterOf)
+        if (alive.length) {
+          set({ shifter: { ids: alive, editId: shape.id }, popover: null, menuOpen: false })
+          return
+        }
+        // Ghosts share the result's placement, so the snapshot's local-frame contours land where the merge happened.
+        const snap = shape.meta.shifterSources ?? []
+        const ghosts = snap.map((contours, i) => ({ ...shape, id: `${shape.id}#s${i}`, contours, meta: { shifterOf: shape.meta!.shifterOf } }))
+        set({ shifter: ghosts.length ? { ids: [], ghosts, editId: shape.id } : { ids: [shape.id], editId: shape.id }, popover: null, menuOpen: false })
+        return
+      }
+      if (sel.length < 2) {
         get().showToast('Select two or more overlapping shapes')
         return
       }
-      set({ shifter: ids, popover: null, menuOpen: false })
+      set({ shifter: { ids: sel }, popover: null, menuOpen: false })
     },
     exitShapeShifter: () => set({ shifter: null }),
     setMenuOpen: (menuOpen) => set({ menuOpen, popover: null }),

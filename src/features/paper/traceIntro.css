@@ -140,7 +140,7 @@
 }
 .tintro__media.is-over .tintro__box:first-child {
   border-color: var(--blue-050);
-  background: rgba(44, 101, 255, 0.18);
+  background: rgba(var(--blue-050-rgb), 0.18);
 }
 .tintro__error {
   position: absolute;
@@ -263,7 +263,7 @@
 .tintro__sheet-opt.is-on {
   border-color: var(--blue-050);
   box-shadow: inset 0 0 0 1px var(--blue-050);
-  background: rgba(44, 101, 255, 0.06);
+  background: rgba(var(--blue-050-rgb), 0.06);
 }
 /* On the camera: a compact dark pill at the top. */
 .tintro__sheet--cam {
@@ -348,4 +348,9 @@
   font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
   pointer-events: none;
+}
+
+/* Dark appearance (state/theme.ts). The camera view is dark in both. */
+[data-theme='dark'] .tintro__error {
+  color: var(--error-text);
 }

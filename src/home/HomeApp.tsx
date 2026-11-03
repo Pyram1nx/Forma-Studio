@@ -1,22 +1,29 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import AccountPanel from '../account/AccountPanel'
 import { accountsEnabled, getSession, type Session } from '../account/api'
 import { exportSVG } from '../io/svgExport'
 import { autosave, listRecent, loadRecent, nextUntitledName, type RecentEntry } from '../io/projectFile'
-import { newDoc } from '../state/store'
+import { defaultUnits, newDoc } from '../state/store'
+import type { Units } from '../model/types'
+import LoadingDomino from '../ui/LoadingDomino'
+import SettingsPage from './SettingsPage'
+
+// Code-split like the other feature surfaces.
+const BitLibrary = lazy(() => import('../features/bitlibrary/BitLibrary'))
 import { openDesignInStudio } from '../desktop/windows'
 import * as Ic from '../ui/icons'
 import UpdatePrompt from '../desktop/UpdatePrompt'
 import '../styles/home.css'
 
-type Page = 'designs' | 'account'
+type Page = 'designs' | 'bits' | 'settings' | 'account'
 
-/** The home window: saved designs and the account. Opens designs in the studio window. */
+/** The home window: saved designs, the bit gallery, presets and the account. Opens designs in the studio window. */
 export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Page }) {
   const [page, setPage] = useState<Page>(initialPage)
   const [session, setSession] = useState<Session | null>(() => getSession())
   const [designs, setDesigns] = useState<RecentEntry[]>(() => listRecent())
   const [error, setError] = useState('')
+  const [units, setUnits] = useState<Units>(defaultUnits)
 
   useEffect(() => {
     document.title = 'Forma Studio'
@@ -44,14 +51,36 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
 
   return (
     <div className="home">
+      {/* Phones only (home.css): brand + account avatar; the sidebar's nav becomes a bottom tab bar. */}
+      <header className="home__topbar">
+        <div className="home__brand">
+          <Ic.FormaLogo size={24} />
+          <span className="forma-wordmark">Forma Studio</span>
+        </div>
+        <button
+          className="home__topbar-account"
+          onClick={() => setPage('account')}
+          aria-label={session ? `Account (${session.email})` : 'Account'}
+        >
+          <span className="home__avatar" aria-hidden="true">
+            {session ? session.email.charAt(0).toUpperCase() : '?'}
+          </span>
+        </button>
+      </header>
       <aside className="home__side">
         <div className="home__brand">
-          <Ic.FormaLogo size={28} />
-          <span>Forma Studio</span>
+          <Ic.FormaLogo size={24} />
+          <span className="forma-wordmark">Forma Studio</span>
         </div>
         <nav className="home__nav" aria-label="Home">
           <button className="home__nav-item" aria-current={page === 'designs' ? 'page' : undefined} onClick={() => setPage('designs')}>
             <Ic.IconFolderOpen size={18} /> Designs
+          </button>
+          <button className="home__nav-item" aria-current={page === 'bits' ? 'page' : undefined} onClick={() => setPage('bits')}>
+            <Ic.IconBitLibrary size={18} /> Bits
+          </button>
+          <button className="home__nav-item" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}>
+            <Ic.IconSliders size={18} /> Settings
           </button>
           <button className="home__nav-item" aria-current={page === 'account' ? 'page' : undefined} onClick={() => setPage('account')}>
             <Ic.IconUser size={18} /> Account
@@ -98,6 +127,12 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
               </div>
             )}
           </>
+        ) : page === 'bits' ? (
+          <Suspense fallback={<LoadingDomino />}>
+            <BitLibrary units={units} onUnitsChange={setUnits} />
+          </Suspense>
+        ) : page === 'settings' ? (
+          <SettingsPage />
         ) : (
           <section className="home-account">
             <h1>Account</h1>

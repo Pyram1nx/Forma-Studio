@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { confirmDiscard } from './fileActions'
 import { useStore } from '../state/store'
+import { THEME_LABELS, THEME_PREFS, useTheme } from '../state/theme'
 import * as Ic from '../ui/icons'
 import { listRecent, removeRecent } from '../io/projectFile'
 import { getSession, accountsEnabled } from '../account/api'
@@ -28,6 +29,7 @@ export default function AppMenu() {
   const doc = useStore((s) => s.doc)
   const dirty = useStore((s) => s.dirty)
   const selection = useStore((s) => s.selection)
+  const theme = useTheme()
   const [recentOpen, setRecentOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const cancelRename = useRef(false)
@@ -152,6 +154,15 @@ export default function AppMenu() {
           <Item icon={<Ic.IconFolderOpen />} label="Designs" onClick={run(() => void openHome())} />
           <Item icon={<Ic.IconCube />} label="3D Carve" onClick={run(() => st().openDialog('carve3d'))} right={<span className="ss-badge ss-badge--new">new</span>} />
           <Item icon={<Ic.IconTrace />} label="Trace" onClick={run(() => st().openDialog('trace'))} right={<span className="ss-badge ss-badge--new">new</span>} />
+          <Item icon={<Ic.IconDovetail />} label="Dovetails" onClick={run(() => st().openDialog('dovetail'))} right={<span className="ss-badge ss-badge--new">new</span>} />
+          <Item icon={<Ic.IconSystainer />} label="Systainer Insert" onClick={run(() => st().openDialog('systainer'))} right={<span className="ss-badge ss-badge--new">new</span>} />
+          <Item icon={<Ic.IconBitLibrary />} label="Bit Gallery" onClick={run(() => st().openDialog('bits'))} />
+          <Item
+            icon={<Ic.IconMoon />}
+            label="Appearance"
+            onClick={() => theme.set(THEME_PREFS[(THEME_PREFS.indexOf(theme.pref) + 1) % THEME_PREFS.length])}
+            right={<span className="ss-muted">{THEME_LABELS[theme.pref]}</span>}
+          />
           <Item icon={<Ic.IconKeyboard />} label="Keyboard Shortcuts" onClick={run(() => st().openDialog('shortcuts'))} />
           {accountsEnabled() && (
             <Item icon={<Ic.IconUser />} label="Account" onClick={run(() => st().openDialog('account'))} right={<span className="ss-muted">{getSession()?.email ?? 'Sign in'}</span>} />

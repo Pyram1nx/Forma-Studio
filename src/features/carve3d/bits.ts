@@ -38,6 +38,12 @@ export interface Bit {
   spiral: boolean
   inBox: boolean
   productUrl: string | null
+  /**
+   * Shaper's product photo (CDN URL), null when Shaper publishes none for the bit. The photo is
+   * Shaper Tools' copyrighted image, so it is hot-linked (and fetched to the git-ignored
+   * public/bit-images/ by scripts/fetch-bit-images.mjs for offline use) rather than committed.
+   */
+  imageUrl?: string | null
   notes: string
   /** true = Shaper states the value, false = derived by us, absent = not applicable. */
   stated: Partial<Record<BitField, boolean>>
@@ -56,7 +62,8 @@ const slug = (s: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
 
-function finish(r: Raw): Bit {
+/** Fills in the derived fields; also used for user-added bits in the bit gallery. */
+export function finish(r: Raw): Bit {
   const inferred = (Object.keys(r.stated) as BitField[]).filter((k) => r.stated[k] === false && r[k] !== null && r[k] !== undefined)
   let group: BitGroup
   if (r.inBox) group = 'origin'
@@ -97,7 +104,7 @@ export const BITS: Bit[] = [
   finish({
     name: '11° Tapered Ball Nose Router Bit', sku: 'SE1-2500-TB10M', type: 'taperedball', subtype: 'tapered ball nose',
     diameter: 6.35, shankDiameter: 6.35, fluteLength: 25.4, overallLength: 63.5, maxDepth: null, angle: 11, flutes: null, tipDiameter: null, tipRadius: 0.79375,
-    inBox: false, productUrl: 'https://dealer.shapertools.com/products/11-deg-tapered-ball-nose-router-bit',
+    inBox: false, productUrl: SHAPER + '11-deg-tapered-ball-nose-router-bit',
     notes: 'Cutting diameter range 1/16 to 1/4 in from the support guide; the 1/4 in maximum is used. Tip ball diameter 1/32 in inferred. Flute count conflicts between Shaper pages, so not shown.',
     stated: { diameter: false, shankDiameter: true, fluteLength: true, overallLength: true, angle: true, tipRadius: false },
   }),
@@ -111,8 +118,8 @@ export const BITS: Bit[] = [
   finish({
     name: '15° Dovetail Router Bit', sku: 'SF1-8-DC15', type: 'undercut', subtype: 'dovetail',
     diameter: 13.8, shankDiameter: 8, fluteLength: 13.5, overallLength: 46, maxDepth: null, angle: 15, flutes: null, tipDiameter: null, tipRadius: null,
-    inBox: false, productUrl: null,
-    notes: 'Specs from the Shaper support guide table. No Shaper product page found.',
+    inBox: false, productUrl: SHAPER + '15-deg-dovetail-router-bit',
+    notes: 'Specs from the Shaper support guide table.',
     stated: { diameter: true, shankDiameter: true, fluteLength: true, overallLength: true, angle: true },
   }),
   finish({
@@ -132,8 +139,8 @@ export const BITS: Bit[] = [
   finish({
     name: '1/4" X 1-1/2" Up-Spiral O-flute Router Bit', sku: 'SE1-2500-1500C', type: 'flat', subtype: 'O-flute upcut spiral',
     diameter: 6.35, shankDiameter: 6.35, fluteLength: 38.1, overallLength: 76.2, maxDepth: null, angle: null, flutes: null, tipDiameter: null, tipRadius: null,
-    inBox: false, productUrl: null,
-    notes: 'From the Shaper support guide table only. Non-ferrous metals per Shaper.',
+    inBox: false, productUrl: SHAPER + '1-4-in-x-1-1-2-in-up-spiral-o-flute-router-bit',
+    notes: 'Specs from the Shaper support guide table. Non-ferrous metals per Shaper.',
     stated: { diameter: true, shankDiameter: true, fluteLength: true, overallLength: true },
   }),
   finish({
@@ -153,8 +160,8 @@ export const BITS: Bit[] = [
   finish({
     name: '4mm X 15mm Up-Spiral Flat', sku: 'SF1-8-4F2', type: 'flat', subtype: 'upcut spiral',
     diameter: 4, shankDiameter: 8, fluteLength: 15, overallLength: 80, maxDepth: null, angle: null, flutes: null, tipDiameter: null, tipRadius: null,
-    inBox: false, productUrl: null,
-    notes: 'From the Shaper support guide table only.',
+    inBox: false, productUrl: SHAPER + '4-mm-x-15-mm-up-spiral-flat-router-bit',
+    notes: 'Specs from the Shaper support guide table.',
     stated: { diameter: true, shankDiameter: true, fluteLength: true, overallLength: true },
   }),
   finish({
@@ -221,6 +228,40 @@ export const BITS: Bit[] = [
     stated: { diameter: true, shankDiameter: false, fluteLength: true },
   }),
 ]
+
+/** Shaper's image CDN, resized to 840 × 720 WebP (the originals are 2800 × 2400 PNGs). */
+const photo = (path: string) => `https://a-us.storyblok.com/f/1019013/2800x2400/${path}/m/840x720/filters:format(webp):quality(80)`
+
+/**
+ * Shaper's product photos, keyed by catalogue id (store pages re-checked 2026-11-02). The two
+ * in-box cutters have no product page of their own; they show the matching retail bit (UC·1/8·1/2
+ * is the 1/8" × 1/2" up-spiral, UC·1/4·3/4 looks like the 1/4" × 1" one). The gallery loads the
+ * copies in public/bit-images/<id>.webp first (scripts/fetch-bit-images.mjs writes them from
+ * this map) and only falls back to these URLs, then to the drawn side profile.
+ */
+export const IMAGES: Record<string, string> = {
+  'SE1-2500-1000C': photo('0540b35719/4_-x-1-up-spiral-flat-router-bit_1.png'),
+  'SE1-2500-BNUS': photo('fc5232e0fe/4-up-spiral-ball-nose-router-bit_1.png'),
+  'SE1-2500-TB10M': photo('cb4483a429/11-tapered-ball-nose-router-bit_1.png'),
+  'SF1-8-TSC': photo('c195ecdde6/5mm-t-slot-router-bit_1.png'),
+  'SF1-8-DC15': photo('e7ecc4c5fc/15-dovetail-router-bit_1.png'),
+  'SE1-2500-2500C': photo('66095e339a/2-up-spiral-o-flute-router-bit_1.png'),
+  'SE1-2500-1250U': photo('259e1554c8/2-up-spiral-o-flute-router-bit_1-1.png'),
+  'SE1-2500-1500C': photo('d31b579192/4-x-1-5-up-spiral-o-flute-router-bit_1.png'),
+  'SE1-2500-V90E': photo('f0fcc811b8/90-engraving-router-bit_1.png'),
+  'SF1-8-3U': photo('c9bb0d29ec/3-mm-up-spiral-router-bit_1.png'),
+  'SF1-8-4F2': photo('fbaef5298f/4mm-x-15mm-up-spiral-flat-router-bit_1.png'),
+  'SF1-8-6F3': photo('77a8cfe5e5/6mm-x-30mm-up-spiral-flat-router-bit_1.png'),
+  'SF1-8-5D': photo('ec27c9cd83/5mm-x-20mm-up-spiral-o-flute-router-bit_1.png'),
+  'SF1-8-8DP': photo('3c9d60182f/8mm-x-35mm-up-spiral-flat-router-bit_1.png'),
+  'SF1-8-8R': photo('afde1f0f2b/8mm-x-35mm-roughing-bit_1.png'),
+  'SF1-8-16D': photo('dd9381904f/16mm-x-16mm-clearing-router-bit_1.png'),
+  'SE1-2500-V60E': photo('9e110f6a36/60-engraving-router-bit_1.png'),
+  'SF1-8-V60E': photo('f26cf3dbb7/60-x-7mm-engraving-router-bit_1.png'),
+  '1-4-6mm-upcut-spiral-cutter-in-origin-box': photo('0540b35719/4_-x-1-up-spiral-flat-router-bit_1.png'),
+  '1-8-3mm-upcut-spiral-cutter-in-origin-box': photo('259e1554c8/2-up-spiral-o-flute-router-bit_1-1.png'),
+}
+for (const b of BITS) b.imageUrl = IMAGES[b.id] ?? null
 
 /**
  * Origin's Z travel: the deepest any cut can go, whatever the bit (43 mm, Shaper's spec).

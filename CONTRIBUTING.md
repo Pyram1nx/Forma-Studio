@@ -46,4 +46,4 @@ Releases and deployments are made by the maintainer only. A pull request cannot 
 
 Be kind and assume good faith. See the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-By contributing you agree that your work is released under the [MIT License](LICENSE).
+By contributing you agree that your work is released under the [GNU AGPL-3.0](LICENSE).

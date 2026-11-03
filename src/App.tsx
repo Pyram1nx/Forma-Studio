@@ -6,6 +6,7 @@ import { ActionBar, HelpButton, LeftRail, Toast, TopLeft, TopRight, ZoomControls
 import { DesignPanel, PlanPanel } from './editor/Panels'
 import { ReferenceDialog, ShapesPopover, ShortcutsDialog } from './editor/Popovers'
 import OffsetMode from './editor/OffsetMode'
+import RadiusMode from './editor/RadiusMode'
 import ShapeShifter from './editor/ShapeShifter'
 import TextDialog from './editor/TextDialog'
 import AppMenu from './editor/AppMenu'
@@ -25,10 +26,14 @@ import './styles/mobile-sheet.css'
 import './styles/mobile-dialogs.css'
 import './styles/desktop.css'
 import './styles/text-tool.css'
+import './styles/no-select.css'
 
 // Heavy feature dialogs are code-split so the core editor stays light.
 const Carve3DDialog = lazy(() => import('./features/carve3d/Carve3DDialog'))
 const TraceMode = lazy(() => import('./features/paper/TraceMode'))
+const DovetailDialog = lazy(() => import('./features/dovetail/DovetailDialog'))
+const SystainerDialog = lazy(() => import('./features/systainer/SystainerDialog'))
+const BitLibraryDialog = lazy(() => import('./features/bitlibrary/BitLibrary').then((m) => ({ default: m.BitLibraryDialog })))
 
 /**
  * Keyboard shortcuts, in one place. Escape closes the topmost thing (menu, popover,
@@ -75,7 +80,8 @@ function useKeyboard() {
           if (inField) return
           st.openDialog(null)
         } else if (inField) return
-        else if (st.tool === 'draw') st.setTool('select')
+        else if (st.tool !== 'select') st.setTool('select')
+        else if (st.penEditId) st.setPenEdit(null)
         else if (st.selection.length) st.select([])
         else return
         e.preventDefault()
@@ -129,7 +135,7 @@ function useKeyboard() {
       if (st.menuOpen) return
 
       if (k === 'delete' || k === 'backspace') {
-        if (st.tool === 'draw') return
+        if (st.tool !== 'select' || st.penEditId) return
         e.preventDefault()
         // Plan shapes can be deleted too; review is display-only.
         if (st.mode !== 'review') st.deleteSelected()
@@ -139,6 +145,8 @@ function useKeyboard() {
         if (selectionHasReference(st.doc, st.selection)) return
         const step = (st.doc.units === 'in' ? MM_PER_IN / 16 : 1) * (e.shiftKey ? 10 : 1)
         nudgeSelection(k === 'arrowleft' ? -step : k === 'arrowright' ? step : 0, k === 'arrowup' ? -step : k === 'arrowdown' ? step : 0)
+      } else if (k === 'p' && e.shiftKey && st.mode === 'design') {
+        st.setTool(st.tool === 'pen' ? 'select' : 'pen')
       } else if (k === 'p' && st.mode === 'design') {
         st.setTool(st.tool === 'draw' ? 'select' : 'draw')
       } else if (k === '1' || k === '2' || k === '3') {
@@ -261,6 +269,7 @@ export default function App() {
         <ShapesPopover />
         <ShapeShifter />
         <OffsetMode />
+        <RadiusMode />
         <HelpButton />
         <AppMenu />
         <TextDialog />
@@ -271,6 +280,9 @@ export default function App() {
         <Suspense fallback={<LoadingDomino withOverlay />}>
           {dialog === 'carve3d' && <Carve3DDialog units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
           {dialog === 'trace' && <TraceMode units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
+          {dialog === 'bits' && <BitLibraryDialog units={units} onClose={closeDialog} />}
+          {dialog === 'dovetail' && <DovetailDialog units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
+          {dialog === 'systainer' && <SystainerDialog units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
         </Suspense>
         <Toast />
       </div>

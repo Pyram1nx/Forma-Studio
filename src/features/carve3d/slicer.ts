@@ -1,16 +1,29 @@
 // Horizontal cross-sections of a triangle soup.
 //
-// Pipeline per plane: triangle/plane intersections -> directed segments (oriented by the
-// triangle normal so material is always on the same side) -> endpoints welded within
-// WELD mm -> chains -> loops oriented by majority evidence -> NonZero union (so overlapping
-// shells add up instead of cancelling) -> RDP simplification.
+// Pipeline per plane: the mesh's corners are welded into shared vertices once (topology) ->
+// every triangle crossing the plane gives a directed segment between two of its crossing EDGES,
+// oriented by the triangle's winding so material is always on the left -> segments are chained
+// through the edges they share, which closes every loop of a watertight mesh exactly, whatever
+// its detail size or non-manifold edges -> chains a broken mesh leaves open are joined across
+// gaps up to WELD mm -> NonZero union (so overlapping shells add up instead of cancelling) ->
+// RDP simplification.
 import ClipperLib from 'clipper-lib'
 import type { Contour, Pt } from '../../model/types'
 import { simplify } from '../../geometry/offset'
 
 const SCALE = 1000
-/** Endpoints closer than this are the same vertex (mm). */
+/** Open chain ends closer than this are joined (mm): bridges cracks in a non-watertight mesh. */
 export const WELD = 0.05
+/** Corners this close share a vertex (mm): file formats repeat vertices per triangle. */
+const VERTEX_WELD = 1e-4
+/**
+ * A plane closer than this to a vertex is moved just above it (mm). Flat faces of exported
+ * models carry float noise, so a plane at a terrace height would otherwise split the terrace
+ * into slivers above and below the plane.
+ */
+const PLANE_EPS = 5e-5
+/** Triangles this far beyond the plane are still candidates (room for the nudge above), mm. */
+const CANDIDATE_MARGIN = 0.01
 /** RDP tolerance for the output contours (mm). */
 const SIMPLIFY_TOL = 0.005
 
@@ -40,166 +53,239 @@ export function nonZeroUnion(loops: Contour[]): Contour[] {
     .map((p) => ({ closed: true, pts: p.map((q) => ({ x: q.X / SCALE, y: q.Y / SCALE })) }))
 }
 
+// ---- topology ------------------------------------------------------------------------------
+
+/** Welded vertices of a triangle soup. */
+interface Topology {
+  /** Vertex id of every corner (3 per triangle). */
+  corner: Uint32Array
+  vx: Float64Array
+  vy: Float64Array
+  vz: Float64Array
+}
+
+const topologies = new WeakMap<Float32Array, Topology>()
+
+/** Weld coincident corners (within VERTEX_WELD) into shared vertices. Cached per array. */
+function topologyOf(positions: Float32Array): Topology {
+  const hit = topologies.get(positions)
+  if (hit) return hit
+  const n = positions.length / 3
+  const corner = new Uint32Array(n)
+  const ids = new Map<string, number>()
+  const vx: number[] = []
+  const vy: number[] = []
+  const vz: number[] = []
+  const q = (v: number) => Math.round(v / VERTEX_WELD)
+  for (let c = 0; c < n; c++) {
+    const x = positions[3 * c]
+    const y = positions[3 * c + 1]
+    const z = positions[3 * c + 2]
+    const key = `${q(x)},${q(y)},${q(z)}`
+    let id = ids.get(key)
+    if (id === undefined) {
+      id = vx.length
+      ids.set(key, id)
+      vx.push(x)
+      vy.push(y)
+      vz.push(z)
+    }
+    corner[c] = id
+  }
+  const topo = { corner, vx: Float64Array.from(vx), vy: Float64Array.from(vy), vz: Float64Array.from(vz) }
+  topologies.set(positions, topo)
+  return topo
+}
+
+// ---- slicing -------------------------------------------------------------------------------
+
 /**
  * Cross-section of a flat xyz triangle array (mm, Z up) at height z.
  * Returns closed regions with holes, XY in design space (y down, so Y is negated).
- * `tris` limits the work to the given triangle indices (see createMeshSlicer).
  */
 export function sliceAt(positions: Float32Array, z: number): Contour[] {
   return sliceDetailed(positions, z).contours
 }
 
+/** `tris` limits the work to the given triangle indices (see createMeshSlicer). */
 export function sliceDetailed(positions: Float32Array, z: number, tris?: Uint32Array): SliceResult {
-  // A vertex lying exactly on the plane makes the edge test ambiguous; nudge the plane.
+  const { corner, vx, vy, vz } = topologyOf(positions)
+  const triCount = tris ? tris.length : positions.length / 9
+  const triAt = (q: number) => (tris ? tris[q] : q)
+
+  // A vertex on (or within float noise of) the plane: move the plane just above it, so flat
+  // faces at this height count as below and the section is the material above the plane.
   let zq = z
-  for (let i = 2; i < positions.length; i += 3) {
-    if (Math.abs(positions[i] - z) < 1e-9) {
-      zq = z + 1e-6
-      break
+  for (let pass = 0; pass < 8; pass++) {
+    let top = -Infinity
+    for (let q = 0; q < triCount; q++) {
+      const o = 3 * triAt(q)
+      for (let e = 0; e < 3; e++) {
+        const vz0 = vz[corner[o + e]]
+        if (Math.abs(vz0 - zq) <= PLANE_EPS && vz0 > top) top = vz0
+      }
     }
+    if (top === -Infinity) break
+    zq = top + 2 * PLANE_EPS
   }
 
-  // 1. Welded vertices, bucketed on a WELD grid.
-  const vx: number[] = []
-  const vy: number[] = []
-  const cells = new Map<string, number[]>()
-  const vertex = (x: number, y: number): number => {
-    const cx = Math.floor(x / WELD)
-    const cy = Math.floor(y / WELD)
-    for (let dx = -1; dx <= 1; dx++)
-      for (let dy = -1; dy <= 1; dy++) {
-        const list = cells.get(`${cx + dx},${cy + dy}`)
-        if (!list) continue
-        for (const id of list) {
-          if (Math.hypot(vx[id] - x, vy[id] - y) <= WELD) return id
-        }
-      }
-    const id = vx.length
-    vx.push(x)
-    vy.push(y)
-    const k = `${cx},${cy}`
-    const list = cells.get(k)
-    if (list) list.push(id)
-    else cells.set(k, [id])
+  // 1. Triangle / plane crossings -> directed segments between crossing edges ("nodes").
+  // A node is the edge (lo, hi vertex id); its point is computed from the edge alone, so both
+  // triangles sharing the edge meet at exactly the same place.
+  const nodeOf = new Map<number, number>()
+  const nx: number[] = []
+  const ny: number[] = []
+  const V = vx.length
+  const node = (a: number, b: number): number => {
+    const lo = a < b ? a : b
+    const hi = a < b ? b : a
+    const key = lo * V + hi
+    let id = nodeOf.get(key)
+    if (id === undefined) {
+      id = nx.length
+      nodeOf.set(key, id)
+      const f = (zq - vz[lo]) / (vz[hi] - vz[lo])
+      nx.push(vx[lo] + f * (vx[hi] - vx[lo]))
+      ny.push(vy[lo] + f * (vy[hi] - vy[lo]))
+    }
     return id
   }
-
-  // 2. Triangle / plane intersections -> directed segments.
-  const segA: number[] = []
-  const segB: number[] = []
-  const segEx: number[] = []
-  const segEy: number[] = []
-  const queryCount = tris ? tris.length : positions.length / 9
-  for (let q = 0; q < queryCount; q++) {
-    const o = (tris ? tris[q] : q) * 9
-    let hits = 0
-    let hx0 = 0
-    let hy0 = 0
-    let hx1 = 0
-    let hy1 = 0
+  const segFrom: number[] = []
+  const segTo: number[] = []
+  const v = [0, 0, 0]
+  for (let q = 0; q < triCount; q++) {
+    const o = 3 * triAt(q)
+    v[0] = corner[o]
+    v[1] = corner[o + 1]
+    v[2] = corner[o + 2]
+    const b0 = vz[v[0]] < zq
+    const b1 = vz[v[1]] < zq
+    const b2 = vz[v[2]] < zq
+    if (b0 === b1 && b1 === b2) continue
+    // Walking the corners in winding order (outward normal), the section runs from the edge
+    // that steps down below the plane to the edge that climbs back above it: material on the
+    // left seen from above, so outer loops come out counter-clockwise.
+    let from = -1
+    let to = -1
+    const below = [b0, b1, b2]
     for (let e = 0; e < 3; e++) {
-      const i = o + 3 * e
-      const j = o + 3 * ((e + 1) % 3)
-      const zi = positions[i + 2] - zq
-      const zj = positions[j + 2] - zq
-      if ((zi < 0) === (zj < 0)) continue
-      const f = zi / (zi - zj)
-      const x = positions[i] + f * (positions[j] - positions[i])
-      const y = positions[i + 1] + f * (positions[j + 1] - positions[i + 1])
-      if (hits === 0) {
-        hx0 = x
-        hy0 = y
-      } else {
-        hx1 = x
-        hy1 = y
-      }
-      hits++
+      const i = v[e]
+      const j = v[(e + 1) % 3]
+      if (below[e] === below[(e + 1) % 3] || i === j) continue
+      if (below[e]) to = node(i, j)
+      else from = node(i, j)
     }
-    if (hits !== 2) continue
-    const a = vertex(hx0, hy0)
-    const b = vertex(hx1, hy1)
-    if (a === b) continue // degenerate after welding
-    // Triangle normal (xy part). The segment direction is parallel to ẑ × n, which points
-    // along the outer boundary when the normal is outward, so every segment carries the
-    // same "material on the left" convention.
-    const ax = positions[o + 3] - positions[o]
-    const ay = positions[o + 4] - positions[o + 1]
-    const az = positions[o + 5] - positions[o + 2]
-    const bx = positions[o + 6] - positions[o]
-    const by = positions[o + 7] - positions[o + 1]
-    const bz = positions[o + 8] - positions[o + 2]
-    const nx = ay * bz - az * by
-    const ny = az * bx - ax * bz
-    const len = Math.hypot(-ny, nx) || 1
-    segA.push(a)
-    segB.push(b)
-    segEx.push(-ny / len)
-    segEy.push(nx / len)
+    if (from < 0 || to < 0 || from === to) continue // degenerate triangle
+    segFrom.push(from)
+    segTo.push(to)
   }
-  const m = segA.length
+  const m = segFrom.length
   if (!m) return { contours: [], openChains: 0 }
 
-  // 3. Undirected chaining over welded vertices.
-  const adj: number[][] = Array.from({ length: vx.length }, () => [])
-  for (let s = 0; s < m; s++) {
-    adj[segA[s]].push(s)
-    adj[segB[s]].push(s)
-  }
+  // 2. Directed chaining through shared edges. On a watertight mesh every node has as many
+  // segments leaving as arriving, so every walk returns to its start.
+  const out: number[][] = Array.from({ length: nx.length }, () => [])
+  for (let s = 0; s < m; s++) out[segFrom[s]].push(s)
   const used = new Uint8Array(m)
   const loops: Contour[] = []
-  let openChains = 0
+  const open: number[][] = []
   for (let s0 = 0; s0 < m; s0++) {
     if (used[s0]) continue
     used[s0] = 1
-    const start = segA[s0]
-    let cur = segB[s0]
-    const verts: number[] = [start, cur]
-    const segs: number[] = [s0]
-    const fwd: boolean[] = [true]
-    let closed = false
+    const start = segFrom[s0]
+    const chain = [start]
+    let cur = segTo[s0]
     for (;;) {
-      if (cur === start) {
-        closed = true
-        break
-      }
+      if (cur === start) break
+      chain.push(cur)
       let next = -1
-      for (const j of adj[cur]) {
-        if (!used[j]) {
-          next = j
+      for (const s of out[cur])
+        if (!used[s]) {
+          next = s
           break
         }
-      }
       if (next < 0) break
       used[next] = 1
-      const forward = segA[next] === cur
-      cur = forward ? segB[next] : segA[next]
-      verts.push(cur)
-      segs.push(next)
-      fwd.push(forward)
+      cur = segTo[next]
     }
-    if (!closed || segs.length < 3) {
-      openChains++
-      continue
-    }
-    verts.pop() // last vertex repeats the start
-    // Orientation: majority of the segments' normal evidence decides the loop direction.
-    let evidence = 0
-    for (let k = 0; k < segs.length; k++) {
-      const s = segs[k]
-      const sign = fwd[k] ? 1 : -1
-      const dx = (vx[segB[s]] - vx[segA[s]]) * sign
-      const dy = (vy[segB[s]] - vy[segA[s]]) * sign
-      evidence += dx * segEx[s] + dy * segEy[s]
-    }
-    if (evidence < 0) verts.reverse()
-    loops.push({ closed: true, pts: verts.map((v) => ({ x: vx[v], y: vy[v] })) })
+    if (cur === start) {
+      if (chain.length >= 3) loops.push({ closed: true, pts: chain.map((k) => ({ x: nx[k], y: ny[k] })) })
+    } else open.push(chain)
   }
+
+  // 3. Repair: a mesh with cracks or flipped triangles leaves chains open. Join chain ends that
+  // lie within WELD (a flipped chain is joined reversed), close a chain whose ends meet, and
+  // orient a repaired loop by its majority direction against the closed loops' convention.
+  const openChains = joinOpenChains(open, nx, ny, loops)
 
   // 4. NonZero union gives clean regions with holes; flip to design space (y down).
   const regions = nonZeroUnion(loops)
     .map((c) => ({ closed: true, pts: simplify(c.pts, SIMPLIFY_TOL, true).map((p: Pt) => ({ x: p.x, y: -p.y })) }))
     .filter((c) => c.pts.length >= 3)
   return { contours: regions, openChains }
+}
+
+/**
+ * Greedy gap joining of open chains (node index lists). Closed results are pushed to `loops`;
+ * returns how many chains stayed open.
+ */
+function joinOpenChains(open: number[][], nx: number[], ny: number[], loops: Contour[]): number {
+  if (!open.length) return 0
+  const dist = (a: number, b: number) => Math.hypot(nx[a] - nx[b], ny[a] - ny[b])
+  const alive = new Uint8Array(open.length).fill(1)
+  // Length-weighted travel direction per chain, before any reversal: +1 per forward segment.
+  let left = 0
+  for (let c0 = 0; c0 < open.length; c0++) {
+    if (!alive[c0]) continue
+    alive[c0] = 0
+    let chain = open[c0].slice()
+    let forward = 0
+    let total = 0
+    const tally = (pts: number[], sign: number) => {
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const d = dist(pts[k], pts[k + 1])
+        forward += sign * d
+        total += d
+      }
+    }
+    tally(chain, 1)
+    for (;;) {
+      const end = chain[chain.length - 1]
+      if (chain.length >= 3 && dist(end, chain[0]) <= WELD) break
+      let best = -1
+      let bestD = WELD
+      let reversed = false
+      for (let c = 0; c < open.length; c++) {
+        if (!alive[c]) continue
+        const o = open[c]
+        const ds = dist(end, o[0])
+        if (ds <= bestD) {
+          best = c
+          bestD = ds
+          reversed = false
+        }
+        const de = dist(end, o[o.length - 1])
+        if (de < bestD) {
+          best = c
+          bestD = de
+          reversed = true
+        }
+      }
+      if (best < 0) break
+      alive[best] = 0
+      const piece = reversed ? open[best].slice().reverse() : open[best]
+      tally(piece, reversed ? -1 : 1)
+      chain = chain.concat(bestD === 0 ? piece.slice(1) : piece)
+    }
+    const end = chain[chain.length - 1]
+    if (chain.length >= 3 && dist(end, chain[0]) <= WELD) {
+      if (end === chain[0]) chain.pop()
+      // Mostly travelled against the winding convention: the loop runs the wrong way round.
+      if (total > 0 && forward < 0) chain.reverse()
+      loops.push({ closed: true, pts: chain.map((k) => ({ x: nx[k], y: ny[k] })) })
+    } else left++
+  }
+  return left
 }
 
 // ---- repeated slicing of one mesh ----------------------------------------------------------
@@ -217,6 +303,7 @@ export interface MeshSlicer {
 
 export function createMeshSlicer(positions: Float32Array): MeshSlicer {
   const triCount = positions.length / 9
+  topologyOf(positions)
   const zmin = new Float32Array(triCount)
   const zmax = new Float32Array(triCount)
   for (let t = 0; t < triCount; t++) {
@@ -228,7 +315,8 @@ export function createMeshSlicer(positions: Float32Array): MeshSlicer {
     zmax[t] = Math.max(a, b, c)
   }
   // Triangle indices sorted by their low z: a binary search finds every triangle that could
-  // touch the plane; the zmax test drops the rest.
+  // touch the plane; the zmax test drops the rest. The margin keeps triangles the plane nudge
+  // (see sliceDetailed) may move onto.
   const order = new Uint32Array(triCount)
   for (let i = 0; i < triCount; i++) order[i] = i
   order.sort((x, y) => zmin[x] - zmin[y])
@@ -239,13 +327,13 @@ export function createMeshSlicer(positions: Float32Array): MeshSlicer {
       let hi = triCount
       while (lo < hi) {
         const mid = (lo + hi) >> 1
-        if (zmin[order[mid]] <= z) lo = mid + 1
+        if (zmin[order[mid]] <= z + CANDIDATE_MARGIN) lo = mid + 1
         else hi = mid
       }
       let n = 0
       for (let i = 0; i < lo; i++) {
         const t = order[i]
-        if (zmax[t] >= z) scratch[n++] = t
+        if (zmax[t] >= z - CANDIDATE_MARGIN) scratch[n++] = t
       }
       return sliceDetailed(positions, z, n === triCount ? undefined : scratch.subarray(0, n))
     },

@@ -5,6 +5,7 @@ import { fmtLen } from '../../model/factory'
 import type { Units } from '../../model/types'
 import { BITS, radiusAtHeight, type Bit, type BitField, type BitGroup } from './bits'
 import { reachRadius } from './carvePlan'
+import { useBitLibrary } from '../bitlibrary/library'
 
 const GROUPS: { id: BitGroup; title: string }[] = [
   { id: 'origin', title: 'Ships with Origin' },
@@ -57,8 +58,8 @@ function helixStrokes(bit: Bit): string[] {
   return out
 }
 
-/** SVG drawing of one bit (no annotations). */
-function BitShape({ bit, className }: { bit: Bit; className?: string }) {
+/** SVG drawing of one bit (no annotations). Also used by the bit gallery for bits with no photo. */
+export function BitShape({ bit, className }: { bit: Bit; className?: string }) {
   const O = drawnLength(bit)
   const W = halfWidth(bit) * 2
   const pad = W * 0.15
@@ -126,6 +127,7 @@ function value(bit: Bit, field: BitField, text: string): string {
 }
 
 export default function BitGallery({ selectedId, onSelect, stepDown, units }: BitGalleryProps) {
+  const owned = useBitLibrary((s) => s.owned)
   const bit = BITS.find((b) => b.id === selectedId) ?? BITS[0]
   const L = (mm: number) => fmtLen(mm, units)
   const inferredAny = bit.inferred.length > 0
@@ -145,7 +147,10 @@ export default function BitGallery({ selectedId, onSelect, stepDown, units }: Bi
   return (
     <div className="c3d-gallery">
       {GROUPS.map((g) => {
-        const items = BITS.filter((b) => b.group === g.id)
+        // Owned bits lead their group: they are the ones this user can actually pick.
+        const items = BITS.filter((b) => b.group === g.id).sort(
+          (a, b) => (owned[a.id] ? 0 : 1) - (owned[b.id] ? 0 : 1),
+        )
         if (!items.length) return null
         return (
           <div key={g.id} className="c3d-group">
@@ -167,6 +172,11 @@ export default function BitGallery({ selectedId, onSelect, stepDown, units }: Bi
                     }}
                   >
                     <BitShape bit={b} className="c3d-tile-svg" />
+                    {owned[b.id] && (
+                      <span className="c3d-tile-owned" title="In your bit gallery">
+                        {owned[b.id].qty > 1 ? `owned ×${owned[b.id].qty}` : 'owned'}
+                      </span>
+                    )}
                     <span className="c3d-tile-name">{b.name}</span>
                     <span className="c3d-tile-meta">
                       Ø {b.inferred.includes('diameter') ? '≈ ' : ''}

@@ -224,3 +224,24 @@ describe('autosave on document switch', () => {
     }
   })
 })
+
+describe('anchor persistence', () => {
+  it('keeps the origin point, custom anchor and group anchors through save/load', () => {
+    const doc = newDoc()
+    doc.settings = {
+      ...doc.settings,
+      originAnchor: true,
+      originPoint: { fx: 0.25, fy: 1.5 },
+      customAnchor: { x: 12, y: 34 },
+      customAnchorFor: ['a', 'b'],
+    }
+    doc.groups = [{ id: 'g', name: 'G', anchor: { fx: 0.1, fy: 0.9 } }]
+    const back = parseDoc(JSON.stringify(doc))
+    expect(back.settings.originPoint).toEqual({ fx: 0.25, fy: 1.5 })
+    expect(back.settings.customAnchor).toEqual({ x: 12, y: 34 })
+    expect(back.settings.customAnchorFor).toEqual(['a', 'b'])
+    expect(back.groups[0].anchor).toEqual({ fx: 0.1, fy: 0.9 })
+    doc.settings.originPoint = 'tr'
+    expect(parseDoc(JSON.stringify(doc)).settings.originPoint).toBe('tr')
+  })
+})

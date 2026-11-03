@@ -1,6 +1,6 @@
 The audit is complete — I've traced every control in `src/editor/*`, `App.tsx`, the store, both feature dialogs, and the io/geometry wiring. Here is the report.
 
-# Shaper forma audit — feature inventory & wiring
+# Forma Studio audit — feature inventory & wiring
 
 Scope: README claims, controls in `src/editor/*.tsx` + `src/App.tsx`, store actions, settings, shortcuts dialog, error paths, and gaps vs `docs/research/shaper-studio-design.md`. Read-only audit; nothing was modified.
 
@@ -85,7 +85,7 @@ Scope: README claims, controls in `src/editor/*.tsx` + `src/App.tsx`, store acti
 
 **n2.** `src/model/types.ts:69` — `Shape.hidden` is filtered everywhere (`Canvas.tsx:71`, `App.tsx:49`, `svgExport.ts:25`, `store.ts:158,245`) but no code ever sets it and there's no hide UI. Dead model field; remove or ship the feature.
 
-**n3.** `src/editor/Chrome.tsx:97` — opening a malformed `.json`/`.shaperstudio` via File Import toasts the raw `SyntaxError` text ("Import failed: Unexpected token…"). Wrap the `parseDoc` call to substitute "Not a Shaper forma design file" for JSON syntax errors.
+**n3.** `src/editor/Chrome.tsx:97` — opening a malformed `.json`/`.shaperstudio` via File Import toasts the raw `SyntaxError` text ("Import failed: Unexpected token…"). Wrap the `parseDoc` call to substitute "Not a Forma Studio design file" for JSON syntax errors.
 
 **n4.** `src/App.tsx:82-86` + `src/state/store.ts:135-138` — the 600 ms autosave debounce isn't flushed by `setDoc`; choosing New Design / Open Recent / a recent file within 600 ms of an edit loses that edit from localStorage (in-memory undo history is also cleared). Flush pending autosave in `setDoc` before swapping.
 

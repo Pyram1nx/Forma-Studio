@@ -1,0 +1,137 @@
+/* Dovetails dialog. Layout and controls come from components.css and carve3d.css. */
+
+.dt-bitrow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.dt-bitrow__fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dt-bit {
+  width: 52px;
+  height: 56px;
+  flex: none;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--white);
+}
+/* The catalogue bit's photo, framed like a Bit Gallery tile. */
+.dt-photo {
+  width: 62px;
+  height: 76px;
+  flex: none;
+  border-radius: var(--radius-lg);
+  background: var(--white);
+  box-shadow: inset 0 0 0 1px var(--gray-200);
+  overflow: hidden;
+}
+.dt-photo__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Shaper's photos leave a lot of air around the bit; bring the cutter forward, as the gallery does. */
+  transform: scale(1.2);
+}
+svg.dt-photo__img {
+  transform: none;
+}
+.dt-bit__shank {
+  fill: var(--gray-300);
+}
+.dt-bit__cutter {
+  fill: var(--gray-700);
+  transition: d 0.2s ease;
+}
+
+.dt-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--blue-050);
+  cursor: pointer;
+}
+.dt-link:hover {
+  text-decoration: underline;
+}
+
+/* End-grain layouts, floating over the 3D view. */
+.dt-cards {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+}
+.dt-card {
+  flex: 0 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(10, 10, 11, 0.08);
+  pointer-events: auto;
+}
+.dt-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.dt-card__title {
+  font-weight: 500;
+  color: var(--gray-800);
+}
+.dt-card__svg {
+  width: 100%;
+  height: 64px;
+  overflow: visible;
+}
+.dt-svg__board {
+  fill: #ecd3ae;
+  stroke: var(--gray-500);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+.dt-svg__pocket {
+  fill: rgba(63, 65, 69, 0.78);
+  stroke: var(--gray-800);
+  stroke-width: 1;
+}
+.dt-svg__band {
+  fill: none;
+  stroke: rgba(var(--blue-050-rgb), 0.22);
+  stroke-linecap: round;
+}
+.dt-svg__line {
+  fill: none;
+  stroke: var(--blue-050);
+  stroke-width: 1.5;
+}
+
+@media (max-width: 700px) {
+  .dt-cards {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    gap: 8px;
+  }
+  .dt-card__head .ss-muted {
+    display: none;
+  }
+}

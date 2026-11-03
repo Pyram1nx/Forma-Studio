@@ -9,8 +9,8 @@
 // ratio picks the paper family (ISO A, Letter, Legal, Tabloid, Shaper Trace).
 import type { Pt } from '../../model/types'
 
-/** What the drawing was photographed on. */
-export type SheetKind = 'paper' | 'trace'
+/** What the drawing was photographed on; 'image' is any picture, traced as a whole. */
+export type SheetKind = 'paper' | 'trace' | 'image'
 
 export interface PaperPreset {
   id: string

@@ -51,9 +51,8 @@ export interface StageBits {
   engrave: string | null
 }
 
-/** Sensible defaults from the catalogue: biggest flat bit clears, a mid flat finishes, sharpest V engraves. */
-export function autoStageBits(): StageBits {
-  const carvable = BITS.filter((b) => b.carvable)
+function pickStageBits(pool: Bit[]): StageBits {
+  const carvable = pool.filter((b) => b.carvable)
   const flats = carvable.filter((b) => b.type === 'flat').sort((a, b) => b.diameter - a.diameter)
   const rough = flats[0] ?? null
   // The finishing flat: mid-sized, clearly finer than the roughing bit.
@@ -66,6 +65,18 @@ export function autoStageBits(): StageBits {
       .filter((b) => b.type === 'vbit')
       .sort((a, b) => (b.angle ?? 90) - (a.angle ?? 90))[0] ?? null
   return { rough: rough?.id ?? null, detail: detail?.id ?? null, engrave: engrave?.id ?? null }
+}
+
+/**
+ * Sensible defaults: biggest flat bit clears, a mid flat finishes, sharpest V engraves. From the
+ * user's bit gallery when given (they cannot cut with bits they do not have); a stage no owned
+ * bit can do falls back to the full catalogue.
+ */
+export function autoStageBits(preferred?: Bit[]): StageBits {
+  if (!preferred?.length) return pickStageBits(BITS)
+  const mine = pickStageBits(preferred)
+  const full = pickStageBits(BITS)
+  return { rough: mine.rough ?? full.rough, detail: mine.detail ?? full.detail, engrave: mine.engrave ?? full.engrave }
 }
 
 /**

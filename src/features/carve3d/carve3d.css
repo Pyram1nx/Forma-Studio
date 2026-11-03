@@ -331,7 +331,7 @@
   padding: 2px 6px;
   border-radius: 4px;
   background: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
   font: 500 11px var(--font-ui);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -434,7 +434,7 @@
   line-height: 14px;
   font-weight: 500;
   color: var(--gray-700);
-  background: rgba(253, 253, 254, 0.85);
+  background: color-mix(in srgb, var(--white) 85%, transparent);
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
@@ -470,4 +470,25 @@
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
+}
+
+/* Owned marker: the bit gallery (features/bitlibrary) knows what the user owns. */
+.c3d-tile {
+  position: relative;
+}
+.c3d-tile-owned {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--blue-050);
+  color: var(--on-accent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+/* Dark appearance (state/theme.ts). */
+[data-theme='dark'] .c3d-warn {
+  background: #33241a;
 }

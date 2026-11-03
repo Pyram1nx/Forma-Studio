@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import type { Group, ImportPayload, Units } from '../../model/types'
 import { fmtLen, fromUnits, toUnits } from '../../model/factory'
-import { IconCube, IconClose, IconLink, IconUnlink, IconPause, IconPlay, IconRestart } from '../../ui/icons'
+import { IconClose, IconLink, IconUnlink, IconPause, IconPlay, IconRestart } from '../../ui/icons'
 import { NumField } from '../../editor/Panels'
 import { CarveCancelled, type TabSettings } from './carvePlan'
 import { MODEL_ACCEPT, defaultsFor, orientedSize, placeModel, readModelFile, type ModelUnit, type UpAxis, type Vec3 } from './loadModel'
@@ -13,6 +13,7 @@ import { carvedSurface, type CarvedSurface } from './finishedSurface'
 import { Field } from './fields'
 import MultiSidePanel from './MultiSidePanel'
 import { autoStageBits, defaultSides, STAGE_LABEL, type StageBits } from './multiSide'
+import { ownedBits, useBitLibrary } from '../bitlibrary/library'
 import { createMultiSideClient, type AnalysisMap, type MultiSideClient } from './multiSideClient'
 import type { PartMesh } from './finishedPart'
 import type { LayeredPlan } from './layers'
@@ -63,7 +64,13 @@ export default function Carve3DDialog({ units, onClose, onImport }: Carve3DDialo
 
   // ---- multi-side process plan --------------------------------------------
   const [msSides, setMsSides] = useState<SideId[]>([])
-  const [msBits, setMsBits] = useState<StageBits>(() => autoStageBits())
+  // Stage bits default to the bits the user actually owns (a stage nothing owned can do
+  // falls back to the catalogue). Changing the gallery later does not re-pick; the panel
+  // is editable.
+  const libOwned = useBitLibrary((s) => s.owned)
+  const libCustom = useBitLibrary((s) => s.custom)
+  const ownedPool = useMemo(() => ownedBits({ owned: libOwned, custom: libCustom }), [libOwned, libCustom])
+  const [msBits, setMsBits] = useState<StageBits>(() => autoStageBits(ownedPool))
   const [msAllowance, setMsAllowance] = useState(1)
   const [msEngraveDepth, setMsEngraveDepth] = useState(1.5)
   const [msBridges, setMsBridges] = useState<TabSettings>({ count: 2, width: 5, height: 1 })
@@ -427,8 +434,7 @@ export default function Carve3DDialog({ units, onClose, onImport }: Carve3DDialo
     <div className="ss-dialog c3d-dialog" role="dialog" aria-label="3D Carve">
       {(loading || computing || carving || partBusy) && <LoadingDomino withOverlay passThrough />}
       <div className="ss-dialog__header">
-        <IconCube />
-        3D Carve
+        <h1 className="ss-dialog__title">3D Carve</h1>
       </div>
 
       <div className="ss-dialog__body">

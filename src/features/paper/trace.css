@@ -81,7 +81,7 @@
   fill: rgba(10, 10, 11, 0.5);
 }
 .trace-overlay__quad {
-  fill: rgba(44, 101, 255, 0.08);
+  fill: rgba(var(--blue-050-rgb), 0.08);
   stroke: var(--blue-050);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
@@ -94,7 +94,7 @@
   stroke: var(--cut-green, #1be09e);
 }
 .trace-overlay__window {
-  fill: rgba(44, 101, 255, 0.08);
+  fill: rgba(var(--blue-050-rgb), 0.08);
   stroke: var(--blue-050);
   stroke-width: 2;
   stroke-dasharray: 6 5;
@@ -157,8 +157,8 @@
 /* Same outline and fill as a selected shape in the studio (canvas.css). */
 .trace-path {
   fill: var(--sel-fill);
-  stroke: #4a7dff;
-  stroke-width: 2px;
+  stroke: var(--sel-stroke);
+  stroke-width: 3.5px; /* measured in Studio */
   vector-effect: non-scaling-stroke;
   stroke-linejoin: round;
   stroke-linecap: round;
@@ -213,7 +213,7 @@
   width: 2px;
   margin-left: -1px;
   background: var(--blue-050);
-  box-shadow: 0 0 8px rgba(44, 101, 255, 0.55);
+  box-shadow: 0 0 8px rgba(var(--blue-050-rgb), 0.55);
   pointer-events: none;
   animation: trace-swipe var(--sweep-ms, 1400ms) var(--sweep-ease) forwards;
 }
@@ -383,7 +383,7 @@
   border: none;
   border-radius: 50%;
   background: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
   cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
 }
@@ -827,4 +827,27 @@
   .trace-controls .trace-row {
     width: min(100%, 320px);
   }
+}
+
+/* Dark appearance (state/theme.ts): the tinted chips and picks above, on dark. */
+[data-theme='dark'] .trace-chip.is-active {
+  background: var(--blue-tint);
+  color: var(--blue-soft);
+}
+[data-theme='dark'] .trace-controls__text.trace-controls__text--done,
+[data-theme='dark'] .trace-tool.is-active {
+  color: var(--blue-soft);
+}
+[data-theme='dark'] .trace-tool.is-active {
+  background: var(--blue-light);
+}
+[data-theme='dark'] .trace-pick__opt.is-remove {
+  background: #3a1d1b;
+  border-color: #e0786d;
+  color: #f19c93;
+}
+[data-theme='dark'] .trace-pick__opt.is-select {
+  background: #123326;
+  border-color: #3ccf98;
+  color: #5fe0ae;
 }

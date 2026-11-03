@@ -9,17 +9,20 @@ import { bboxOfContours } from '../geometry/transform'
 import ModeCanvas from './ModeCanvas'
 import { finishShapeShifter } from './ops'
 import { world } from './geomCache'
-import type { Contour } from '../model/types'
+import type { Contour, Shape } from '../model/types'
 
 export default function ShapeShifter() {
-  const ids = useStore((s) => s.shifter)
-  if (!ids) return null
-  return <ShifterView ids={ids} />
+  const shifter = useStore((s) => s.shifter)
+  if (!shifter) return null
+  return <ShifterView ids={shifter.ids} ghosts={shifter.ghosts} editId={shifter.editId} />
 }
 
-function ShifterView({ ids }: { ids: string[] }) {
+function ShifterView({ ids, ghosts, editId }: { ids: string[]; ghosts?: Shape[]; editId?: string }) {
   const shapes = useStore((s) => s.doc.shapes)
-  const sources = useMemo(() => shapes.filter((s) => ids.includes(s.id)), [shapes, ids])
+  const sources = useMemo<Shape[]>(() => {
+    const doc = shapes.filter((s) => ids.includes(s.id))
+    return ghosts?.length ? [...doc, ...ghosts] : doc
+  }, [shapes, ids, ghosts])
   const frags = useMemo<Contour[][]>(() => fragments(sources.map((s) => world(s))), [sources])
   const ds = useMemo(() => frags.map((f) => contoursToD(f)), [frags])
   const bounds = useMemo(() => bboxOfContours(frags.flat()), [frags])
@@ -37,7 +40,7 @@ function ShifterView({ ids }: { ids: string[] }) {
 
   const finish = () => {
     if (!picked.size) return
-    finishShapeShifter(ids, [...picked].map((i) => frags[i]), keep)
+    finishShapeShifter(sources, [...picked].map((i) => frags[i]), keep, editId)
     exit()
   }
 

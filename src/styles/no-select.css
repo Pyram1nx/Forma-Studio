@@ -1,0 +1,14 @@
+/* The studio is an app, not a document: nothing in it can be highlighted except what the user types into.
+   Portals (menus, font list) render into body, so the rule is keyed on the studio being mounted. */
+body:has(.App) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body:has(.App) input,
+body:has(.App) textarea,
+body:has(.App) select,
+body:has(.App) [contenteditable]:not([contenteditable='false']) {
+  -webkit-user-select: text;
+  user-select: text;
+}

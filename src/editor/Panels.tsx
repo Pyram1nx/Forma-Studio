@@ -1,17 +1,21 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { activeOrigin, groupOutlineFor, selectedShapes, useStore, withoutCheckpoint, editableIds } from '../state/store'
 import type { CutType, Shape, Units } from '../model/types'
 import { MM_PER_IN } from '../model/types'
 import { fmtNum } from '../model/factory'
 import * as Ic from '../ui/icons'
-import { anchorPoint, parseLength, resizeSelection, rotateSelection, selectionBBox, type Anchor, type AnchorRef } from './ops'
+import { worldD } from './geomCache'
+import { anchorBBox, anchorPoint, parseLength, resizeSelection, rotateSelection, selectionBBox, type Anchor, type AnchorRef } from './ops'
 import { buildFromParams } from './shapeFactory'
 import { isBoxJoint, updateBoxJoint } from './boxJointGuides'
 import { TEMPLATES } from '../geometry/templates'
+import { polygonUnitSize } from '../geometry/primitives'
 import { BITS } from '../features/carve3d/bits'
+import { suggestBits, useBitLibrary } from '../features/bitlibrary/library'
 import FontSelect from './FontSelect'
 import { IconEditText } from './fontIcons'
+import { isMixed, presetLabel, radiusValues, RADIUS_PRESETS, VERTEX_KINDS } from './radius'
 
 /** Display a length in doc units (number only). */
 export const fmtLenValue = (mm: number, units: Units) => fmtNum(mm, units)
@@ -37,9 +41,11 @@ export interface NumFieldProps {
   className?: string
   /** Step for arrow keys (defaults to the same step as the depth +/- buttons). */
   step?: number
+  onFocus?: () => void
+  onBlur?: () => void
 }
 
-export function NumField({ adorn, suffix, value, kind = 'length', units, placeholder, label, onCommit, className, step }: NumFieldProps) {
+export function NumField({ adorn, suffix, value, kind = 'length', units, placeholder, label, onCommit, className, step, onFocus, onBlur }: NumFieldProps) {
   const fmt = (v: number | null) => {
     if (v == null || !Number.isFinite(v)) return ''
     if (kind === 'length') return fmtLenValue(v, units)
@@ -81,8 +87,14 @@ export function NumField({ adorn, suffix, value, kind = 'length', units, placeho
         inputMode={kind === 'count' ? 'numeric' : 'decimal'}
         value={text}
         placeholder={placeholder}
-        onFocus={(e) => e.target.select()}
-        onBlur={finish}
+        onFocus={(e) => {
+          e.target.select()
+          onFocus?.()
+        }}
+        onBlur={() => {
+          finish()
+          onBlur?.()
+        }}
         onChange={(e) => {
           edited.current = true
           setText(e.target.value)
@@ -119,7 +131,7 @@ function Field({ label, tab, children }: { label: string; tab?: string; children
 }
 
 /** Whole-number count with − / + steppers, as in Studio's template panels. */
-function StepperParam({ label, value, min = 1, max = 99, suffix, onCommit }: { label: string; value: number; min?: number; max?: number; suffix?: string; onCommit: (v: number, c: boolean) => void }) {
+export function StepperParam({ label, value, min = 1, max = 99, suffix, onCommit }: { label: string; value: number; min?: number; max?: number; suffix?: string; onCommit: (v: number, c: boolean) => void }) {
   const clamp = (v: number) => Math.min(max, Math.max(min, Math.round(v)))
   const step = (d: number) => onCommit(clamp(value + d), false)
   // As in Studio the count can also be typed; it commits on Enter or blur and snaps to the allowed range.
@@ -165,6 +177,12 @@ function StepperParam({ label, value, min = 1, max = 99, suffix, onCommit }: { l
   )
 }
 
+/** Studio's A / B side glyphs (20px icons, not text), as drawn in its box joint panel. */
+const LETTER_GLYPHS: Record<string, string> = {
+  A: 'M13.2898 16.98L12.2898 13.66H7.6298L6.6298 16.98H3.5498L8.1498 3.02002H11.9098L16.4498 16.98H13.2898ZM9.9898 5.78002H9.8898L8.3498 11.08H11.5498L9.9898 5.78002Z',
+  B: 'M4.5 3.02002H11.28C12.44 3.02002 13.34 3.34669 13.98 4.00002C14.6333 4.65335 14.96 5.52002 14.96 6.60002C14.96 7.13335 14.8867 7.58669 14.74 7.96002C14.6067 8.33335 14.42 8.64002 14.18 8.88002C13.9533 9.12002 13.68 9.30002 13.36 9.42002C13.0533 9.52669 12.72 9.58669 12.36 9.60002V9.72002C12.6933 9.72002 13.04 9.78002 13.4 9.90002C13.7733 10.02 14.1133 10.2134 14.42 10.48C14.7267 10.7334 14.98 11.0667 15.18 11.48C15.3933 11.8934 15.5 12.4 15.5 13C15.5 13.5467 15.4067 14.0667 15.22 14.56C15.0467 15.04 14.8 15.46 14.48 15.82C14.16 16.18 13.78 16.4667 13.34 16.68C12.9 16.88 12.42 16.98 11.9 16.98H4.5V3.02002ZM7.54 14.42H11.04C11.44 14.42 11.7533 14.3134 11.98 14.1C12.22 13.8734 12.34 13.56 12.34 13.16V12.48C12.34 12.08 12.22 11.7734 11.98 11.56C11.7533 11.3334 11.44 11.22 11.04 11.22H7.54V14.42ZM7.54 8.74002H10.56C10.96 8.74002 11.2733 8.62669 11.5 8.40002C11.7267 8.17335 11.84 7.86002 11.84 7.46002V6.86002C11.84 6.46002 11.7267 6.14669 11.5 5.92002C11.2733 5.69335 10.96 5.58002 10.56 5.58002H7.54V8.74002Z',
+}
+
 type ToggleOption = { v: number; label: string; aria?: string; icon?: 'letter' | 'eye' | 'eyeOff'; path?: string }
 
 /** Two- or more-way choice (sharp/smooth, A/B, centers/edges, show/hide) as a segmented control. */
@@ -184,14 +202,18 @@ function ToggleParam({ label, options, value, onCommit }: { label: string; optio
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d={o.path} fill="currentColor" fillRule="evenodd" />
             </svg>
+          ) : o.icon === 'letter' && LETTER_GLYPHS[o.label] ? (
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d={LETTER_GLYPHS[o.label]} />
+            </svg>
           ) : o.icon === 'letter' ? (
             <b className="ss-segmented__letter" aria-hidden="true">
               {o.label}
             </b>
           ) : o.icon === 'eye' ? (
-            <Ic.IconEye size={18} />
+            <Ic.IconEye size={20} />
           ) : o.icon === 'eyeOff' ? (
-            <Ic.IconEyeOff size={18} />
+            <Ic.IconEyeOff size={20} />
           ) : (
             o.label
           )}
@@ -202,8 +224,9 @@ function ToggleParam({ label, options, value, onCommit }: { label: string; optio
 }
 
 /**
- * A slider with tick marks (Studio's pin factor): the track fills from the left up to the thumb, and
- * the value shows in a bubble above the thumb only while it is focused or dragged — no fixed readout.
+ * Studio's slider (an MUI slider with the heart's tail curl / pin factor look): an 8px rail, the 20px thumb
+ * travelling the whole rail width (its centre sits on the rail ends), tick marks that turn light blue once the
+ * thumb is past them, and the value in a bubble above the thumb while it is hovered, focused or dragged.
  * Changes within 600 ms of each other are one undo step.
  */
 function SliderParam({
@@ -224,49 +247,86 @@ function SliderParam({
   onCommit: (v: number, coalesced: boolean) => void
 }) {
   const last = useRef(0)
+  const root = useRef<HTMLSpanElement>(null)
+  const [hover, setHover] = useState(false)
   const [focused, setFocused] = useState(false)
   const [dragging, setDragging] = useState(false)
-  useEffect(() => {
-    if (!dragging) return
-    const up = () => setDragging(false)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', up)
-    return () => {
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
+  const span = max - min || 1
+  const pct = (v: number) => Math.max(0, Math.min(1, (v - min) / span)) * 100
+  const snap = (v: number) => {
+    const n = Math.round((v - min) / step)
+    return Math.max(min, Math.min(max, +(min + n * step).toFixed(6)))
+  }
+  const commit = (v: number) => {
+    const next = snap(v)
+    if (next === value) return
+    const now = performance.now()
+    const coalesced = now - last.current < UNDO_BURST_MS
+    last.current = now
+    onCommit(next, coalesced)
+  }
+  const fromPointer = (clientX: number) => {
+    const r = root.current!.getBoundingClientRect()
+    commit(min + ((clientX - r.left) / (r.width || 1)) * span)
+  }
+  const onKey = (e: React.KeyboardEvent) => {
+    const big = (max - min) / 10
+    const to: Record<string, number> = {
+      ArrowLeft: value - step,
+      ArrowDown: value - step,
+      ArrowRight: value + step,
+      ArrowUp: value + step,
+      PageDown: value - big,
+      PageUp: value + big,
+      Home: min,
+      End: max,
     }
-  }, [dragging])
-  const at = (v: number) => String(Math.max(0, Math.min(1, (v - min) / (max - min || 1))))
+    e.stopPropagation()
+    if (!(e.key in to)) return
+    e.preventDefault()
+    commit(to[e.key])
+  }
+  const open = hover || focused || dragging
   return (
-    <div className="ss-slider" style={{ ['--at' as string]: at(value) }}>
+    <span
+      ref={root}
+      className={'ss-slider' + (dragging ? ' is-dragging' : '')}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        ;(e.currentTarget.querySelector('.ss-slider__thumb') as HTMLElement).focus({ preventScroll: true })
+        setDragging(true)
+        fromPointer(e.clientX)
+      }}
+      onPointerMove={(e) => dragging && fromPointer(e.clientX)}
+      onPointerUp={() => setDragging(false)}
+      onPointerCancel={() => setDragging(false)}
+    >
+      <span className="ss-slider__rail" />
       {marks.map((m) => (
-        <span key={m} className="ss-slider__mark" style={{ ['--at' as string]: at(m) }} aria-hidden="true" />
+        <span key={m} className={'ss-slider__mark' + (m <= value ? ' is-active' : '')} style={{ left: `${pct(m)}%` }} aria-hidden="true" />
       ))}
-      <input
-        type="range"
-        className="ss-slider__input"
+      <span
+        className="ss-slider__thumb"
+        role="slider"
+        tabIndex={0}
         aria-label={label}
-        min={min}
-        max={max}
-        step={step}
-        value={value}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        style={{ left: `${pct(value)}%` }}
+        onPointerEnter={() => setHover(true)}
+        onPointerLeave={() => setHover(false)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        onPointerDown={() => setDragging(true)}
-        onChange={(e) => {
-          const now = performance.now()
-          const coalesced = now - last.current < UNDO_BURST_MS
-          last.current = now
-          onCommit(Number(e.target.value), coalesced)
-        }}
-        onKeyDown={(e) => e.stopPropagation()}
-      />
-      {(focused || dragging) && (
-        <span className="ss-slider__bubble" aria-hidden="true">
+        onKeyDown={onKey}
+      >
+        <span className={'ss-slider__bubble' + (open ? ' is-open' : '')} aria-hidden="true">
           {String(+value.toFixed(2))}
         </span>
-      )}
-    </div>
+      </span>
+    </span>
   )
 }
 
@@ -342,11 +402,10 @@ const CELL_NAME: Record<Anchor, string> = {
 }
 
 /** Shows the current anchor; clicking it enters Shape Anchor mode so the point is picked on the canvas. */
-function AnchorButton({ value }: { value: AnchorRef }) {
+function AnchorButton({ value, inline }: { value: AnchorRef; inline?: boolean }) {
   const cells: Anchor[] = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br']
   const free = typeof value !== 'string'
-  return (
-    <div className="anchor-row">
+  const btn = (
       <button
         className="anchor-btn"
         onClick={() => useStore.getState().setAnchorPicking(true)}
@@ -359,6 +418,11 @@ function AnchorButton({ value }: { value: AnchorRef }) {
           cells.map((c) => <span key={c} className={'anchor-btn__dot' + (c === value ? ' is-active' : '')} />)
         )}
       </button>
+  )
+  if (inline) return btn
+  return (
+    <div className="anchor-row">
+      {btn}
       <span className="ss-label" style={{ padding: 0 }}>
         anchor
       </span>
@@ -411,8 +475,13 @@ export function DesignPanel() {
   const anchor: AnchorRef = activeOrigin(doc, selection) ?? 'mc'
   const anchorPicking = useStore((s) => s.anchorPicking)
   const sel = selectedShapes({ doc, selection })
+  // Studio opens a polygon with its size fields linked.
+  const polygonId = sel.length === 1 && sel[0].kind === 'polygon' ? sel[0].id : ''
+  useEffect(() => {
+    if (polygonId) setLock(true)
+  }, [polygonId])
   // The Offset panel takes the right dock while it is open.
-  if (mode !== 'design' || !sel.length || tool !== 'select' || dialog === 'offset' || anchorPicking) return null
+  if (mode !== 'design' || !sel.length || tool !== 'select' || dialog === 'offset' || dialog === 'radius' || anchorPicking) return null
   const units = doc.units
   const b = selectionBBox(sel)
   if (!b) return null
@@ -436,6 +505,9 @@ export function DesignPanel() {
       <Ic.IconPathTypeLock size={24} />
     </button>
   )
+  // Studio shows how many objects are selected beside the reference button (a group counts once).
+  const selUnits = new Set(sel.map((s) => (s.groupId && mode === 'design' ? 'g:' + s.groupId : s.id))).size
+  const countBadge = selUnits > 1 ? <span className="selection-count">{selUnits}</span> : null
   if (hasRef) return <div className="right-dock">{referenceBtn}</div>
 
   const setW = (v: number, c: boolean) => mut(c, () => resizeSelection(ids, Math.max(v, 0.01), lock ? (h * v) / (w || 1) : null, anchor))
@@ -445,9 +517,38 @@ export function DesignPanel() {
     if (!single || single.locked) return
     // Box joints (basic and pro): Studio's clamps, the pocket, the guides and the anchor move together.
     if (isBoxJoint(single)) return mut(c, () => updateBoxJoint(single.id, { [key]: v }))
+    const t = single.kind === 'template' ? TEMPLATES.find((x) => x.id === single.params?.template) : undefined
     mut(c, () =>
       st().updateShapes([single.id], (s) => {
-        const params = { ...s.params!, [key]: v }
+        let params: Record<string, number | string | boolean> = { ...s.params!, [key]: v }
+        if (s.kind === 'polygon' && key === 'n') {
+          // Studio keeps the polygon's stretch when the side count changes, so the size follows the new shape.
+          const a = polygonUnitSize(Number(s.params!.n ?? 5))
+          const z = polygonUnitSize(v)
+          params.w = (Number(s.params!.w) / a.w) * z.w
+          params.h = (Number(s.params!.h) / a.h) * z.h
+        }
+        if (t?.constrain) {
+          // Studio's own limits: some edits are refused, others carry the neighbouring params along.
+          const nums: Record<string, number> = {}
+          for (const d of t.params) nums[d.key] = Number(s.params![d.key] ?? d.default)
+          const next = t.constrain(nums, key, v)
+          if (!next) return s
+          params = { ...s.params!, ...next }
+        }
+        const contours = buildFromParams(s.kind, params)
+        return contours ? { ...s, params, contours } : s
+      }),
+    )
+  }
+
+  // Uniform radius from the field: every corner takes it and the Custom Radius corners are dropped.
+  const setRadius = (v: number, c: boolean) => {
+    if (!single || single.locked) return
+    mut(c, () =>
+      st().updateShapes([single.id], (s) => {
+        const params: Record<string, number | string | boolean> = { ...s.params!, r: Math.max(0, v) }
+        delete params.cr
         const contours = buildFromParams(s.kind, params)
         return contours ? { ...s, params, contours } : s
       }),
@@ -456,7 +557,7 @@ export function DesignPanel() {
 
   const tpl = single?.kind === 'template' ? TEMPLATES.find((t) => t.id === single.params?.template) : undefined
   const group = single?.groupId ? doc.groups.find((g) => g.id === single.groupId) : undefined
-  const pos = anchorPoint(b, anchor)
+  const pos = anchorPoint(anchorBBox(sel, b), anchor)
   const moveBy = (dx: number, dy: number, c: boolean) => mut(c, () => st().updateShapes(editableIds(ids), (s) => ({ ...s, x: s.x + dx, y: s.y + dy })))
 
   // Templates use Studio's own settings panel: their parameters, then rotation and anchor. No size fields.
@@ -465,7 +566,7 @@ export function DesignPanel() {
   if (isText) tabs.push({ id: 'font', label: 'Font', icon: <IconEditText width={20} height={20} /> })
   if (!tpl) tabs.push({ id: 'size', label: 'Size', icon: <MIcoSize /> })
   if (single?.kind === 'polygon') tabs.push({ id: 'sides', label: 'Sides', icon: <MIcoHash /> })
-  if (single?.kind === 'rect') tabs.push({ id: 'radius', label: 'Radius', icon: <MIcoCorner /> })
+  if (single && VERTEX_KINDS.includes(single.kind)) tabs.push({ id: 'radius', label: 'Radius', icon: <MIcoCorner /> })
   if (tpl) tabs.push({ id: 'params', label: 'Shape', icon: <MIcoHash /> })
   if (tpl?.params.some((p) => p.radiusRow)) tabs.push({ id: 'radius', label: 'Radius', icon: <MIcoCorner /> })
   tabs.push({ id: 'rotation', label: 'Rotation', icon: <MIcoRotate /> })
@@ -474,7 +575,10 @@ export function DesignPanel() {
 
   return (
     <div className={'right-dock' + (sheetOpen ? ' is-sheet-open' : '')}>
-      {referenceBtn}
+      <div className="right-dock__head">
+        {referenceBtn}
+        {countBadge}
+      </div>
       <div
         className="ss-panel design-panel"
         data-mtab={activeTab}
@@ -519,20 +623,12 @@ export function DesignPanel() {
           </div>
         </Field>
         )}
-        {single?.kind === 'rect' &&<RadiusField key={single.id} shape={single} units={units} onCommit={(v, c) => setParam('r', Math.max(0, v), c)} />}
         {single?.kind === 'polygon' && (
           <Field label="sides" tab="sides">
-            <NumField
-              label="Sides"
-              kind="count"
-              adorn="N"
-              suffix=""
-              value={Number(single.params?.n ?? 6)}
-              units={units}
-              onCommit={(v, c) => setParam('n', Math.max(3, Math.min(64, Math.round(v))), c)}
-            />
+            <StepperParam label="Sides" value={Number(single.params?.n ?? 5)} min={3} max={500} onCommit={(v, c) => setParam('n', v, c)} />
           </Field>
         )}
+        {single && VERTEX_KINDS.includes(single.kind) && <RadiusField key={single.id} shape={single} units={units} onCommit={setRadius} />}
         {tpl &&
           tpl.params
             .filter((p) => !p.showWhen || Number(single!.params?.[p.showWhen.key] ?? 0) >= p.showWhen.min)
@@ -544,7 +640,7 @@ export function DesignPanel() {
             const edges = p.edgeLabel && Number(single!.params?.spacing ?? 0) === 1
             const label = edges ? p.edgeLabel! : p.label
             if (p.radiusRow)
-              return <RadiusField key={single!.id} shape={single!} units={units} onCommit={(v, c) => setParam('r', Math.max(0, v), c)} />
+              return <RadiusField key={single!.id} shape={single!} units={units} onCommit={setRadius} />
             return (
               <Field key={p.key} label={label} tab="params">
                 {p.kind === 'toggle' && p.options && p.dropdown ? (
@@ -558,19 +654,7 @@ export function DesignPanel() {
                 ) : p.kind === 'toggle' && p.options ? (
                   <ToggleParam label={p.label} options={p.options} value={cur} onCommit={(v) => setParam(p.key, v, false)} />
                 ) : p.kind === 'slider' ? (
-                  p.reverse ? (
-                    <SliderParam
-                      label={label}
-                      value={-cur}
-                      min={-(p.max ?? 1)}
-                      max={-(p.min ?? 0)}
-                      step={p.step ?? 0.01}
-                      marks={p.marks?.map((m) => -m)}
-                      onCommit={(v, c) => setParam(p.key, -v, c)}
-                    />
-                  ) : (
-                    <SliderParam label={label} value={cur} min={p.min ?? 0} max={p.max ?? 1} step={p.step ?? 0.01} marks={p.marks} onCommit={(v, c) => setParam(p.key, v, c)} />
-                  )
+                  <SliderParam label={label} value={cur} min={p.min ?? 0} max={p.max ?? 1} step={p.step ?? 0.01} marks={p.marks} onCommit={(v, c) => setParam(p.key, v, c)} />
                 ) : p.kind === 'count' ? (
                   <StepperParam label={label} value={cur} min={p.min} max={p.max} suffix={p.adorn} onCommit={(v, c) => setParam(p.key, v, c)} />
                 ) : (
@@ -602,16 +686,21 @@ export function DesignPanel() {
         </Field>
         {doc.settings.showPosition && (
           <Field label="position" tab="more">
-            <div className="size-fields__inputs">
-              <NumField label="Position X" adorn="X" value={pos.x} units={units} onCommit={(v, c) => moveBy(v - pos.x, 0, c)} />
-              <NumField label="Position Y" adorn="Y" value={pos.y} units={units} onCommit={(v, c) => moveBy(0, v - pos.y, c)} />
+            <div className="size-fields">
+              <div className="size-fields__inputs">
+                <NumField label="Position X" adorn="X" value={pos.x} units={units} onCommit={(v, c) => moveBy(v - pos.x, 0, c)} />
+                <NumField label="Position Y" adorn="Y" value={pos.y} units={units} onCommit={(v, c) => moveBy(0, v - pos.y, c)} />
+              </div>
+              <AnchorButton value={anchor} inline />
             </div>
           </Field>
         )}
-        <div data-tab="more" className="sheet-more">
-          <AnchorButton value={anchor} />
-        </div>
-        {group && (
+        {!doc.settings.showPosition && (
+          <div data-tab="more" className="sheet-more">
+            <AnchorButton value={anchor} />
+          </div>
+        )}
+        {group && !doc.shapes.some((s) => s.groupId === group.id && isBoxJoint(s)) && (
           <div className="group-info" data-tab="more">
             <div className="group-info__name">
               <Ic.IconLayers size={16} /> {group.name}
@@ -628,20 +717,85 @@ export function DesignPanel() {
 }
 
 function RadiusField({ shape, units, onCommit }: { shape: Shape; units: Units; onCommit: (v: number, c: boolean) => void }) {
-  const r = Number(shape.params?.r ?? 0)
-  const [show, setShow] = useState(r > 0)
+  const vals = radiusValues(shape)
+  const mixed = isMixed(vals)
+  const [show, setShow] = useState(vals.some((v) => v > 0))
+  const [presets, setPresets] = useState(false)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const [justAdded, setJustAdded] = useState(false)
+  // Studio's "+" opens the field already focused, with the preset list beside it.
+  useEffect(() => {
+    if (justAdded && show) {
+      rowRef.current?.querySelector('input')?.focus()
+      setJustAdded(false)
+    }
+  }, [justAdded, show])
   if (!show)
     return (
-      <button className="radius-add" data-tab="radius" onClick={() => setShow(true)} aria-label="Add radius">
+      <button
+        className="radius-add"
+        data-tab="radius"
+        onClick={() => {
+          setShow(true)
+          setJustAdded(true)
+        }}
+        aria-label="Add radius"
+      >
         <span>radius</span>
         <Ic.IconPlus size={14} />
       </button>
     )
+  const pick = (mm: number) => {
+    setPresets(false)
+    onCommit(mm, false)
+  }
   return (
     <Field label="radius" tab="radius">
-      <NumField label="Radius" adorn="R" value={r} units={units} onCommit={onCommit} />
+      <div className="radius-row" ref={rowRef}>
+        <NumField
+          label="Radius"
+          adorn="R"
+          value={mixed ? null : vals[0]}
+          placeholder={mixed ? 'mixed' : undefined}
+          units={units}
+          onCommit={(v, c) => {
+            setPresets(false)
+            onCommit(v, c)
+          }}
+          onFocus={() => setPresets(true)}
+          onBlur={() => setPresets(false)}
+        />
+        {VERTEX_KINDS.includes(shape.kind) && (
+          <button className="radius-edit" aria-label="Custom Radius" title="Custom Radius" onClick={() => useStore.getState().openDialog('radius')}>
+            <MIcoCorner />
+          </button>
+        )}
+        {presets &&
+          rowRef.current &&
+          // The panel scrolls and would clip it, so it is portalled out and placed beside the field.
+          // Mousedown keeps focus in the field, so the field's blur does not close the list before a preset is picked.
+          createPortal(
+          <div className="radius-presets" style={presetPos(rowRef.current)} onMouseDown={(e) => e.preventDefault()}>
+            <div className="radius-presets__title">presets</div>
+            <div className="radius-presets__grid">
+              {RADIUS_PRESETS.map((p) => (
+                <button key={p.label} type="button" className="radius-presets__item" onClick={() => pick(p.inches * MM_PER_IN)}>
+                  {presetLabel(p, units)}
+                </button>
+              ))}
+            </div>
+          </div>,
+          document.body,
+        )}
+      </div>
     </Field>
   )
+}
+
+/** Studio opens the preset list to the left of the panel, centred on the radius field and overlapping the panel's edge. */
+function presetPos(row: HTMLElement): CSSProperties {
+  const r = row.getBoundingClientRect()
+  return { top: r.top + r.height / 2, left: r.left - 7 - 180 }
 }
 
 // ---------- Plan panel ----------
@@ -654,7 +808,7 @@ export const CUT_TYPES: { id: CutType; label: string; icon: ReactNode }[] = [
 ]
 
 // Studio's preset glyphs: fractions for inch, the engraving bit for the 0.5 mm preset.
-const BIT_PRESETS: Record<Units, { label: string; mm: number; icon?: ReactNode }[]> = {
+export const BIT_PRESETS: Record<Units, { label: string; mm: number; icon?: ReactNode }[]> = {
   in: [
     { label: '0.02', mm: 0.508, icon: <Ic.IconBit size={20} /> },
     { label: '⅛', mm: 3.175, icon: <Ic.IconBitEighth size={20} /> },
@@ -669,6 +823,98 @@ const BIT_PRESETS: Record<Units, { label: string; mm: number; icon?: ReactNode }
   ],
 }
 
+type PlanTab = 'type' | 'depth' | 'offset' | 'bit'
+
+// Studio's mobile cut-properties tabs. The active tab shows its label; the others show only the glyph.
+const PLAN_TABS: { id: PlanTab; label: string; icon: ReactNode }[] = [
+  { id: 'type', label: 'Cut Type', icon: <Ic.IconCutLines size={20} /> },
+  { id: 'depth', label: 'Cut Depth', icon: <Ic.IconArrowDown size={20} /> },
+  { id: 'offset', label: 'Offset', icon: <Ic.IconOffsetArrow size={20} /> },
+  { id: 'bit', label: 'Bit Diameter', icon: <Ic.IconDiameter size={20} /> },
+]
+
+/** Title row with the collapse chevron. The sheet shows it on mobile only (CSS). */
+function PlanSheetHead({ title, onCollapse }: { title: string; onCollapse: () => void }) {
+  return (
+    <div className="plan-sheet-head">
+      <span className="ss-panel__header">{title}</span>
+      <button className="sheet-collapse" aria-label={`Hide ${title}`} onClick={onCollapse}>
+        <Ic.IconChevronDown size={14} />
+      </button>
+    </div>
+  )
+}
+
+/** A shape's outline, fitted to its tile. */
+function ShapeThumb({ s }: { s: Shape }) {
+  const b = selectionBBox([s])
+  if (!b) return null
+  const pad = Math.max(b.maxX - b.minX, b.maxY - b.minY) * 0.08 || 0.1
+  return (
+    <svg
+      className="manage-tile__svg"
+      viewBox={`${b.minX - pad} ${b.minY - pad} ${b.maxX - b.minX + pad * 2} ${b.maxY - b.minY + pad * 2}`}
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
+      <path d={worldD(s)} fillRule="evenodd" />
+    </svg>
+  )
+}
+
+/**
+ * Studio's Manage Selection view: a tile per selected shape. Tap a tile to deselect that shape;
+ * tap and hold it to light the shape on the canvas.
+ */
+function ManageSelection({ onCollapse }: { onCollapse: () => void }) {
+  const shapes = useStore((s) => s.doc.shapes)
+  const selection = useStore((s) => s.selection)
+  const picked = selection.map((id) => shapes.find((s) => s.id === id)).filter((s): s is Shape => s != null)
+  const holdTimer = useRef(0)
+  const held = useRef(false)
+  const endHold = () => {
+    window.clearTimeout(holdTimer.current)
+    useStore.getState().setPlanHighlight(null)
+  }
+  // A held tile lights its shape until the pointer lifts, and never clears the cut path after the view closes.
+  useEffect(() => endHold, [])
+  return (
+    <div className="ss-panel manage-panel" onPointerDown={(e) => e.stopPropagation()}>
+      <PlanSheetHead title="Manage Selection" onCollapse={onCollapse} />
+      <p className="manage-panel__hint">Tap to deselect, tap and hold to highlight</p>
+      <div className="manage-grid">
+        {picked.map((s) => (
+          <button
+            key={s.id}
+            className="manage-tile"
+            aria-label={`Deselect ${kindLabel(s)}`}
+            onPointerDown={() => {
+              held.current = false
+              holdTimer.current = window.setTimeout(() => {
+                held.current = true
+                useStore.getState().setPlanHighlight(s.id)
+              }, 400)
+            }}
+            onPointerUp={endHold}
+            onPointerLeave={endHold}
+            onPointerCancel={endHold}
+            onClick={() => {
+              // The click that ends a hold only ends the highlight; it does not deselect.
+              if (held.current) {
+                held.current = false
+                return
+              }
+              useStore.getState().select(selection.filter((id) => id !== s.id))
+            }}
+          >
+            <ShapeThumb s={s} />
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function PlanPanel() {
   const doc = useStore((s) => s.doc)
   const selection = useStore((s) => s.selection)
@@ -676,6 +922,23 @@ export function PlanPanel() {
   const [open, setOpen] = useState(false)
   const [bitsOpen, setBitsOpen] = useState(false)
   const [typeBtn, setTypeBtn] = useState<HTMLButtonElement | null>(null)
+  const libOwned = useBitLibrary((s) => s.owned)
+  const libCustom = useBitLibrary((s) => s.custom)
+  // Desktop shows every field. The mobile sheet shows one tab at a time and can be collapsed.
+  const [ptab, setPtab] = useState<PlanTab>('type')
+  const [sheetOpen, setSheetOpen] = useState(true)
+  const [manage, setManage] = useState(false)
+  useEffect(() => {
+    const showSheet = () => {
+      if (useStore.getState().selection.length > 0) setSheetOpen(true)
+    }
+    window.addEventListener('ss:open-props-sheet', showSheet)
+    return () => window.removeEventListener('ss:open-props-sheet', showSheet)
+  }, [])
+  // Manage Selection only lives in plan mode, and closes when the selection empties.
+  useEffect(() => {
+    if (mode !== 'plan' || !selection.length) setManage(false)
+  }, [mode, selection.length])
   const dismissType = () => setOpen(false)
   const sel = selectedShapes({ doc, selection })
   if (mode !== 'plan' || !sel.length) return null
@@ -695,6 +958,12 @@ export function PlanPanel() {
   const bitInfo = bit != null ? BITS.find((b) => Math.abs(b.diameter - bit) < 0.01) : undefined
   const tooDeep = depth != null && bitInfo != null && depth > bitInfo.fluteLength + 1e-6
 
+  // The bit library dropdown: owned bits first, then the best owned bit for this cut.
+  const isOwned = (id: string) => libOwned[id] != null
+  const libBits = [...BITS, ...libCustom].sort((a, b) => (isOwned(b.id) ? 1 : 0) - (isOwned(a.id) ? 1 : 0))
+  const suggested = type != null ? suggestBits({ owned: libOwned, custom: libCustom }, { depthMm: depth ?? undefined, use: type })[0] : undefined
+  const suggestDifferent = suggested != null && suggested.fits && (bit == null || Math.abs(suggested.bit.diameter - bit) >= 0.01)
+
   // Open paths cannot be inside/outside/pocket: those shapes fall back to on-line.
   const pickType = (t: CutType) => {
     st().updateShapes(ids, (s) => {
@@ -705,124 +974,195 @@ export function PlanPanel() {
     setOpen(false)
   }
 
+  // A guide has only a cut type, so the other tabs go.
+  const tabs = type === 'guide' ? PLAN_TABS.slice(0, 1) : PLAN_TABS
+  const activeTab = tabs.some((t) => t.id === ptab) ? ptab : 'type'
+  const dockCls = 'right-dock plan-dock' + (manage ? ' is-manage' : '') + (sheetOpen ? '' : ' is-sheet-closed')
+  // Studio's pencil: from the Manage Selection view it returns to the properties; on mobile it reopens a collapsed sheet.
+  const editBtn = (
+    <button
+      className="plan-dock__edit"
+      aria-label="Edit cut properties"
+      title="Edit cut properties"
+      onClick={() => {
+        setManage(false)
+        setSheetOpen(true)
+      }}
+    >
+      <Ic.IconPencil size={18} />
+    </button>
+  )
+
   return (
-    <div className="right-dock">
-      <div className="ss-panel plan-panel" onPointerDown={(e) => e.stopPropagation()}>
-        <Field label="cut type">
-          <div className="cut-type-select">
-            <button
-              ref={setTypeBtn}
-              className={'cut-type-select__btn' + (open ? ' is-open' : '')}
-              aria-haspopup="listbox"
-              aria-expanded={open}
-              aria-label={`Cut type: ${cur?.label ?? 'mixed'}`}
-              onClick={() => setOpen(!open)}
-            >
-              {cur?.icon ?? <Ic.IconCutMixed size={18} />}
-              <span>{cur?.label ?? 'mixed'}</span>
-              <Ic.IconChevronDown size={16} className={'icon cut-type-select__chev' + (open ? ' is-open' : '')} />
-            </button>
-            {open && typeBtn && (
-              <Floating anchor={typeBtn} side="left" className="cut-type-menu" onDismiss={dismissType}>
-                {types.map((t) => (
-                  <button key={t.id} className={'cut-type-menu__item' + (t.id === type ? ' is-active' : '')} aria-current={t.id === type} onClick={() => pickType(t.id)}>
-                    {t.icon}
-                    <span>{t.label}</span>
-                  </button>
-                ))}
-              </Floating>
-            )}
-          </div>
-        </Field>
-        {type !== 'guide' && (
-          <>
-            <Field label="depth">
-              <div className="stepper">
-                <button
-                  aria-label="Decrease depth"
-                  onClick={() =>
-                    // Step each shape on its own, so a mixed selection keeps its differences; unset stays unset.
-                    st().updateShapes(ids, (s) => ({ ...s, cut: { ...s.cut, depth: s.cut.depth == null ? null : Math.max(0, s.cut.depth - step) || null } }))
-                  }
-                >
-                  −
-                </button>
-                <NumField
-                  label="Depth"
-                  value={depth}
-                  units={units}
-                  step={step}
-                  placeholder={sel.some((x) => x.cut.depth !== first.cut.depth) ? 'mixed' : 'unset'}
-                  suffix=""
-                  onCommit={(v, c) => mut(c, () => st().setCut(ids, { depth: v > 0 ? v : null }))}
-                  className="stepper__input"
-                />
-                <button
-                  aria-label="Increase depth"
-                  onClick={() => st().updateShapes(ids, (s) => ({ ...s, cut: { ...s.cut, depth: (s.cut.depth ?? 0) + step } }))}
-                >
-                  +
-                </button>
-              </div>
-              {tooDeep && bitInfo && (
-                <div className="plan-warn">
-                  Deeper than the {bitInfo.name} flute ({fmtLenValue(bitInfo.fluteLength, units)} {units}).
-                </div>
-              )}
-            </Field>
-            <Field label="offset">
-              <div className="offset-field">
-                <button
-                  className="offset-field__flip"
-                  aria-label="Flip offset direction"
-                  title="Flip offset direction"
-                  disabled={!offset}
-                  onClick={() => st().setCut(ids, { offset: -(offset ?? 0) })}
-                >
-                  <Ic.IconFlipOffset size={16} />
-                </button>
-                <NumField label="Offset" value={offset} units={units} onCommit={(v, c) => mut(c, () => st().setCut(ids, { offset: v }))} />
-              </div>
-            </Field>
-            <Field label="bit diameter">
-              <NumField label="Bit diameter" adorn="D" value={bit} units={units} onCommit={(v, c) => v > 0 && mut(c, () => st().setCut(ids, { bitDia: v }))} />
-            </Field>
-            <div className="bit-presets">
-              <button className={'bit-presets__lib' + (bitsOpen ? ' is-active' : '')} aria-label="Bit library" aria-expanded={bitsOpen} title="Bit library" onClick={() => setBitsOpen(!bitsOpen)}>
-                <Ic.IconBitLibrary size={20} />
+    <div className={dockCls}>
+      {!manage && (
+        <button className="selection-editor-button" aria-label="Manage Selection" title="Manage Selection" onClick={() => setManage(true)}>
+          {sel.length}
+        </button>
+      )}
+      {editBtn}
+      {manage ? (
+        <ManageSelection onCollapse={() => setSheetOpen(false)} />
+      ) : (
+        <div className="ss-panel plan-panel" data-ptab={activeTab} onPointerDown={(e) => e.stopPropagation()}>
+          <PlanSheetHead title="cut properties" onCollapse={() => setSheetOpen(false)} />
+          <div className="sheet-tabs" role="tablist" aria-label="Cut properties">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={t.id === activeTab}
+                aria-label={t.label}
+                className={'sheet-tabs__tab' + (t.id === activeTab ? ' is-active' : '')}
+                onClick={() => setPtab(t.id)}
+              >
+                {t.icon}
+                <span className="sheet-tabs__label">{t.label}</span>
               </button>
-              {BIT_PRESETS[units].map((p) => (
+            ))}
+          </div>
+          <div data-ptab-field="type">
+            <Field label="cut type">
+              <div className="cut-type-select">
                 <button
-                  key={p.label}
-                  aria-label={`Bit diameter ${p.label}`}
-                  aria-pressed={bit != null && Math.abs(bit - p.mm) < 0.01}
-                  className={'bit-presets__btn' + (bit != null && Math.abs(bit - p.mm) < 0.01 ? ' is-active' : '')}
-                  onClick={() => st().setCut(ids, { bitDia: p.mm })}
+                  ref={setTypeBtn}
+                  className={'cut-type-select__btn' + (open ? ' is-open' : '')}
+                  aria-haspopup="listbox"
+                  aria-expanded={open}
+                  aria-label={`Cut type: ${cur?.label ?? 'mixed'}`}
+                  onClick={() => setOpen(!open)}
                 >
-                  {p.icon ?? p.label}
+                  {cur?.icon ?? <Ic.IconCutMixed size={18} />}
+                  <span>{cur?.label ?? 'mixed'}</span>
+                  <Ic.IconChevronDown size={16} className={'icon cut-type-select__chev' + (open ? ' is-open' : '')} />
                 </button>
-              ))}
-            </div>
-            {bitsOpen && (
-              <div className="bit-lib">
-                {BITS.map((b) => (
-                  <button
-                    key={b.id}
-                    className={'bit-lib__item' + (bit != null && Math.abs(bit - b.diameter) < 0.01 ? ' is-active' : '')}
-                    onClick={() => {
-                      st().setCut(ids, { bitDia: b.diameter })
-                      setBitsOpen(false)
-                    }}
-                  >
-                    {b.name}
-                  </button>
-                ))}
+                {open && typeBtn && (
+                  <Floating anchor={typeBtn} side="left" className="cut-type-menu" onDismiss={dismissType}>
+                    {types.map((t) => (
+                      <button key={t.id} className={'cut-type-menu__item' + (t.id === type ? ' is-active' : '')} aria-current={t.id === type} onClick={() => pickType(t.id)}>
+                        {t.icon}
+                        <span>{t.label}</span>
+                      </button>
+                    ))}
+                  </Floating>
+                )}
               </div>
-            )}
-          </>
-        )}
-        {sel.length === 1 && first.meta?.note && <div className="plan-note">{first.meta.note}</div>}
-      </div>
+            </Field>
+          </div>
+          {type !== 'guide' && (
+            <>
+              <div data-ptab-field="depth">
+                <Field label="depth">
+                  <div className="stepper">
+                    <button
+                      aria-label="Decrease depth"
+                      onClick={() =>
+                        // Step each shape on its own, so a mixed selection keeps its differences; unset stays unset.
+                        st().updateShapes(ids, (s) => ({ ...s, cut: { ...s.cut, depth: s.cut.depth == null ? null : Math.max(0, s.cut.depth - step) || null } }))
+                      }
+                    >
+                      −
+                    </button>
+                    <NumField
+                      label="Depth"
+                      value={depth}
+                      units={units}
+                      step={step}
+                      placeholder={sel.some((x) => x.cut.depth !== first.cut.depth) ? 'mixed' : 'unset'}
+                      suffix=""
+                      onCommit={(v, c) => mut(c, () => st().setCut(ids, { depth: v > 0 ? v : null }))}
+                      className="stepper__input"
+                    />
+                    <button
+                      aria-label="Increase depth"
+                      onClick={() => st().updateShapes(ids, (s) => ({ ...s, cut: { ...s.cut, depth: (s.cut.depth ?? 0) + step } }))}
+                    >
+                      +
+                    </button>
+                  </div>
+                  {tooDeep && bitInfo && (
+                    <div className="plan-warn">
+                      Deeper than the {bitInfo.name} flute ({fmtLenValue(bitInfo.fluteLength, units)} {units}).
+                    </div>
+                  )}
+                </Field>
+              </div>
+              <div data-ptab-field="offset">
+                <Field label="offset">
+                  <div className="offset-field">
+                    <button
+                      className="offset-field__flip"
+                      aria-label="Flip offset direction"
+                      title="Flip offset direction"
+                      disabled={!offset}
+                      onClick={() => st().setCut(ids, { offset: -(offset ?? 0) })}
+                    >
+                      <Ic.IconFlipOffset size={16} />
+                    </button>
+                    <NumField label="Offset" value={offset} units={units} onCommit={(v, c) => mut(c, () => st().setCut(ids, { offset: v }))} />
+                  </div>
+                </Field>
+              </div>
+              <div data-ptab-field="bit">
+                <Field label="bit diameter">
+                  <NumField label="Bit diameter" adorn="D" value={bit} units={units} onCommit={(v, c) => v > 0 && mut(c, () => st().setCut(ids, { bitDia: v }))} />
+                </Field>
+                <div className="bit-presets">
+                  <button className={'bit-presets__lib' + (bitsOpen ? ' is-active' : '')} aria-label="Bit library" aria-expanded={bitsOpen} title="Bit library" onClick={() => setBitsOpen(!bitsOpen)}>
+                    <Ic.IconBitLibrary size={20} />
+                  </button>
+                  {BIT_PRESETS[units].map((p) => (
+                    <button
+                      key={p.label}
+                      aria-label={`Bit diameter ${p.label}`}
+                      aria-pressed={bit != null && Math.abs(bit - p.mm) < 0.01}
+                      className={'bit-presets__btn' + (bit != null && Math.abs(bit - p.mm) < 0.01 ? ' is-active' : '')}
+                      onClick={() => st().setCut(ids, { bitDia: p.mm })}
+                    >
+                      {p.icon ?? p.label}
+                    </button>
+                  ))}
+                </div>
+                {bitsOpen && (
+                  <div className="bit-lib">
+                    {suggestDifferent && suggested && (
+                      <button
+                        className="bit-lib__item bit-lib__sugg"
+                        title={suggested.reasons.join(' · ')}
+                        onClick={() => {
+                          st().setCut(ids, { bitDia: suggested.bit.diameter })
+                          setBitsOpen(false)
+                        }}
+                      >
+                        <span className="bit-lib__sugg-label">Suggested</span>
+                        {suggested.bit.name}
+                        <span className="bit-lib__sugg-why">{suggested.reasons[0]}</span>
+                      </button>
+                    )}
+                    {libBits.map((b) => (
+                      <button
+                        key={b.id}
+                        className={'bit-lib__item' + (bit != null && Math.abs(bit - b.diameter) < 0.01 ? ' is-active' : '')}
+                        onClick={() => {
+                          st().setCut(ids, { bitDia: b.diameter })
+                          setBitsOpen(false)
+                        }}
+                      >
+                        {isOwned(b.id) && <span className="bit-lib__dot" title="In your bit gallery" />}
+                        {b.name}
+                      </button>
+                    ))}
+                    <button className="bit-lib__item bit-lib__open" onClick={() => st().openDialog('bits')}>
+                      <Ic.IconBitLibrary size={14} /> Open bit gallery…
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          {sel.length === 1 && first.meta?.note && <div className="plan-note">{first.meta.note}</div>}
+        </div>
+      )}
     </div>
   )
 }

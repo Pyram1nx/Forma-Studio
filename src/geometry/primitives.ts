@@ -37,14 +37,26 @@ export function rect(w: number, h: number, r = 0): Contour[] {
   return [{ pts, closed: true }]
 }
 
-/** Regular polygon with `n` sides fitted in a w×h box (point up). */
-export function polygon(n: number, w: number, h: number): Contour[] {
+/** Unit-circumradius regular polygon, as in Studio: always a flat edge at the bottom (odd counts point up). */
+function regularPolygon(n: number): Pt[] {
   const raw: Pt[] = []
   for (let i = 0; i < n; i++) {
-    const a = -Math.PI / 2 + (i / n) * Math.PI * 2
+    const a = Math.PI / 2 + Math.PI / n + (i / n) * Math.PI * 2
     raw.push({ x: Math.cos(a), y: Math.sin(a) })
   }
-  return [{ pts: fitTo(raw, w, h), closed: true }]
+  return raw
+}
+
+/** Width and height of a regular n-gon with circumradius 1 (a pentagon is 1.902 × 1.809). */
+export function polygonUnitSize(n: number): { w: number; h: number } {
+  const xs = regularPolygon(n).map((p) => p.x)
+  const ys = regularPolygon(n).map((p) => p.y)
+  return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }
+}
+
+/** Regular polygon with `n` sides fitted in a w×h box (flat edge at the bottom). */
+export function polygon(n: number, w: number, h: number): Contour[] {
+  return [{ pts: fitTo(regularPolygon(n), w, h), closed: true }]
 }
 
 export function star(points: number, w: number, h: number, inner = 0.45): Contour[] {

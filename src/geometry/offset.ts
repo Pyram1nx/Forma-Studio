@@ -216,6 +216,9 @@ export function simplify(pts: Pt[], tol: number, closed = false): Pt[] {
 export function splitRegions(contours: Contour[]): Contour[][] {
   try {
     const c = new ClipperLib.Clipper()
+    // Strictly simple: a region pinched at touching points (square minus its inscribed
+    // circle) splits into its separate pieces instead of staying one self-touching outline.
+    c.StrictlySimple = true
     c.AddPaths(closedPaths(contours), ClipperLib.PolyType.ptSubject, true)
     const tree = new ClipperLib.PolyTree()
     c.Execute(ClipperLib.ClipType.ctUnion, tree, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero)

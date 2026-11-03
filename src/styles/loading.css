@@ -29,6 +29,14 @@
   z-index: 100000;
   background: #fdfdfe;
 }
+/* Dark appearance (state/theme.ts). Literals: this file loads before tokens.css. */
+[data-theme='dark'] .loading-screen,
+[data-theme='dark'] .loading-domino--overlay {
+  background: #18191b;
+}
+[data-theme='dark'] .loading-domino path {
+  fill: #f2f3f5;
+}
 .loading-domino > svg #oval01 { animation: domino01 4s infinite linear; }
 .loading-domino > svg #oval02 { animation: domino02 4s infinite linear; }
 .loading-domino > svg #oval03 { animation: domino03 4s infinite linear; }

@@ -180,12 +180,14 @@ export function ShortcutsDialog() {
     ['↑ / ↓ in a field', 'Step the value'],
     ['Space + drag', 'Pan (also middle or right drag)'],
     ['Pinch / ⌘ scroll', 'Zoom'],
+    ['⇧ P', 'Pen tool (drag for curves, ⌥ breaks handles)'],
     ['P', 'Draw tool'],
     ['Enter / Backspace / Esc', 'Finish / remove last point / cancel while drawing'],
+    ['Double-click a pen path', 'Edit its points (click a segment to add one, ⌥ click to toggle smooth)'],
     ['1 / 2 / 3', 'Design / Plan / Review'],
     ['Alt + click', 'Select one object of a group'],
-    ['Shift', 'Snap angle / free scale / add to selection'],
-    ['Alt + drag', 'Move without smart alignment'],
+    ['Shift', 'Lock move to axis or 45° / snap angle / free scale / add to selection'],
+    ['Ctrl / Alt + drag', 'Move, resize or draw without snapping'],
   ]
   return (
     <div className="modal-backdrop" onPointerDown={() => useStore.getState().openDialog(null)}>
@@ -205,7 +207,7 @@ export function ShortcutsDialog() {
           ))}
         </div>
         <div className="ss-muted" style={{ marginTop: 12 }}>
-          Forma Studio runs entirely in your browser. Designs autosave locally; use Save to keep a <code>.formastudio</code> file on your computer and Export SVG to
+          Forma Studio runs entirely in your browser. Designs autosave locally; use Save to keep a <code>.forma</code> file on your computer and Export SVG to
           send it to Shaper Origin.
         </div>
       </div>

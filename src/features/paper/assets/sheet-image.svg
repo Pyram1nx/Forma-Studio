@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 450 300" width="450" height="300">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feGaussianBlur stdDeviation="10" />
+    </filter>
+    <clipPath id="pic">
+      <path d="M78 150 L238 58 L382 150 L222 242 Z" />
+    </clipPath>
+  </defs>
+  <!-- soft drop shadow, like the paper and frame pictures -->
+  <path d="M70 168 L238 72 L392 168 L222 264 Z" fill="#000" opacity="0.22" filter="url(#shadow)" />
+  <!-- the print: a tilted photo card with a white border -->
+  <path d="M60 150 L238 48 L400 150 L222 252 Z" fill="#fff" stroke="#d9d9d9" stroke-width="1" stroke-linejoin="round" />
+  <g clip-path="url(#pic)">
+    <path d="M78 150 L238 58 L382 150 L222 242 Z" fill="#e9edf5" />
+    <!-- sun -->
+    <ellipse cx="282" cy="118" rx="22" ry="13" fill="#2c2c2c" />
+    <!-- hills -->
+    <path d="M60 170 L150 120 L212 160 L262 132 L400 210 L400 300 L60 300 Z" fill="#2c2c2c" />
+    <path d="M150 120 L212 160 L178 178 Z" fill="#555" />
+  </g>
+</svg>

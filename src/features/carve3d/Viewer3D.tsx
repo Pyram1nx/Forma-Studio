@@ -12,7 +12,8 @@ import { createHeightfield, createHeightfieldGeometry, floorClip, worldRect } fr
 import type { CarvePlan } from './carvePlan'
 import { CarveAnimation } from './carveAnimation'
 import { dimLayout, type DimAxis } from './dimGuides'
-import { COLORS, hexNum } from '../../ui/colors'
+import { COLORS, hexNum, paintBackdrop } from '../../ui/colors'
+import { useIsDark } from '../../state/theme'
 
 /** One layer's real outlines. `z` is world height; contours are design space (y down). */
 export interface LayerOutline {
@@ -91,6 +92,7 @@ interface ViewState {
   stock: THREE.Group
   layers: THREE.Group
   grid: THREE.GridHelper
+  background: THREE.Color
   mats: CarveMaterials
 }
 
@@ -181,6 +183,7 @@ function makeWoodTexture(): THREE.CanvasTexture {
 export default function Viewer3D({ positions, modelSize, stockSize, stockTop, outlines, surface, part, show, plan, anim, onAnimProgress, onAnimComplete, dimLabels }: Viewer3DProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<ViewState | null>(null)
+  const dark = useIsDark()
   const sizeRef = useRef(modelSize)
   const framedRef = useRef<Float32Array | null>(null)
   const animRef = useRef<CarveAnimation | null>(null)
@@ -204,7 +207,8 @@ export default function Viewer3D({ positions, modelSize, stockSize, stockTop, ou
     host.appendChild(renderer.domElement)
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(COLORS.gray50)
+    const background = new THREE.Color(COLORS.gray50)
+    scene.background = background
     const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100000)
     camera.up.set(0, 0, 1) // CAD convention: Z up
     const controls = new OrbitControls(camera, renderer.domElement)
@@ -289,7 +293,7 @@ export default function Viewer3D({ positions, modelSize, stockSize, stockTop, ou
       updateDims()
       renderer.render(scene, camera)
     })
-    viewRef.current = { renderer, camera, controls, model, carved, part: partGroup, anim: animGroup, dims, stock, layers, grid, mats }
+    viewRef.current = { renderer, camera, controls, model, carved, part: partGroup, anim: animGroup, dims, stock, layers, grid, background, mats }
 
     return () => {
       viewRef.current = null
@@ -311,6 +315,12 @@ export default function Viewer3D({ positions, modelSize, stockSize, stockTop, ou
       renderer.domElement.remove()
     }
   }, [])
+
+  // Background and grid follow the light/dark appearance.
+  useEffect(() => {
+    const v = viewRef.current
+    if (v) paintBackdrop(v.background, v.grid, dark)
+  }, [dark])
 
   // Latest model size for the camera framing below (kept out of render).
   useEffect(() => {

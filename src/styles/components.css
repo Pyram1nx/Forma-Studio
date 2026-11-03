@@ -29,6 +29,14 @@
   width: 24px;
   height: 24px;
 }
+/* Feature title in the Forma Studio face, as Trace shows it. */
+.ss-dialog__title {
+  margin: 0;
+  font: 400 24px/1 'Forma Studio', var(--font-ui);
+  font-synthesis: none;
+  letter-spacing: 0.02em;
+  color: var(--gray-900);
+}
 .ss-dialog__body {
   flex: 1;
   min-height: 0;
@@ -111,7 +119,7 @@
 .ss-btn--primary {
   background: var(--blue-050);
   border-color: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
 }
 .ss-btn--primary:hover {
   background: var(--blue-060);
@@ -259,7 +267,7 @@
 .ss-seg button.is-active,
 .ss-seg button[aria-pressed='true'] {
   background: var(--blue-050);
-  color: var(--white);
+  color: var(--on-accent);
 }
 /* Units toggle reads IN | MM. */
 .ss-seg--units button {
@@ -272,8 +280,19 @@
   border: none;
   box-shadow: inset 0 0 0 1px var(--gray-600);
 }
+.settings-pop--plan .ss-seg button {
+  color: var(--white);
+}
 .settings-pop--plan .ss-seg button:hover {
   background: var(--gray-700);
+}
+/* Active stays blue, also when it is still hovered after a tap on touch screens (hover is sticky there). */
+.settings-pop--plan .ss-seg button.is-active,
+.settings-pop--plan .ss-seg button[aria-pressed='true'],
+.settings-pop--plan .ss-seg button.is-active:hover,
+.settings-pop--plan .ss-seg button[aria-pressed='true']:hover {
+  background: var(--blue-050);
+  color: var(--on-accent);
 }
 
 /* Checkbox row: one style for the Design popovers and the feature dialogs. */
@@ -406,7 +425,7 @@
 /* "new" chips use the snap red. */
 .ss-badge--new {
   background: var(--snap-red);
-  color: var(--white);
+  color: var(--on-accent);
 }
 .ss-dropzone {
   border: 2px dashed var(--gray-300);

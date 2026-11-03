@@ -117,7 +117,86 @@ describe('slicer', () => {
     const holed = sliceDetailed(box(0, 0, 0, 10, 10, 10, 6), 5)
     expect(holed.openChains).toBeGreaterThan(0)
   })
+
+  it('abutting shells with detail finer than the weld distance still close (fan of wedges)', () => {
+    // 40 quarter-disc wedges, each its own closed shell sharing walls with its neighbours, the
+    // arc tessellated at 0.03 mm (an exported terrain-style model looks like this).
+    const R = 50
+    const tris: number[] = []
+    for (let w = 0; w < 40; w++) {
+      const a0 = (Math.PI / 2) * (w / 40)
+      const a1 = (Math.PI / 2) * ((w + 1) / 40)
+      const steps = Math.ceil(((a1 - a0) * R) / 0.03)
+      const poly: [number, number][] = [[0, 0]]
+      for (let s = 0; s <= steps; s++) {
+        const a = a0 + ((a1 - a0) * s) / steps
+        poly.push([R * Math.cos(a), R * Math.sin(a)])
+      }
+      tris.push(...prism(poly, 0, 10))
+    }
+    const res = sliceDetailed(new Float32Array(tris), 5)
+    expect(res.openChains).toBe(0)
+    expect(res.contours.length).toBe(1)
+    expect(area(res.contours)).toBeCloseTo((Math.PI * R * R) / 4, 0)
+  })
+
+  it('a plane at a flat face with float noise takes the material above it, without slivers', () => {
+    // Step: a 10×10 slab up to z≈5 (its top vertices jittered by ±2e-5) under a 5×10 block to z=10.
+    const edge = (n: number): [number, number][] => {
+      const out: [number, number][] = []
+      for (let i = 0; i < n; i++) out.push([(10 * i) / n, 0])
+      for (let i = 0; i < n; i++) out.push([10, (10 * i) / n])
+      for (let i = 0; i < n; i++) out.push([10 - (10 * i) / n, 10])
+      for (let i = 0; i < n; i++) out.push([0, 10 - (10 * i) / n])
+      return out
+    }
+    const jitter = (x: number, y: number) => 5 + 2e-5 * Math.sin(x * 12.9898 + y * 78.233)
+    const slab = prism(edge(20), 0, 5, jitter)
+    const block = prism([[0, 0], [5, 0], [5, 10], [0, 10]], 5, 10)
+    const res = sliceDetailed(new Float32Array([...slab, ...block]), 5)
+    expect(res.openChains).toBe(0)
+    expect(res.contours.length).toBe(1)
+    expect(area(res.contours)).toBeCloseTo(50, 1)
+  })
+
+  it('joins a crack and a flipped triangle instead of dropping the loop', () => {
+    // The +x wall (triangles 6 and 7) moved out 0.01 mm: its corners no longer meet the
+    // neighbouring walls', so the section has two cracks.
+    const cracked = box(0, 0, 0, 10, 10, 10)
+    for (let i = 6 * 9; i < 8 * 9; i += 3) cracked[i] += 0.01
+    const a = sliceDetailed(cracked, 5)
+    expect(a.openChains).toBe(0)
+    expect(area(a.contours)).toBeCloseTo(100, 0)
+    // Triangle 6 (a side wall) wound the wrong way round.
+    const flipped = box(0, 0, 0, 10, 10, 10)
+    const t = 6 * 9
+    for (let k = 0; k < 3; k++) [flipped[t + 3 + k], flipped[t + 6 + k]] = [flipped[t + 6 + k], flipped[t + 3 + k]]
+    const b = sliceDetailed(flipped, 5)
+    expect(b.openChains).toBe(0)
+    expect(area(b.contours)).toBeCloseTo(100, 1)
+  })
 })
+
+/** Closed prism over a counter-clockwise polygon from z0 to z1 (top z per vertex optional). */
+function prism(poly: [number, number][], z0: number, z1: number, top: (x: number, y: number) => number = () => z1): number[] {
+  const out: number[] = []
+  const n = poly.length
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = poly[i]
+    const [bx, by] = poly[(i + 1) % n]
+    out.push(ax, ay, z0, bx, by, z0, bx, by, top(bx, by), ax, ay, z0, bx, by, top(bx, by), ax, ay, top(ax, ay))
+  }
+  // Fan caps from the polygon centroid (works for the convex and star-shaped test polygons).
+  const cx = poly.reduce((s, p) => s + p[0], 0) / n
+  const cy = poly.reduce((s, p) => s + p[1], 0) / n
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = poly[i]
+    const [bx, by] = poly[(i + 1) % n]
+    out.push(cx, cy, top(cx, cy), ax, ay, top(ax, ay), bx, by, top(bx, by))
+    out.push(cx, cy, z0, bx, by, z0, ax, ay, z0)
+  }
+  return out
+}
 
 describe('bits', () => {
   it('60° engraving bit: radius at 1 mm is tan 30° ≈ 0.577', () => {

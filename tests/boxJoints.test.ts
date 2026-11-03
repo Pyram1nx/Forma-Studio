@@ -44,7 +44,7 @@ describe('box joint basic (Studio buildPocketModel$1)', () => {
   const T = 19.05
   const sx = (x: number) => x + W / 2
 
-  it('side A: pocket over pins 1..3, pin tops r above, floor r below, channel 2·bit under', () => {
+  it('side A: pocket over pins 1..3, pin tops r above, floor r below, channel 1.2·bit under', () => {
     const cs = boxJointPocket('basic', basic())
     expect(cs).toHaveLength(1)
     expect(cs[0].closed).toBe(true)
@@ -52,7 +52,7 @@ describe('box joint basic (Studio buildPocketModel$1)', () => {
     expect(sx(b.minX)).toBeCloseTo(50.8, 6)
     expect(sx(b.maxX)).toBeCloseTo(203.2, 6)
     expect(b.minY).toBeCloseTo(-T / 2 - 4, 6) // pin tops 4 above the board top
-    expect(b.maxY).toBeCloseTo(T / 2 + 4 + 16, 6) // channel 16 below the floor
+    expect(b.maxY).toBeCloseTo(T / 2 + 4 + 9.6, 6) // channel 9.6 (1.2 × bit) below the floor
     // The floor between the removed pins sits 4 below the board bottom, with sharp (concave) corners.
     expect(hasVertex(cs, 101.6 - W / 2, T / 2 + 4)).toBe(true)
     expect(hasVertex(cs, 152.4 - W / 2, T / 2 + 4)).toBe(true)
@@ -137,13 +137,13 @@ describe('box joint pro (Studio computeSegments + buildPocketModel)', () => {
     expect(widths.reduce((a, b) => a + b, 0)).toBeCloseTo(W, 9)
   })
 
-  it('defaults (inches): pocket .70625 → 9.29375, pin tops .125 above, channel .5 under the floor', () => {
+  it('defaults (inches): pocket .70625 → 9.29375, pin tops .125 above, channel .3 under the floor', () => {
     const cs = boxJointPocket('pro', pro())
     const b = bbox(cs)
     expect(sx(b.minX)).toBeCloseTo(0.70625, 9)
     expect(sx(b.maxX)).toBeCloseTo(9.29375, 9)
     expect((b.minY + T / 2) / IN).toBeCloseTo(-0.125, 9)
-    expect((b.maxY - T / 2) / IN).toBeCloseTo(0.125 + 0.5, 9)
+    expect((b.maxY - T / 2) / IN).toBeCloseTo(0.125 + 0.3, 9)
     // Floor between pins 1 and 3 (over pin 2), r below the board bottom.
     expect(hasVertex(cs, 4.646875 * IN - W / 2, T / 2 + 0.125 * IN)).toBe(true)
     expect(hasVertex(cs, 5.353125 * IN - W / 2, T / 2 + 0.125 * IN)).toBe(true)
