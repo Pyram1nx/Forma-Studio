@@ -15,6 +15,7 @@ import { BITS } from '../features/carve3d/bits'
 import { suggestBits, useBitLibrary } from '../features/bitlibrary/library'
 import FontSelect from './FontSelect'
 import { IconEditText } from './fontIcons'
+import { isPenShape, openPenEdit } from './canvas/usePen'
 import { isMixed, presetLabel, radiusValues, RADIUS_PRESETS, VERTEX_KINDS } from './radius'
 
 /** Display a length in doc units (number only). */
@@ -455,6 +456,7 @@ export function DesignPanel() {
   const mode = useStore((s) => s.mode)
   const tool = useStore((s) => s.tool)
   const dialog = useStore((s) => s.dialog)
+  const penEditId = useStore((s) => s.penEditId)
   const [lock, setLock] = useState(false)
   // Mobile bottom sheet: active tab and collapsed state (CSS shows these only at <=700px).
   const [mtab, setMtab] = useState('size')
@@ -590,6 +592,13 @@ export function DesignPanel() {
             <Ic.IconChevronDown size={16} />
           </button>
         </div>
+        {/* A pen path offers its node editor; hidden while that editor is already open. */}
+        {single && penEditId !== single.id && isPenShape(single) && (
+          <button className="ss-btn ss-btn--sm ss-btn--block" aria-label="Edit points" title="Edit points" onClick={() => openPenEdit(single.id)}>
+            <Ic.IconPen size={14} />
+            <span>Edit Points</span>
+          </button>
+        )}
         <div className="sheet-tabs" role="tablist" aria-label="Properties">
           {tabs.map((t) => (
             <button key={t.id} role="tab" aria-selected={t.id === activeTab} aria-label={t.label} className={'sheet-tabs__tab' + (t.id === activeTab ? ' is-active' : '')} onClick={() => setMtab(t.id)}>

@@ -25,6 +25,8 @@ export interface Placed {
   /** How deep it sits, mm; null = the pose's default. */
   depth: number | null
   params?: Record<string, number>
+  /** Seed for the display-only spin of each roll (items with `randomSpin`); absent: derived from uid. */
+  spinSeed?: number
 }
 
 export type Fit = 'snug' | 'standard' | 'loose'
@@ -33,7 +35,7 @@ export const FIT_CLEARANCE: Record<Fit, number> = { snug: 0, standard: 0.75, loo
 
 export interface Layout {
   size: SysSize
-  /** Insert thickness, mm; null = fill the base to the rim. */
+  /** Insert thickness, mm; null = Shaper's stock foam (SHAPER_FOAM). */
   thickness: number | null
   fit: Fit
   /** Flat bit that cuts the insert. */
@@ -54,11 +56,29 @@ export function defaultLayout(): Layout {
   return { size: 2, thickness: null, fit: 'standard', bitId: DEFAULT_CUTTING_BIT, items: [] }
 }
 
-/** Insert thickness for a layout: the user's, or the base depth to the rim (whole mm). */
+/**
+ * The foam insert Shaper ships in its customizable SYS 1, 2 in (50.8 mm): Sam's "Workstation
+ * Accessories Kit A" cuts it in a jig of 1/2 in ply on 1.5 in supports, its top flush with the ply,
+ * and a 50 mm pocket in it stops "a hair from going through". The ShaperHub depths are cut in it.
+ */
+export const SHAPER_FOAM = 50.8
+
+/** The thickness that fills a size's base to the rim (whole mm). */
+export const fillThickness = (size: SysSize) => Math.floor(baseDepth(size))
+
+/** Insert thickness for a layout: the user's, or Shaper's stock foam. */
 export function insertThickness(l: Pick<Layout, 'size' | 'thickness'>): number {
   const max = lidZ(l.size) - SYS_FLOOR
-  return Math.min(max, Math.max(10, l.thickness ?? Math.floor(baseDepth(l.size))))
+  return Math.min(max, Math.max(10, l.thickness ?? SHAPER_FOAM))
 }
+
+/**
+ * The thickness the standard depths (the pose sinks, as the ShaperHub inserts label their pockets)
+ * belong to: Shaper's stock foam. Cut a thicker or thinner insert and every depth, the user's
+ * included, moves by the difference, so items keep their height in the case and their depths keep
+ * their differences.
+ */
+export const referenceThickness = (size: SysSize) => insertThickness({ size, thickness: null })
 
 // ---------- Posed models ----------
 
@@ -94,9 +114,11 @@ export function posed(def: ItemDef, poseIdx: number, params: Record<string, numb
 
   const out: number[] = []
   const v = new THREE.Vector3()
+  // Deco meshes (a tape roll's printed dominoes and loose end) show, but don't count toward the
+  // footprint, so the pocket stays the shape the hub inserts cut.
   model.traverse((o) => {
     const mesh = o as THREE.Mesh
-    if (!mesh.isMesh) return
+    if (!mesh.isMesh || mesh.userData.deco) return
     const pos = mesh.geometry.getAttribute('position')
     const idx = mesh.geometry.getIndex()
     const n = idx ? idx.count : pos.count
@@ -248,7 +270,9 @@ export interface PlacedEval {
   sink: number
   /** The pose's default depth. */
   autoSink: number
-  /** How far it stands above the foam. */
+  /** The sinks it may take at this thickness (see depthRange). */
+  sinkRange: { min: number; max: number }
+  /** How far it stands above the foam (negative: sunk below it, in an insert thicker than the reference). */
   above: number
   pockets: Pocket[]
   problems: string[]
@@ -263,6 +287,8 @@ export interface Evaluation {
   lidRoom: number
   /** Foam top, in Systainer z. */
   foamTop: number
+  /** Thickness minus the reference thickness: added to every depth, standard and the user's. */
+  depthShift: number
   clearance: number
   bit: Bit
   items: PlacedEval[]
@@ -316,6 +342,7 @@ export function evaluate(layout: Layout): Evaluation {
   const maxDepth = Math.max(1, thickness - MIN_FLOOR)
   const foamTop = SYS_FLOOR + thickness
   const lidRoom = lidZ(layout.size) - foamTop
+  const depthShift = thickness - referenceThickness(layout.size)
   const clearance = FIT_CLEARANCE[layout.fit]
   const bit = CUTTING_BITS.find((b) => b.id === layout.bitId) ?? CUTTING_BITS[0]
 
@@ -327,9 +354,18 @@ export function evaluate(layout: Layout): Evaluation {
     const poseIdx = Math.min(def.poses.length - 1, Math.max(0, pl.pose))
     const p = posed(def, poseIdx, params)
     const pose = def.poses[poseIdx]
-    // A pose that only partly sinks (a bit in its shank hole) goes deeper if that's what lets the lid close.
-    const autoSink = def.notch ? 0 : pose.sink ? Math.min(p.height, Math.max(pose.sink(p.height), p.height - lidRoom + 1)) : p.height
-    const sink = def.notch ? 0 : Math.min(maxDepth, Math.max(1, pl.depth ?? autoSink), p.height)
+    const h = p.height
+    // The standard depth, at the reference thickness: the pose's (a Hub label may sit an item a
+    // little below the surface), or flush.
+    const base = pose.sink ? pose.sink(h) : h
+    // Deepest that makes sense: fully sunk, or the standard depth if that is deeper, plus whatever
+    // the insert grew. At least 1 mm in, so it never ends up wholly above the foam.
+    const sinkRange = { min: 1, max: Math.max(1, Math.min(maxDepth, Math.max(h, base) + Math.max(0, depthShift))) }
+    const clampSink = (s: number) => Math.min(sinkRange.max, Math.max(sinkRange.min, s))
+    // A pose that only partly sinks (a bit in its shank hole) goes deeper if that's what lets the
+    // lid close. Both terms move with the thickness, so the shift applies to the result as a whole.
+    const autoSink = def.notch ? 0 : clampSink(Math.max(base + depthShift, Math.min(h + depthShift, h - lidRoom + 1)))
+    const sink = def.notch ? 0 : pl.depth != null ? clampSink(pl.depth + depthShift) : autoSink
     const pockets: Pocket[] = def.notch
       ? []
       : pocketSteps(p, posedKey(def, poseIdx, params), sink, !!def.islands).map((s, i) => ({
@@ -338,7 +374,7 @@ export function evaluate(layout: Layout): Evaluation {
           depth: s.depth,
           contours: shapeHoles(offsetContours(transform(s.contours, pl.x, pl.y, pl.rot), clearance), !!def.islands),
         }))
-    items.push({ uid: pl.uid, def, posed: p, sink, autoSink, above: p.height - sink, pockets, problems: [] })
+    items.push({ uid: pl.uid, def, posed: p, sink, autoSink, sinkRange, above: h - sink, pockets, problems: [] })
   }
 
   // Notches take the depth of the deepest pocket they overlap.
@@ -352,9 +388,12 @@ export function evaluate(layout: Layout): Evaluation {
       if (o.def.notch) continue
       for (const pk of o.pockets) if (pk.depth > deepest && touch(bb, bboxOf(pk.contours)) && Math.abs(area(boolean('intersection', shape, pk.contours))) > 1) deepest = pk.depth
     }
-    const auto = deepest || Math.min(20, maxDepth)
+    // Overlapped pockets have already moved with the thickness; the stand-alone 20 mm moves too.
+    e.sinkRange = { min: 1, max: maxDepth }
+    const clampSink = (s: number) => Math.min(maxDepth, Math.max(1, s))
+    const auto = deepest || clampSink(20 + depthShift)
     e.autoSink = auto
-    e.sink = Math.min(maxDepth, Math.max(1, pl.depth ?? auto))
+    e.sink = pl.depth != null ? clampSink(pl.depth + depthShift) : auto
     e.above = 0
     e.pockets = [{ uid: e.uid, step: 0, depth: e.sink, contours: shape }]
   }
@@ -389,7 +428,21 @@ export function evaluate(layout: Layout): Evaluation {
       }
     }
 
-  return { outline, thickness, maxDepth, lidRoom, foamTop, clearance, bit, items, pockets: items.flatMap((e) => e.pockets) }
+  return { outline, thickness, maxDepth, lidRoom, foamTop, depthShift, clearance, bit, items, pockets: items.flatMap((e) => e.pockets) }
+}
+
+/** The sinks an item may take at the evaluated thickness, mm: at least 1 mm in, at most fully sunk (plus the thickness shift) or the deepest pocket the foam allows. */
+export function depthRange(e: PlacedEval, ev: Evaluation): { min: number; max: number } {
+  return e.sinkRange ?? { min: 1, max: ev.maxDepth }
+}
+
+/**
+ * The value to store in `Placed.depth` for an item the user sets to sink `sink` mm at this
+ * thickness. Stored depths belong to the reference thickness, so they follow the thickness field.
+ */
+export function placedDepth(e: PlacedEval, ev: Evaluation, sink: number): number {
+  const r = depthRange(e, ev)
+  return Math.min(r.max, Math.max(r.min, sink)) - ev.depthShift
 }
 
 // ---------- Export ----------

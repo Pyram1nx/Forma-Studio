@@ -100,7 +100,9 @@
 
 /* ---------- Media choice ---------- */
 .tintro__media {
-  justify-content: center;
+  /* Choices centre when they fit; auto margins (not justify-content) keep the
+     top reachable by scroll on short screens, where the column overflows. */
+  overflow-y: auto;
 }
 .tintro__choices {
   display: flex;
@@ -110,6 +112,7 @@
   width: 100%;
   padding: 24px;
   box-sizing: border-box;
+  margin: auto 0;
 }
 .tintro__box {
   width: min(100%, 360px);

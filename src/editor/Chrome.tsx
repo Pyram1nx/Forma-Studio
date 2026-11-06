@@ -82,10 +82,15 @@ function HoverButton(props: {
   labelSide?: 'right' | 'top'
   pressed?: boolean
   style?: CSSProperties
+  collapsed?: boolean
 }) {
   const side = props.labelSide ?? 'right'
   return (
-    <div className={'hover-btn hover-btn--' + side + (props.active ? ' is-active' : '')} style={props.style}>
+    <div
+      className={'hover-btn hover-btn--' + side + (props.active ? ' is-active' : '') + (props.collapsed ? ' is-collapsed' : '')}
+      style={props.style}
+      inert={props.collapsed || undefined}
+    >
       <button className={props.className ?? 'ui-round'} onClick={props.onClick} aria-label={props.label} aria-pressed={props.pressed}>
         {props.children}
       </button>
@@ -567,6 +572,9 @@ export function ActionBar() {
       : frozen.current.groupAct === 'ungroup'
         ? { label: 'Ungroup', icon: <Ic.IconUngroup />, onClick: () => st().ungroupSelected() }
         : null
+  // The desktop slots stay mounted so a newly applying action can slide into its place in the
+  // bar instead of popping; a slot with nothing to show just collapses (see .is-collapsed).
+  const groupSlot = groupItem ?? { label: 'Group', icon: <Ic.IconGroup />, onClick: () => st().groupSelected() }
   let n = 0
   const next = () => rung(n++)
   return (
@@ -604,27 +612,29 @@ export function ActionBar() {
       <HoverButton style={next()} label="Offset" labelSide="top" className="ui-round ui-round--dark" onClick={() => st().openDialog('offset')}>
         <Ic.IconOffset />
       </HoverButton>
-      {isText && (
-        <HoverButton style={next()} label="Edit Text" labelSide="top" className="ui-round ui-round--dark" onClick={() => (st().setEditingText(selection[0]), st().openDialog('text'))}>
-          <Ic.IconText />
-        </HoverButton>
-      )}
-      {canShapeShift && (
-        <HoverButton
-          style={next()}
-          label="ShapeShifter"
-          labelSide="top"
-          className="ui-round ui-round--dark"
-          onClick={() => st().enterShapeShifter()}
-        >
-          <Ic.IconShapeShifter />
-        </HoverButton>
-      )}
-      {groupItem && (
-        <HoverButton style={next()} label={groupItem.label} labelSide="top" className="ui-round ui-round--dark" onClick={groupItem.onClick}>
-          {groupItem.icon}
-        </HoverButton>
-      )}
+      <HoverButton
+        style={next()}
+        label="Edit Text"
+        labelSide="top"
+        className="ui-round ui-round--dark"
+        collapsed={!isText}
+        onClick={() => (st().setEditingText(selection[0]), st().openDialog('text'))}
+      >
+        <Ic.IconText />
+      </HoverButton>
+      <HoverButton
+        style={next()}
+        label="ShapeShifter"
+        labelSide="top"
+        className="ui-round ui-round--dark"
+        collapsed={!canShapeShift}
+        onClick={() => st().enterShapeShifter()}
+      >
+        <Ic.IconShapeShifter />
+      </HoverButton>
+      <HoverButton style={next()} label={groupSlot.label} labelSide="top" className="ui-round ui-round--dark" collapsed={!groupItem} onClick={groupSlot.onClick}>
+        {groupSlot.icon}
+      </HoverButton>
       {/* Each stacked pair is its own flush dark pill that grows as the second action flies up. */}
       <Stacked
         style={next()}

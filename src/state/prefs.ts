@@ -23,6 +23,11 @@ export interface Prefs {
   bitDia: number
   /** Cut depth in mm for new shapes; null leaves it unset, as Studio does. */
   depth: number | null
+  /**
+   * Mouse controls in the studio: 'zoom' scrolls to zoom and middle-button drag pans, as Studio
+   * does; 'pan' swaps the two. Ctrl/cmd + scroll stays zoom either way (it is pinch on a trackpad).
+   */
+  mouseNav: 'zoom' | 'pan'
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -37,6 +42,7 @@ export const DEFAULT_PREFS: Prefs = {
   cutType: DEFAULT_CUT.type,
   bitDia: DEFAULT_CUT.bitDia,
   depth: DEFAULT_CUT.depth,
+  mouseNav: 'zoom',
 }
 
 const KEY = 'forma.prefs.v1'
@@ -66,6 +72,7 @@ export function parsePrefs(raw: string | null): Prefs {
       cutType: CUT_TYPES.includes(p.cutType as CutType) ? (p.cutType as CutType) : d.cutType,
       bitDia: positive(p.bitDia) ?? d.bitDia,
       depth: positive(p.depth) ?? null,
+      mouseNav: p.mouseNav === 'pan' ? 'pan' : 'zoom',
     }
   } catch {
     return DEFAULT_PREFS

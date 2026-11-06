@@ -423,16 +423,56 @@ kbd {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 25px;
   align-items: flex-end;
   z-index: 10;
   --ladder-out: translateY(72px);
+}
+/* Spacing on the siblings (not a gap) so a collapsed button can give its slot back. */
+.action-bar > * + * {
+  margin-left: 25px;
 }
 .action-bar .hover-btn__label {
   color: var(--gray-800);
 }
 .action-bar .hover-btn.is-active .ui-round {
   background: var(--blue-050);
+}
+/* Bar children animate their slot too: a conditional action (Edit Text / ShapeShifter /
+   Group) squeezes into and out of a 0-width slot instead of popping, so the bar grows
+   smoothly and its neighbours slide apart. The slot opens right away; the rung delay only
+   times the ladder move. */
+.action-bar > * {
+  transition:
+    transform 0.26s cubic-bezier(0.34, 1.4, 0.64, 1) calc(var(--i, 0) * 22ms),
+    opacity 0.16s ease-out calc(var(--i, 0) * 22ms),
+    width 0.26s cubic-bezier(0.34, 1.4, 0.64, 1),
+    margin-left 0.26s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+/* A conditional action with nothing to show: slot closed, button sunk below the bar edge
+   (the same off-state the whole bar uses) until its action applies again. */
+.hover-btn.is-collapsed {
+  width: 0;
+  min-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(72px);
+  pointer-events: none;
+  transition:
+    transform 0.22s cubic-bezier(0.55, 0, 0.75, 0.2) calc(var(--i, 0) * 22ms),
+    opacity 0.18s ease-in calc(var(--i, 0) * 22ms),
+    width 0.26s cubic-bezier(0.34, 1.4, 0.64, 1),
+    margin-left 0.26s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.hover-btn.is-collapsed .hover-btn__label {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .action-bar > *,
+  .action-bar .hover-btn.is-collapsed {
+    transform: none;
+    transition: opacity 0.12s;
+  }
 }
 /* Each stacked pair is a flush dark pill (no padding) that grows upward as the second action flies up. */
 .stacked {
@@ -1819,8 +1859,8 @@ kbd {
 }
 
 @media (max-width: 720px) {
-  .action-bar {
-    gap: 12px;
+  .action-bar > * + * {
+    margin-left: 12px;
   }
   .right-dock {
     top: auto;

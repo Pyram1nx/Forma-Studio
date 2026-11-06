@@ -63,7 +63,7 @@ describe('systainer insert', () => {
 
   it('steps the pocket where an item rests on two levels, at the hub inserts’ depths', () => {
     // Collet, nose down: Ø12 hole 19 mm deep inside a Ø21 ring 8 mm deep (snug: the tool itself).
-    const c = evaluate(layout([place('collet-8', 0, 0)], { fit: 'snug' })).items[0]
+    const c = evaluate(layout([place('collet', 0, 0)], { fit: 'snug' })).items[0]
     expect(c.pockets.map((p) => +p.depth.toFixed(1))).toEqual([19, 8])
     expect(bbox(c.pockets[0].contours).w).toBeCloseTo(11, 0)
     expect(bbox(c.pockets[1].contours).w).toBeCloseTo(20, 0)

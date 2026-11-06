@@ -125,6 +125,27 @@ export default function SettingsPage() {
           </Row>
         </Card>
 
+        <Card title="Controls" sub="How the mouse and trackpad drive the studio canvas. Ctrl or ⌘ + scroll always zooms.">
+          <Row
+            icon={<Ic.IconMouse size={20} />}
+            label="Scroll wheel"
+            hint={
+              p.mouseNav === 'pan'
+                ? 'Scrolling pans; drag the middle mouse button to zoom.'
+                : 'Scrolling zooms; drag the middle mouse button to pan, as in Studio.'
+            }
+          >
+            <div className="ss-seg" role="group" aria-label="Scroll wheel">
+              <button type="button" aria-pressed={p.mouseNav === 'zoom'} onClick={() => set({ mouseNav: 'zoom' })}>
+                Zoom
+              </button>
+              <button type="button" aria-pressed={p.mouseNav === 'pan'} onClick={() => set({ mouseNav: 'pan' })}>
+                Pan
+              </button>
+            </div>
+          </Row>
+        </Card>
+
         <Card title="Units" sub="New designs, the bit gallery and the fields below use these.">
           <Row icon={<Ic.IconUnits size={20} />} label="Measure in" hint={p.units ? undefined : 'Following the units you last used in the studio.'}>
             <div className="ss-seg ss-seg--units" role="group" aria-label="Units">

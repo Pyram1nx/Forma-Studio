@@ -8,14 +8,14 @@ import { gridShown, gridSizeMm, gridSnaps, labelsShown } from './grid'
 import { GRID_SNAP_PX, OBJECT_SNAP_PX, alignLines, guideFor, orthoDelta, snapAxis, snapKindsOn, snapPoint } from './snapTargets'
 import { fmtLen } from '../model/factory'
 import { uid } from '../model/ids'
-import { newShapeCut } from '../state/prefs'
+import { getPrefs, newShapeCut } from '../state/prefs'
 import { contoursToD } from '../geometry/svgPath'
 import { normalizeParametric } from './shapeFactory'
 import { IconArrowDown } from '../ui/icons'
 import { boxJointForSelection, boxJointPartsOf, scaleBoxJoint, setBoxJointAnchor, stockAnchorOf, stockAnchorWorld, syncBoxJointGuides } from './boxJointGuides'
 import { STOCK_ANCHORS, type StockAnchor } from '../geometry/boxJoints'
 import { DesignShape, PlanShape, ReviewShape } from './canvas/ShapeViews'
-import { isPenShape, usePen } from './canvas/usePen'
+import { isPenShape, openPenEdit, usePen } from './canvas/usePen'
 import {
   cornerFactor,
   edgeFactor,
@@ -57,6 +57,8 @@ type Drag =
   | { kind: 'marquee'; start: Pt; cur: Pt; additive: boolean }
   | { kind: 'scale'; handle: Handle; anchor: Pt; ref: Pt; start: Pt; orig: Map<string, Shape>; bbox: BBox; moved: boolean }
   | { kind: 'pinch'; dist: number; zoom: number; anchor: Pt }
+  /** Mouse Nav 'pan' preset: middle-button drag zooms about its anchor point, like a pinch. */
+  | { kind: 'zoom'; sy: number; zoom: number; anchor: Pt }
 
 interface Guide {
   axis: 'x' | 'y'
@@ -367,13 +369,8 @@ export default function Canvas() {
     return hit.pt
   }
   const pen = usePen({ toWorld, snap: snapPen, clearGuides: () => setGuides((prev) => (prev.length ? [] : prev)) })
-  /** Open the node editor on a pen path: select it and bake its transform (no visible change, no undo step). */
-  const enterPenEdit = (id: string) => {
-    const st = useStore.getState()
-    st.select([id])
-    st.patchShapes([id], bake)
-    st.setPenEdit(id)
-  }
+  // Double-click on a pen path opens its node editor (shared with the panel's Edit Points button).
+  const enterPenEdit = openPenEdit
 
   const hitTest = (p: Pt): Shape | null => {
     if (mode === 'review') return null // review shapes are display-only
@@ -416,7 +413,8 @@ export default function Canvas() {
       const r = el.getBoundingClientRect()
       const st = useStore.getState()
       const ctrl = e.ctrlKey || e.metaKey
-      if (ctrl || isMouseWheelDelta(e)) {
+      // Mouse Nav preset: 'pan' has the wheel pan instead; ctrl/cmd stays zoom either way (trackpad pinch).
+      if (ctrl || (isMouseWheelDelta(e) && getPrefs().mouseNav === 'zoom')) {
         st.zoomBy(wheelZoomFactor(e.deltaY, e.deltaMode, ctrl), e.clientX - r.left, e.clientY - r.top)
       } else {
         st.setView({ panX: st.view.panX - e.deltaX, panY: st.view.panY - e.deltaY })
@@ -643,6 +641,19 @@ export default function Canvas() {
     const pan = (tap: boolean) =>
       setDragBoth({ kind: 'pan', sx: e.clientX, sy: e.clientY, px: st.view.panX, py: st.view.panY, moved: false, tap })
 
+    if (e.button === 1 && getPrefs().mouseNav === 'pan') {
+      // Mouse Nav 'pan' preset: middle-button drag zooms about where it started (the wheel pans instead).
+      const r = svgRef.current!.getBoundingClientRect()
+      const mx = e.clientX - r.left
+      const my = e.clientY - r.top
+      setDragBoth({
+        kind: 'zoom',
+        sy: e.clientY,
+        zoom: st.view.zoom,
+        anchor: { x: (mx - st.view.panX) / st.view.zoom, y: (my - st.view.panY) / st.view.zoom },
+      })
+      return
+    }
     if (e.button === 1 || e.button === 2 || spaceDown || mode === 'review') {
       pan(false)
       return
@@ -843,6 +854,15 @@ export default function Canvas() {
         const dy = e.clientY - d.sy
         st.setView({ panX: d.px + dx, panY: d.py + dy })
         if (!d.moved && Math.hypot(dx, dy) > 4) setDragBoth({ ...d, moved: true })
+        break
+      }
+      case 'zoom': {
+        // Drag up to zoom in, down to zoom out, about the drag's anchor point (as with a pinch).
+        const zoom = clampRange(d.zoom * Math.exp(-(e.clientY - d.sy) * 0.01), 0.05, 2000)
+        const r = svgRef.current!.getBoundingClientRect()
+        const mx = e.clientX - r.left
+        const my = e.clientY - r.top
+        st.setView({ zoom, panX: mx - d.anchor.x * zoom, panY: my - d.anchor.y * zoom })
         break
       }
       case 'marquee':
@@ -1243,7 +1263,9 @@ export default function Canvas() {
         : 'grab'
       : drag?.kind === 'pinch'
         ? 'grabbing'
-        : tool === 'draw' || tool === 'pen'
+        : drag?.kind === 'zoom'
+          ? 'ns-resize'
+          : tool === 'draw' || tool === 'pen'
           ? 'crosshair'
           : pen.cursorStyle
             ? pen.cursorStyle

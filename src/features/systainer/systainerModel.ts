@@ -60,9 +60,9 @@ export const LID_OPEN_DEG = 95
 
 /** The T-Loc turn axis (parallel to y, on the latch front): the whole front block spins about it. */
 export const KNOB_AXIS = { x: 0, z: 94.55 }
-/** How far the T-Loc block turns from locked (lid shut) to unlocked (lid open), deg — a bit
- * past the mechanism's 100° so the unlocked state visibly reads as open. */
-export const KNOB_TURN_DEG = 110
+/** How far the T-Loc block turns from locked (lid shut) to unlocked (lid open), deg — well past
+ * the mechanism's 100° so the unlocked state visibly reads as open. */
+export const KNOB_TURN_DEG = 135
 /** Crease angle for the flat/smooth normal split: sharp moulded edges split, fillets shade smooth. */
 const CREASE = (35 * Math.PI) / 180
 

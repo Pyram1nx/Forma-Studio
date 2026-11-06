@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { usePrefs } from '../state/prefs'
 import { useStore } from '../state/store'
 import { iconPayload, iconUrl, iconsEnabled, searchIcons, type IconHit } from '../io/iconSearch'
 import * as Ic from '../ui/icons'
@@ -158,6 +159,8 @@ export function ShortcutsDialog() {
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
   }, [dialog])
+  // The Mouse Nav preset flips the scroll wheel and middle drag, so the scroll rows follow it.
+  const mouseNav = usePrefs((s) => s.mouseNav)
   if (dialog !== 'shortcuts') return null
   const mod = navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'
   // Only shortcuts that are implemented. "(Design)" marks ones that only work in Design mode.
@@ -178,7 +181,8 @@ export function ShortcutsDialog() {
     ['Delete', 'Delete selection (Design)'],
     ['Arrows', 'Nudge (⇧ ×10) (Design)'],
     ['↑ / ↓ in a field', 'Step the value'],
-    ['Space + drag', 'Pan (also middle or right drag)'],
+    ['Space + drag', mouseNav === 'pan' ? 'Pan (also right drag)' : 'Pan (also middle or right drag)'],
+    ['Scroll', mouseNav === 'pan' ? 'Pan (middle drag zooms)' : 'Zoom'],
     ['Pinch / ⌘ scroll', 'Zoom'],
     ['⇧ P', 'Pen tool (drag for curves, ⌥ breaks handles)'],
     ['P', 'Draw tool'],

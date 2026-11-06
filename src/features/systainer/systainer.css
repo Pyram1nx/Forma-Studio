@@ -1,5 +1,16 @@
 /* Systainer Insert dialog. Layout and controls come from components.css and carve3d.css. */
 
+/* Main area: the viewport beside the catalogue dock (desktop: dock on the left; phones: below). */
+.sys-main {
+  display: flex;
+  min-height: 0;
+}
+.sys-view {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 .sys-stage {
   position: absolute;
   inset: 0;
@@ -71,7 +82,8 @@
 .sys-toolbar__inner {
   transform: translate(-50%, 10px);
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 2px;
   padding: 3px;
   background: var(--white);
@@ -91,29 +103,102 @@
   min-width: 34px;
   text-align: center;
 }
-
-/* Catalogue dock along the bottom of the view. */
-.sys-dock {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
-  z-index: 2;
-  background: var(--white);
-  border: 1px solid var(--gray-200);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 2px 10px rgba(10, 10, 11, 0.08);
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.sys-dock__tabs {
+.sys-toolbar__row {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px 8px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+}
+/* Depth slider: a second row under the buttons. */
+.sys-toolbar__depth {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px 2px;
+  border-top: 1px solid var(--gray-100);
+  font: 500 12px var(--font-ui);
+  color: var(--gray-500);
+}
+.sys-toolbar__label {
+  flex: none;
+}
+.sys-toolbar__value {
+  flex: none;
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--gray-900);
+}
+.sys-depth {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  min-width: 96px;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+.sys-depth:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.sys-depth::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--blue-050) var(--p, 0%), var(--gray-200) var(--p, 0%));
+}
+.sys-depth::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--blue-050) var(--p, 0%), var(--gray-200) var(--p, 0%));
+}
+.sys-depth::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--white);
+  border-radius: 50%;
+  background: var(--blue-050);
+  box-shadow: 0 0 0 1px var(--blue-050);
+}
+.sys-depth::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--white);
+  border-radius: 50%;
+  background: var(--blue-050);
+  box-shadow: 0 0 0 1px var(--blue-050);
+}
+.sys-depth:focus-visible {
+  outline: none;
+}
+.sys-depth:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px var(--blue-050), 0 0 0 4px color-mix(in srgb, var(--blue-050) 30%, transparent);
+}
+.sys-depth:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 1px var(--blue-050), 0 0 0 4px color-mix(in srgb, var(--blue-050) 30%, transparent);
+}
+
+/* Catalogue dock: a column on the left of the view, outside it; tiles scroll vertically. */
+.sys-dock {
+  order: -1;
+  flex: none;
+  width: 220px;
+  min-height: 0;
+  background: var(--white);
+  border-right: 1px solid var(--gray-200);
+  display: flex;
+  flex-direction: column;
+}
+.sys-dock__tabs {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 8px 0;
 }
 .sys-dock__tab {
   border: none;
@@ -134,22 +219,26 @@
   background: var(--gray-100);
 }
 .sys-dock__hint {
-  margin-left: auto;
+  flex: none;
   font-size: 12px;
-  white-space: nowrap;
-  padding-right: 4px;
+  padding: 6px 12px 0;
 }
 .sys-dock__strip {
-  display: flex;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
   gap: 6px;
   padding: 8px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   scrollbar-width: thin;
 }
 .sys-tile {
   flex: none;
-  width: 92px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -159,7 +248,8 @@
   border-radius: var(--radius);
   background: var(--gray-50);
   cursor: grab;
-  touch-action: pan-x;
+  /* Native scrolling along the dock; a pull across it is ours (see onTileDown). */
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
   font: 500 11px/1.25 var(--font-ui);
@@ -174,6 +264,7 @@
 }
 .sys-tile__img {
   width: 76px;
+  max-width: 100%;
   height: 64px;
   display: flex;
   align-items: center;
@@ -400,17 +491,53 @@
   text-decoration: none;
 }
 
-@media (max-width: 700px) {
+/* Narrow desktops and tablets: a single column of tiles keeps the view wide enough. */
+@media (min-width: 701px) and (max-width: 980px) {
   .sys-dock {
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
+    width: 124px;
+  }
+  .sys-dock__strip {
+    grid-template-columns: minmax(0, 1fr);
   }
   .sys-dock__hint {
     display: none;
   }
+}
+
+/* Phones: the dock is a strip under the view (tabs, then tiles scrolling sideways). */
+@media (max-width: 700px) {
+  .sys-main {
+    flex-direction: column;
+  }
+  /* A little less settings panel, so the view keeps some height above the dock. */
+  .ss-dialog.sys-dialog .ss-dialog__side {
+    max-height: 40%;
+  }
+  .sys-dock {
+    order: 0;
+    width: auto;
+    border-right: none;
+    border-top: 1px solid var(--gray-200);
+  }
+  .sys-dock__tabs {
+    flex-wrap: nowrap;
+    padding: 6px 8px 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sys-dock__hint {
+    display: none;
+  }
+  .sys-dock__strip {
+    flex: none;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+  }
   .sys-tile {
     width: 78px;
+    touch-action: pan-x;
   }
   .sys-tile__img {
     width: 64px;

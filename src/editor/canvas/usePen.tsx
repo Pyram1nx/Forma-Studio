@@ -4,16 +4,17 @@
 // Shift snaps angles to 45°). Clicking the first node closes the path; clicking the last node
 // drops its outgoing handle; a double click, Enter or Escape finishes an open path.
 //
-// Editing (double-click a pen path, or Edit Points in the panel): drag anchors and handles, click a
-// segment to add a node, Alt-click or double-click a node to toggle smooth / corner, Delete removes
-// the selected node, arrows nudge it, Escape / Enter or a click away leaves the editor.
+// Editing (a just-finished path opens in it; later visits: double-click a pen path or Edit Points
+// in the panel): drag anchors and handles, click a segment to add a node, Alt-click or double-click
+// a node to toggle smooth / corner, Delete removes the selected node, arrows nudge it, Escape /
+// Enter or a click away leaves the editor.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { PenContour, PenNode, Pt, Shape } from '../../model/types'
 import { MM_PER_IN } from '../../model/types'
 import { useStore } from '../../state/store'
 import { newShapeCut } from '../../state/prefs'
 import { uid } from '../../model/ids'
-import { recenter, toWorld as shapeToWorld } from '../../geometry/transform'
+import { bake, recenter, toWorld as shapeToWorld } from '../../geometry/transform'
 import { deleteNode, flattenPen, mapPen, moveHandle, moveNode, nearestOnPen, penOf, penToD, splitSegment, toggleSmooth, withPen } from '../../geometry/pen'
 
 /** Screen px within which a click lands on a node or handle (mouse / touch). */
@@ -69,6 +70,14 @@ export function penShapeFrom(nodes: PenNode[], close: boolean): Shape | null {
 
 /** Whether this shape is an editable pen path. */
 export const isPenShape = (s: Shape | undefined): s is Shape => !!s && !s.locked && !!penOf(s)
+
+/** Open the node editor on a pen path: select it and bake its transform (no visible change, no undo step). */
+export function openPenEdit(id: string) {
+  const st = useStore.getState()
+  st.select([id])
+  st.patchShapes([id], bake)
+  st.setPenEdit(id)
+}
 
 interface Opts {
   /** Client -> world mm. */
@@ -156,8 +165,14 @@ export function usePen({ toWorld, snap, clearGuides }: Opts) {
     clearGuides()
     const s = penShapeFrom(nodes, close)
     const st = useStore.getState()
-    if (s) st.addShapes([s])
-    st.setTool('select')
+    if (s) {
+      st.addShapes([s])
+      st.setTool('select')
+      // Straight into node editing, so the shape can be tuned while it is fresh.
+      openPenEdit(s.id)
+    } else {
+      st.setTool('select')
+    }
   }
 
   const draftDown = (e: PtrEvent) => {

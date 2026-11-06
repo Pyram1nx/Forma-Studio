@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import type { Contour, Pt } from '../../model/types'
 import { boolean, offsetContours, splitRegions } from '../../geometry/offset'
 
-export type MatName = 'steel' | 'carbide' | 'black' | 'knob' | 'white' | 'brass' | 'tape' | 'core' | 'screen' | 'yellow' | 'wood' | 'graphite' | 'grey' | 'red' | 'custom' | 'ghost'
+export type MatName = 'steel' | 'carbide' | 'black' | 'knob' | 'white' | 'brass' | 'tape' | 'core' | 'paper' | 'rollcore' | 'domino' | 'screen' | 'yellow' | 'wood' | 'graphite' | 'grey' | 'red' | 'gloss' | 'anodized' | 'edgeblack' | 'hidden' | 'custom' | 'ghost'
 
 const MAT_DEFS: Record<MatName, THREE.MeshStandardMaterialParameters | THREE.MeshPhysicalMaterialParameters> = {
   steel: { color: 0xc9ccd2, metalness: 0.9, roughness: 0.3 },
@@ -16,12 +16,19 @@ const MAT_DEFS: Record<MatName, THREE.MeshStandardMaterialParameters | THREE.Mes
   brass: { color: 0xc8a15a, metalness: 0.9, roughness: 0.35 },
   tape: { color: 0x1b1c1f, metalness: 0.1, roughness: 0.45 },
   core: { color: 0xa98058, metalness: 0, roughness: 0.92 },
+  paper: { color: 0xf5f4ef, metalness: 0, roughness: 0.5 },
+  rollcore: { color: 0xe3e2dc, metalness: 0, roughness: 0.6 },
+  domino: { color: 0x131315, metalness: 0, roughness: 0.55 },
   screen: { color: 0x0b0c0e, metalness: 0.3, roughness: 0.12 },
   yellow: { color: 0xf0bf2c, metalness: 0.05, roughness: 0.5 },
   wood: { color: 0xe2b56b, metalness: 0, roughness: 0.7 },
   graphite: { color: 0x3a3b3f, metalness: 0.4, roughness: 0.5 },
   grey: { color: 0x6c7079, metalness: 0.2, roughness: 0.55 },
   red: { color: 0xc8352e, metalness: 0.05, roughness: 0.5 },
+  anodized: { color: 0x25262a, metalness: 0.55, roughness: 0.55 },
+  edgeblack: { color: 0x1a1512, metalness: 0.15, roughness: 0.55 },
+  hidden: { visible: false },
+  gloss: { color: 0x151618, metalness: 0.1, roughness: 0.3 },
   custom: { color: 0xa9b0bd, metalness: 0, roughness: 0.7 },
   ghost: { color: 0x2c65ff, metalness: 0, roughness: 1, transparent: true, opacity: 0.18, depthWrite: false },
 }

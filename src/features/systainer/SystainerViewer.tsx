@@ -10,10 +10,11 @@ import type { Contour } from '../../model/types'
 import { boolean, splitRegions, unionNonZero } from '../../geometry/offset'
 import { COLORS, hexNum, paintBackdrop } from '../../ui/colors'
 import { useIsDark } from '../../state/theme'
-import { getItem, itemParams } from './catalog'
+import { getItem, itemParams, resizeAxes, spinRolls, uidSeed, type ResizeAxes } from './catalog'
 import { posed, type Evaluation, type Layout } from './layout'
 import { textToContours } from '../../io/text'
-import { KNOB_AXIS, KNOB_TURN_DEG, LID_HINGE, LID_OPEN_DEG, loadSystainerParts, SYS_OUTER, sysSpec, systainerGeometry, type SysSize } from './systainerModel'
+import { lidFoamMaterial, lidFoamMesh } from './lidFoam'
+import { KNOB_AXIS, KNOB_TURN_DEG, LID_HINGE, LID_OPEN_DEG, loadSystainerParts, rimZ, SYS_OUTER, sysSpec, systainerGeometry, type SysSize } from './systainerModel'
 
 export type ViewMode = '3d' | '2d'
 
@@ -35,6 +36,8 @@ export interface SystainerViewerProps {
   /** done = the drag ended (one undo step per drag). */
   onMove: (uid: string, x: number, y: number, done: boolean) => void
   onRotate: (uid: string, rot: number, done: boolean) => void
+  /** A corner handle resized the item: its new params (done = the drag ended). */
+  onResize: (uid: string, params: Record<string, number>, done: boolean) => void
   /** Floating toolbar kept above the selected item. */
   toolbarRef: RefObject<HTMLDivElement | null>
   ref?: Ref<ViewerHandle>
@@ -55,6 +58,9 @@ interface ItemNode {
 interface Scene3 {
   renderer: THREE.WebGLRenderer
   scene: THREE.Scene
+  /** Kept so the backdrop can follow the light/dark appearance (paintBackdrop). */
+  background: THREE.Color
+  grid: THREE.GridHelper
   persp: THREE.PerspectiveCamera
   ortho: THREE.OrthographicCamera
   orbit: OrbitControls
@@ -75,9 +81,35 @@ interface Scene3 {
   items: THREE.Group
   lines: THREE.Group
   ring: THREE.Group
+  /** Resize chevrons at the selection's footprint corners (in the ring group, so in its turned frame). */
+  handles: THREE.Group
   ghost: THREE.Group
-  mats: { foam: THREE.MeshStandardMaterial; foamWall: THREE.MeshStandardMaterial; sys: THREE.MeshStandardMaterial; latch: THREE.MeshStandardMaterial; letters: THREE.MeshStandardMaterial }
+  mats: { foam: THREE.MeshStandardMaterial; foamWall: THREE.MeshStandardMaterial; sys: THREE.MeshStandardMaterial; latch: THREE.MeshStandardMaterial; letters: THREE.MeshStandardMaterial; lidFoam: THREE.MeshStandardMaterial }
   nodes: Map<string, ItemNode>
+}
+
+/**
+ * Aim the 3D camera at the base box (not base + open lid): its centre in plan (the outer shell is
+ * centred on the origin), at the foam top, but no higher than 40 mm over the base's mid-height so
+ * tall sizes don't sink off the bottom. From the front-left, 48° above the horizon, backed off
+ * until the base's front-bottom edge (y −150, z 0) and the open lid's top edge with its latch
+ * (≈ y 210, z rim + 265) fit the height, and the base's width fits a narrow (phone) view.
+ */
+function frameCamera(persp: THREE.PerspectiveCamera, orbit: OrbitControls, size: SysSize, foamTop: number) {
+  const rim = rimZ(size)
+  const tz = Math.min(foamTop, rim / 2 + 40)
+  orbit.target.set(0, 0, tz)
+  const el = (48 * Math.PI) / 180
+  const az = (-7 * Math.PI) / 180
+  const below = 150 * Math.sin(el) + tz * Math.cos(el)
+  const above = 210 * Math.sin(el) + (rim + 265 - tz) * Math.cos(el)
+  const tanV = Math.tan((persp.fov * Math.PI) / 360)
+  const byHeight = Math.max(below, above) / tanV
+  const byWidth = (SYS_OUTER.w / 2 + 12) / (tanV * Math.max(0.1, persp.aspect))
+  const dist = Math.max(byHeight, byWidth) * 1.05
+  persp.position.set(dist * Math.cos(el) * Math.sin(az), -dist * Math.cos(el) * Math.cos(az), tz + dist * Math.sin(el))
+  persp.updateProjectionMatrix()
+  orbit.update()
 }
 
 function disposeChildren(g: THREE.Object3D, geometries = true) {
@@ -126,14 +158,17 @@ const LINE = {
   outline: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }),
 }
 
-export default function SystainerViewer({ layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate, toolbarRef, ref }: SystainerViewerProps) {
+export default function SystainerViewer({ layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate, onResize, toolbarRef, ref }: SystainerViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const s3 = useRef<Scene3 | null>(null)
   /** Size the camera was last framed for; a new scene (remount) frames again. */
   const framedSize = useRef<SysSize | null>(null)
+  /** The user has orbited or zoomed since the last framing: resizes then keep their view. */
+  const userOrbited = useRef(false)
+  const dark = useIsDark()
   // Latest props for the event handlers, which are bound once.
-  const live = useRef({ layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate })
-  live.current = { layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate }
+  const live = useRef({ layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate, onResize })
+  live.current = { layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate, onResize }
 
   useEffect(() => {
     const host = hostRef.current
@@ -146,7 +181,8 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     host.appendChild(renderer.domElement)
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(COLORS.gray50)
+    const background = new THREE.Color(COLORS.gray50)
+    scene.background = background
     const pmrem = new THREE.PMREMGenerator(renderer)
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
     scene.environmentIntensity = 0.55
@@ -181,6 +217,8 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       sys: new THREE.MeshStandardMaterial({ color: SYS_PLASTIC, roughness: 0.62, metalness: 0.05 }),
       latch: new THREE.MeshStandardMaterial({ color: LATCH, roughness: 0.5, metalness: 0.05 }),
       letters: new THREE.MeshStandardMaterial({ color: LETTERING, roughness: 0.55, metalness: 0.05 }),
+      // The egg-crate pad inside the lid (lidFoam.ts), speckled foam.
+      lidFoam: lidFoamMaterial(FOAM),
     }
     const groups = { sys: new THREE.Group(), foam: new THREE.Group(), items: new THREE.Group(), lines: new THREE.Group(), ring: new THREE.Group(), ghost: new THREE.Group() }
     for (const g of Object.values(groups)) scene.add(g)
@@ -205,6 +243,23 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     groups.ring.add(band, grip, gripDot)
     groups.ring.visible = false
 
+    // Resize chevrons, one per footprint corner, in the ring's (the item's) turned frame. Drawn in
+    // screen pixels (the loop scales them): an L whose apex points out of the corner at +x +y.
+    const handleMat = new THREE.MeshBasicMaterial({ color: hexNum(COLORS.blue050), transparent: true, opacity: 0.95, depthTest: false })
+    const chevron = new THREE.ShapeGeometry(
+      new THREE.Shape([[0, 0], [-10, 0], [-10, -3.2], [-3.2, -3.2], [-3.2, -10], [0, -10]].map(([x, y]) => new THREE.Vector2(x, y))),
+    )
+    const handles = new THREE.Group()
+    for (const [sx, sy] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+      const m = new THREE.Mesh(chevron, handleMat)
+      m.renderOrder = 13
+      m.userData.corner = [sx, sy]
+      m.rotation.z = Math.atan2(sy, sx) - Math.PI / 4
+      handles.add(m)
+    }
+    handles.visible = false
+    groups.ring.add(handles)
+
     // Pointer handlers are added before the controls so a press on an item can switch them off first.
     const ray = new THREE.Raycaster()
     const ndc = new THREE.Vector2()
@@ -227,9 +282,62 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       return null
     }
 
+    // The resize chevron under a client point, picked in screen space (a finger gets a wider
+    // reach than a mouse), with the cursor that matches its diagonal on screen.
+    const hv = new THREE.Vector3()
+    const hc = new THREE.Vector3()
+    const handleAt = (cx: number, cy: number, touch: boolean): { corner: [number, number]; cursor: string } | null => {
+      if (!groups.ring.visible || !handles.visible) return null
+      const r = renderer.domElement.getBoundingClientRect()
+      const cam = camera()
+      const scr = (v: THREE.Vector3) => {
+        v.project(cam)
+        return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (-v.y * 0.5 + 0.5) * r.height]
+      }
+      const [ox, oy] = scr(hc.copy(groups.ring.position))
+      let best: { corner: [number, number]; cursor: string } | null = null
+      let bestD = touch ? 24 : 13
+      for (const m of handles.children) {
+        // Aim at the body of the chevron, a little in from its apex.
+        const [x, y] = scr(hv.set(-3, -3, 0).applyMatrix4(m.matrixWorld))
+        const dd = Math.hypot(cx - x, cy - y)
+        if (dd < bestD) {
+          bestD = dd
+          best = { corner: m.userData.corner as [number, number], cursor: (x - ox) * (y - oy) > 0 ? 'nwse-resize' : 'nesw-resize' }
+        }
+      }
+      return best
+    }
+    /** A foam point in the selected item's turned frame. */
+    const toLocal = (f: THREE.Vector3, d: { cx: number; cy: number; c: number; s: number }) => {
+      const dx = f.x - d.cx
+      const dy = f.y - d.cy
+      return [dx * d.c + dy * d.s, -dx * d.s + dy * d.c]
+    }
+
     type Drag =
       | { kind: 'move'; uid: string; dx: number; dy: number; moved: boolean; sx: number; sy: number }
       | { kind: 'rotate'; uid: string; cx: number; cy: number; a0: number; r0: number }
+      | {
+          kind: 'resize'
+          uid: string
+          cx: number
+          cy: number
+          /** cos / sin of the item's turn. */
+          c: number
+          s: number
+          /** The corner dragged, ±1 per axis. */
+          sx: number
+          sy: number
+          /** Where the press landed, in the item's frame. */
+          lx0: number
+          ly0: number
+          axes: ResizeAxes
+          params0: Record<string, number>
+          limits: Record<string, [number, number]>
+          last: string
+          moved: boolean
+        }
       | { kind: 'empty'; sx: number; sy: number }
     let drag: Drag | null = null
 
@@ -237,7 +345,27 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       if (e.button !== 0) return
       setRay(e.clientX, e.clientY)
       const { layout: L, selected: sel } = live.current
-      if (groups.ring.visible && sel) {
+      // Resize handles first: they sit inside the ring and over the item.
+      const h = sel ? handleAt(e.clientX, e.clientY, e.pointerType !== 'mouse') : null
+      if (h && sel) {
+        const p = L.items.find((i) => i.uid === sel)
+        const def = p && getItem(p.item)
+        const axes = p && def ? resizeAxes(def, p.pose) : null
+        const f = onFoam(e.clientX, e.clientY)
+        if (p && def && axes && f) {
+          const a = (p.rot * Math.PI) / 180
+          const frame = { cx: p.x, cy: p.y, c: Math.cos(a), s: Math.sin(a) }
+          const [lx0, ly0] = toLocal(f, frame)
+          const params0 = itemParams(def, p.params)
+          const limits = Object.fromEntries((def.params ?? []).map((pd) => [pd.key, [pd.min, pd.max] as [number, number]]))
+          drag = { kind: 'resize', uid: sel, ...frame, sx: h.corner[0], sy: h.corner[1], lx0, ly0, axes, params0, limits, last: JSON.stringify(params0), moved: false }
+          orbit.enabled = pan.enabled = false
+          renderer.domElement.setPointerCapture(e.pointerId)
+          renderer.domElement.style.cursor = h.cursor
+          return
+        }
+      }
+      if (groups.ring.visible && band.visible && sel) {
         const hit = ray.intersectObjects([band, grip], false)[0]
         const p = L.items.find((i) => i.uid === sel)
         const f = onFoam(e.clientX, e.clientY)
@@ -266,8 +394,15 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     const snap = (v: number, step: number) => Math.round(v / step) * step
     const onMovePtr = (e: PointerEvent) => {
       if (!drag) {
+        // Touch has no hover; a finger resting on the canvas doesn't need a cursor.
+        if (e.pointerType === 'touch') return
+        const h = handleAt(e.clientX, e.clientY, false)
+        if (h) {
+          renderer.domElement.style.cursor = h.cursor
+          return
+        }
         setRay(e.clientX, e.clientY)
-        const overRing = groups.ring.visible && ray.intersectObjects([band, grip], false).length > 0
+        const overRing = groups.ring.visible && band.visible && ray.intersectObjects([band, grip], false).length > 0
         const overItem = !overRing && ray.intersectObjects(groups.items.children, true).length > 0
         renderer.domElement.style.cursor = overRing ? 'ew-resize' : overItem ? 'grab' : ''
         return
@@ -275,7 +410,35 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       if (drag.kind === 'empty') return
       const f = onFoam(e.clientX, e.clientY)
       if (!f) return
-      if (drag.kind === 'move') {
+      if (drag.kind === 'resize') {
+        const d = drag
+        const [lx, ly] = toLocal(f, d)
+        const step = e.shiftKey ? 0.1 : 0.5
+        const fit = (key: string, v: number) => {
+          const [lo, hi] = d.limits[key] ?? [0.1, Infinity]
+          return Math.min(hi, Math.max(lo, Math.round(snap(v, step) * 100) / 100))
+        }
+        const next = { ...d.params0 }
+        if ('round' in d.axes) {
+          // Uniform: the size follows the corner's distance from the centre.
+          const k = Math.hypot(lx, ly) / Math.max(1e-6, Math.hypot(d.lx0, d.ly0))
+          next[d.axes.round] = fit(d.axes.round, d.params0[d.axes.round] * k)
+        } else if (e.altKey) {
+          // Alt keeps the proportions: scale both by the drag along the corner's diagonal.
+          const k = (lx * d.lx0 + ly * d.ly0) / Math.max(1e-6, d.lx0 * d.lx0 + d.ly0 * d.ly0)
+          next[d.axes.x] = fit(d.axes.x, d.params0[d.axes.x] * k)
+          next[d.axes.y] = fit(d.axes.y, d.params0[d.axes.y] * k)
+        } else {
+          // Centre fixed: each side moves as far as the corner, so the size changes twice that.
+          next[d.axes.x] = fit(d.axes.x, d.params0[d.axes.x] + 2 * d.sx * (lx - d.lx0))
+          next[d.axes.y] = fit(d.axes.y, d.params0[d.axes.y] + 2 * d.sy * (ly - d.ly0))
+        }
+        const key = JSON.stringify(next)
+        if (key === d.last) return
+        d.last = key
+        d.moved = true
+        live.current.onResize(d.uid, next, false)
+      } else if (drag.kind === 'move') {
         if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 3) return
         drag.moved = true
         renderer.domElement.style.cursor = 'grabbing'
@@ -295,7 +458,11 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       if (!d) return
       if (renderer.domElement.hasPointerCapture(e.pointerId)) renderer.domElement.releasePointerCapture(e.pointerId)
       const p = live.current.layout.items.find((i) => i.uid === (d.kind === 'empty' ? '' : d.uid))
-      if (d.kind === 'move' && d.moved && p) live.current.onMove(d.uid, p.x, p.y, true)
+      if (d.kind === 'resize') {
+        const def = p && getItem(p.item)
+        if (d.moved && p && def) live.current.onResize(d.uid, itemParams(def, p.params), true)
+        renderer.domElement.style.cursor = ''
+      } else if (d.kind === 'move' && d.moved && p) live.current.onMove(d.uid, p.x, p.y, true)
       else if (d.kind === 'rotate' && p) live.current.onRotate(d.uid, p.rot, true)
       else if (d.kind === 'empty' && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 4) live.current.onSelect(null)
     }
@@ -309,6 +476,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     orbit.maxPolarAngle = Math.PI * 0.49
     orbit.minDistance = 120
     orbit.maxDistance = 3000
+    orbit.addEventListener('start', () => (userOrbited.current = true))
     const pan = new OrbitControls(ortho, renderer.domElement)
     pan.enableRotate = false
     pan.screenSpacePanning = true
@@ -324,9 +492,11 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       renderer.setSize(w, h)
       persp.aspect = w / h
       persp.updateProjectionMatrix()
+      // Until the user moves the camera, keep the base framed for the view's new shape.
+      if (framedSize.current != null && !userOrbited.current) frameCamera(persp, orbit, live.current.layout.size, live.current.ev.foamTop)
       // Fit the whole Systainer with a margin.
       const sw = SYS_OUTER.w + 90
-      const sh = SYS_OUTER.d + 200
+      const sh = SYS_OUTER.d + 120
       const k = Math.max(sw / w, sh / h)
       Object.assign(ortho, { left: (-w * k) / 2, right: (w * k) / 2, top: (h * k) / 2, bottom: (-h * k) / 2 })
       ortho.updateProjectionMatrix()
@@ -340,7 +510,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       const cam = v.view === '2d' ? ortho : persp
       timer.update()
       const dt = Math.min(0.05, timer.getDelta())
-      // The T-Loc sequences: the block turns the full 100° first, and only then does the lid
+      // The T-Loc sequences: the block turns its full 135° first, and only then does the lid
       // swing open; on the way back the lid shuts completely before the block turns to lock.
       if (v.lidOpen) {
         knobAngle.target = KNOB_TURN_DEG
@@ -370,6 +540,16 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
         const gr = px * 9
         grip.scale.setScalar(gr)
         gripDot.scale.setScalar(gr * 0.45)
+        // Chevrons: constant size, just outside the footprint corners.
+        if (handles.visible) {
+          const { w, d } = handles.userData as { w: number; d: number }
+          const off = px * 3
+          for (const m of handles.children) {
+            const [sx, sy] = m.userData.corner as [number, number]
+            m.position.set(sx * (w / 2 + off), sy * (d / 2 + off), 0.02)
+            m.scale.setScalar(px)
+          }
+        }
       }
       // Toolbar over the selected item.
       const tb = toolbarRef.current
@@ -381,14 +561,14 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           tmp.project(cam)
           const x = (tmp.x * 0.5 + 0.5) * host.clientWidth
           const y = (-tmp.y * 0.5 + 0.5) * host.clientHeight
-          tb.style.transform = `translate(${Math.round(Math.min(host.clientWidth - 8, Math.max(8, x)))}px, ${Math.round(Math.min(host.clientHeight - 150, Math.max(8, y)))}px)`
+          tb.style.transform = `translate(${Math.round(Math.min(host.clientWidth - 8, Math.max(8, x)))}px, ${Math.round(Math.min(host.clientHeight - tb.offsetHeight - 18, Math.max(8, y)))}px)`
           tb.style.visibility = 'visible'
         } else tb.style.visibility = 'hidden'
       }
       renderer.render(scene, cam)
     })
 
-    s3.current = { renderer, scene, persp, ortho, orbit, pan, ...groups, lidPivot, lid, turn, letters, lidAngle, knobAngle, lidOpen: live.current.lidOpen, mats, nodes: new Map() }
+    s3.current = { renderer, scene, background, grid, persp, ortho, orbit, pan, ...groups, handles, lidPivot, lid, turn, letters, lidAngle, knobAngle, lidOpen: live.current.lidOpen, mats, nodes: new Map() }
 
     return () => {
       s3.current = null
@@ -411,6 +591,9 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       grip.geometry.dispose()
       gripDot.geometry.dispose()
       ringMat.dispose()
+      chevron.dispose()
+      handleMat.dispose()
+      mats.lidFoam.map?.dispose()
       for (const m of Object.values(mats)) m.dispose()
       scene.environment?.dispose()
       grid.geometry.dispose()
@@ -424,6 +607,12 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     // toolbarRef is a stable ref object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Background and grid follow the light/dark appearance.
+  useEffect(() => {
+    const v = s3.current
+    if (v) paintBackdrop(v.background, v.grid, dark)
+  }, [dark])
 
   // The Systainer itself, per size.
   const size: SysSize = layout.size
@@ -452,6 +641,8 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           if (name === 'latchTurn') v.turn.add(m)
           else if (sysPart) v.sys.add(m)
           else v.lid.add(m)
+          // The egg-crate foam pad glued under the lid's ceiling swings with it.
+          if (name === 'lid') v.lid.add(lidFoamMesh(geometry, v.mats.lidFoam))
         }
         // The lid turns about its hinge: pivot on the axis, the lid's parts offset back into place.
         v.lidPivot.position.set(0, LID_HINGE.y, LID_HINGE.z + dz)
@@ -524,14 +715,12 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     const v = s3.current
     if (!v || framedSize.current === size) return
     framedSize.current = size
-    const top = ev.foamTop
-    // Aim below and in front of the insert so it sits above the catalogue dock.
-    v.orbit.target.set(0, 30, top + 10)
-    v.persp.position.set(-140, -820, top + 860)
-    v.persp.updateProjectionMatrix()
-    v.pan.target.set(0, -55, 0)
-    v.ortho.position.set(0, -55, 2000)
-    v.ortho.lookAt(0, -55, 0)
+    userOrbited.current = false
+    frameCamera(v.persp, v.orbit, size, ev.foamTop)
+    // 2D: centred on the base, the latch at the front (y ≈ −160) to the hinge ears (y ≈ 150).
+    v.pan.target.set(0, -5, 0)
+    v.ortho.position.set(0, -5, 2000)
+    v.ortho.lookAt(0, -5, 0)
   }, [size, ev.foamTop])
 
   // Switching views: the inactive controls stop listening.
@@ -577,11 +766,14 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       if (!def || !e) continue
       seen.add(pl.uid)
       const params = itemParams(def, pl.params)
-      const key = `${def.id}|${pl.pose}|${Object.values(params).join(',')}`
+      const spin = def.randomSpin ? (pl.spinSeed ?? uidSeed(pl.uid)) : null
+      const key = `${def.id}|${pl.pose}|${Object.values(params).join(',')}|${spin}`
       let node = v.nodes.get(pl.uid)
       if (!node || node.key !== key) {
         if (node) v.items.remove(node.obj)
         const obj = posed(def, pl.pose, params).object.clone()
+        // Display-only spin of each roll, on the clone (its own child transforms), not the cache.
+        if (spin !== null) spinRolls(obj, spin)
         obj.userData.uid = pl.uid
         obj.traverse((o) => {
           const m = o as THREE.Mesh
@@ -610,9 +802,14 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       v.ring.userData.radius = r
       v.ring.position.set(sel.x, sel.y, ev.foamTop + 0.6)
       v.ring.rotation.set(0, 0, (sel.rot * Math.PI) / 180)
-      const [grip, dot] = [v.ring.children[1], v.ring.children[2]]
+      const [band, grip, dot] = [v.ring.children[0], v.ring.children[1], v.ring.children[2]]
       grip.position.set(r + 1, 0, 0)
       dot.position.set(r + 1, 0, 0.01)
+      // Resizable items get corner chevrons; round ones look the same at any turn, so no ring.
+      const axes = resizeAxes(se.def, sel.pose)
+      band.visible = grip.visible = dot.visible = !(axes && 'round' in axes)
+      v.handles.visible = !!axes
+      v.handles.userData = { w: se.posed.w, d: se.posed.d }
       v.ring.visible = true
     } else v.ring.visible = false
   }, [layout, ev, selected])
@@ -647,7 +844,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           v.ghost.add(obj)
         }
         const p = posed(def, 0, itemParams(def))
-        const sink = def.notch ? 10 : Math.min(live.current.ev.maxDepth, def.poses[0].sink ? def.poses[0].sink(p.height) : p.height)
+        const sink = def.notch ? 10 : Math.min(live.current.ev.maxDepth, Math.max(1, (def.poses[0].sink ? def.poses[0].sink(p.height) : p.height) + live.current.ev.depthShift))
         v.ghost.children[0].position.set(g.x, g.y, live.current.ev.foamTop - sink + 0.5)
       },
     }),

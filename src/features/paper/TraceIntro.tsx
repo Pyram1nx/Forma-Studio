@@ -1,4 +1,4 @@
-// Trace intro: welcome screen -> media choice (upload / camera) -> live camera.
+// Trace intro: welcome screen -> media choice (upload / paste / camera) -> live camera.
 // The three layers stay mounted and cross-fade, so the transitions are pure
 // CSS opacity. The media screen also asks what the drawing is on: a regular
 // sheet of paper, a Shaper Trace frame (known window size), or nothing at all —
@@ -14,7 +14,7 @@
 // short burst of the same video) is straightened
 // with that lens and then goes through exactly the same path as an upload.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent, JSX } from 'react'
+import type { ChangeEvent, ClipboardEvent, DragEvent, JSX } from 'react'
 import type { Pt } from '../../model/types'
 import * as Ic from '../../ui/icons'
 import { Detector } from './detectClient'
@@ -147,6 +147,12 @@ const SHEETS: { kind: SheetKind; title: string; sub: string; img: string }[] = [
   { kind: 'image', title: 'Any image', sub: 'Logo, artwork or photo', img: imageImg },
 ]
 
+/** Wrap clipboard image data as a File, named like a normal upload (ext from its MIME type). */
+function namedImage(blob: Blob, type: string): File {
+  const ext = type === 'image/jpeg' ? 'jpg' : type.slice('image/'.length) || 'png'
+  return new File([blob], `pasted-image.${ext}`, { type })
+}
+
 export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose }: TraceIntroProps): JSX.Element {
   const [stage, setStage] = useState<Stage>('welcome')
   const [error, setError] = useState<string | null>(null)
@@ -155,6 +161,7 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
   const [live, setLive] = useState<LiveQuad | null>(null)
   const [capturing, setCapturing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [pasting, setPasting] = useState(false)
   const sheetRef = useRef(sheet)
   sheetRef.current = sheet
   // The lens is known (or this camera's lens could not be pinned down).
@@ -393,6 +400,51 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
     if (f && f.type.startsWith('image/')) onFile(f)
   }
 
+  /**
+   * Read the clipboard for an image (the Paste button). A click is the user
+   * gesture the browser wants before handing the clipboard over; without one
+   * (or without the API at all, e.g. Firefox) Ctrl/Cmd+V still works below.
+   */
+  async function pasteImage() {
+    if (pasting) return
+    setError(null)
+    if (!navigator.clipboard?.read) {
+      setError('This browser cannot read the clipboard — press Ctrl/Cmd+V instead.')
+      return
+    }
+    setPasting(true)
+    try {
+      const items = await navigator.clipboard.read()
+      const item = items.find((i) => i.types.some((t) => t.startsWith('image/')))
+      const type = item?.types.find((t) => t.startsWith('image/'))
+      if (!item || !type) {
+        setError('No image found in the clipboard.')
+        return
+      }
+      onFile(namedImage(await item.getType(type), type))
+    } catch {
+      setError('Clipboard access was not granted. You can upload an image instead.')
+    } finally {
+      setPasting(false)
+    }
+  }
+
+  // Ctrl/Cmd+V on the media screen pastes a clipboard image straight in, like choosing Paste.
+  useEffect(() => {
+    if (stage !== 'media') return
+    const onPaste = (e: ClipboardEvent) => {
+      const f = Array.from(e.clipboardData?.items ?? [])
+        .filter((i) => i.kind === 'file' && i.type.startsWith('image/'))
+        .map((i) => i.getAsFile())
+        .find((f): f is File => !!f)
+      if (!f) return
+      e.preventDefault()
+      onFile(f)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [stage, onFile])
+
   // Escape: back out one level.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -458,6 +510,10 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
           <button type="button" className="tintro__box" onClick={() => fileRef.current?.click()}>
             <Ic.IconImportFile size={40} />
             <span>Upload from device</span>
+          </button>
+          <button type="button" className="tintro__box" onClick={() => void pasteImage()} disabled={pasting} title="Ctrl/Cmd+V">
+            <Ic.IconPaste size={40} />
+            <span>{pasting ? 'Reading clipboard…' : 'Paste image'}</span>
           </button>
           <button type="button" className="tintro__box" onClick={startCamera} disabled={asking}>
             <Ic.IconCamera size={40} />

@@ -99,7 +99,9 @@
   stroke: #b9bcc6;
 }
 .cv-overlay.is-multi .cv-handle path,
-.cv-overlay.is-multi .cv-handle line,
+.cv-overlay.is-multi .cv-handle line {
+  stroke: #b9bcc6;
+}
 .cv-overlay.is-multi .cv-center {
   stroke: #b9bcc6;
   fill: #b9bcc6;
