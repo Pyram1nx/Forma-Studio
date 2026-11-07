@@ -1,9 +1,10 @@
 // Parametric shape templates (Shaper Studio "Templates"). Lengths in mm, every build()
 // returns closed contours centred on (0,0) (box joints: the board is centred, not the pocket).
 // Holes are separate contours inside the outer one (even-odd fill).
-import type { Contour, Pt, Units } from '../model/types'
+import type { Contour, PenContour, Pt, Units } from '../model/types'
 import { MM_PER_IN } from '../model/types'
 import { rect } from './primitives'
+import { arcSegs, segsToPen, type Seg } from './curves'
 import { boolean, offsetContours } from './offset'
 import { boxJointPocket, clampBoxJoint, type BoxJointKind } from './boxJoints'
 
@@ -55,12 +56,31 @@ export interface Template {
   params: TemplateParam[]
   build: (p: Record<string, number>) => Contour[]
   /**
+   * The outline as true curves, when the template can draw them exactly (the editor uses these over `build`,
+   * which stays the polyline reference). Returning null falls back to arcs recovered from `build`'s outline.
+   */
+  buildPen?: (p: Record<string, number>) => PenContour[] | null
+  /**
    * Studio's own limits between parameters. Called with the full params and the one being edited; returns the
    * params to store (other params may follow, e.g. the tip radius shrinking with the inner diameter) or null
    * when Studio refuses the edit and leaves everything as it was.
    */
   constrain?: (params: Record<string, number>, key: string, value: number) => Record<string, number> | null
+  /**
+   * Studio's `getParametersAfterScale`: the params after a resize by `dx` × `dy` (the drag's scale of the bounds,
+   * both positive). Overrides the per-parameter `axis` scaling when given.
+   */
+  afterScale?: (params: Record<string, number>, scale: { dx: number; dy: number }) => Record<string, number>
+  /** Resize handles Studio hides for this template (its `dragToResizeRestrictions`). */
+  resizeRestrictions?: ResizeHandle[]
+  /**
+   * The template's local origin is its own anchor (Studio's custom anchor in the template SVG): the shape is
+   * placed by that point, param edits and resizes keep it still, and it is the pivot while the origin is the centre.
+   */
+  ownAnchor?: boolean
 }
+
+export type ResizeHandle = 'tl' | 'tm' | 'tr' | 'rm' | 'br' | 'bm' | 'bl' | 'lm'
 
 /** A template parameter's default for a document in `units`. */
 export const paramDefault = (q: TemplateParam, units: Units = 'in') => (units === 'mm' && q.defaultMm !== undefined ? q.defaultMm : q.default)
@@ -93,6 +113,31 @@ function starOnCircle(points: number, R: number, inner: number): Contour[] {
     pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) })
   }
   return [{ pts, closed: true }]
+}
+
+/** Studio's MIN_SIZE (0.005 in the document's units) for the keyhole's lengths, taken in inches. */
+const KEYHOLE_MIN = 0.005 * MM_PER_IN
+
+/**
+ * The keyhole's outline as true arcs (neck centre on the origin, head centre `len` below). Covers the slot whose
+ * sides run into the head, a head swallowing the slot, and a neck as wide as the head; null (fall back to the
+ * polyline) when the head cuts the neck's round end instead of its sides.
+ */
+function keyholePen(rh: number, rn: number, len: number): PenContour[] | null {
+  if (!(rh > 0) || !(rn > 0)) return null
+  const head = { x: 0, y: len }
+  const line = (a: Pt, b: Pt): Seg => ({ p0: a, p3: b })
+  // Round end over the top, from the neck's right side to its left (screen y-down: angles run anticlockwise).
+  const cap = () => arcSegs({ x: 0, y: 0 }, rn, rn, 0, -Math.PI)
+  if (len + rn <= rh) return [segsToPen(arcSegs(head, rh, rh, 0, -TAU), true)]
+  if (rn >= rh) return [segsToPen([...cap(), line({ x: -rn, y: 0 }, { x: -rn, y: len }), ...arcSegs(head, rn, rn, Math.PI, -Math.PI), line({ x: rn, y: len }, { x: rn, y: 0 })], true)]
+  const yi = len - Math.sqrt(rh * rh - rn * rn)
+  if (yi < 0) return null
+  const a1 = Math.atan2(yi - len, -rn)
+  const a2 = Math.atan2(yi - len, rn)
+  // Head: left side, round the bottom, right side; split at its widest points so the bounds land on nodes.
+  const round = [...arcSegs(head, rh, rh, a1, -Math.PI - a1), ...arcSegs(head, rh, rh, Math.PI, -Math.PI), ...arcSegs(head, rh, rh, 0, a2)]
+  return [segsToPen([...cap(), line({ x: -rn, y: 0 }, { x: -rn, y: yi }), ...round, line({ x: rn, y: yi }, { x: rn, y: 0 })], true)]
 }
 
 /** Studio's compass limits (mm): the inner diameter keeps clear of the outer one and of zero. */
@@ -187,16 +232,20 @@ function roundCorners(cs: Contour[], r: number): Contour[] {
 }
 
 /** Wraps a builder so missing params fall back to their defaults. */
-function tpl(id: string, name: string, params: TemplateParam[], fn: (g: Getter) => Contour[], constrain?: Template['constrain']): Template {
+function tpl(
+  id: string,
+  name: string,
+  params: TemplateParam[],
+  fn: (g: Getter) => Contour[],
+  constrain?: Template['constrain'],
+  pen?: (g: Getter) => PenContour[] | null,
+): Template {
   const defaults: Record<string, number> = {}
   for (const q of params) defaults[q.key] = q.default
-  return {
-    id,
-    name,
-    params,
-    build: (p) => fn((key) => p[key] ?? defaults[key] ?? 0),
-    constrain,
-  }
+  const getter = (p: Record<string, number>): Getter => (key) => p[key] ?? defaults[key] ?? 0
+  const t: Template = { id, name, params, build: (p) => fn(getter(p)), constrain }
+  if (pen) t.buildPen = (p) => pen(getter(p))
+  return t
 }
 
 function circle(cx: number, cy: number, r: number): Contour {
@@ -225,23 +274,6 @@ function spin(cs: Contour[], deg: number): Contour[] {
 
 function unite(...sets: Contour[][]): Contour[] {
   return sets.reduce((acc, s) => boolean('union', acc, s))
-}
-
-/** Translate so the bounding box centre sits on (0,0). */
-function centre(cs: Contour[]): Contour[] {
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const c of cs)
-    for (const p of c.pts) {
-      minX = Math.min(minX, p.x)
-      minY = Math.min(minY, p.y)
-      maxX = Math.max(maxX, p.x)
-      maxY = Math.max(maxY, p.y)
-    }
-  if (!isFinite(minX)) return cs
-  return move(cs, -(minX + maxX) / 2, -(minY + maxY) / 2)
 }
 
 /** Drop consecutive duplicate points (including a closing duplicate). */
@@ -342,6 +374,9 @@ function sampleCubic(b: [V2, V2, V2, V2], n: number): V2[] {
   return out
 }
 
+/** Studio caps the heart's fillet at about 13% of the smaller side (0.392 in on a 3 in heart). */
+const heartFillet = (g: Getter) => Math.min(g('r'), 0.1307 * Math.min(g('width'), g('height')))
+
 /** Heart outline for a W x H box in inches (y down), centred on (0,0). `pinch` 0..1, `curl` -1..1. */
 function heartPts(W: number, H: number, pinch: number, curl: number): Pt[] {
   const p = Math.max(0, Math.min(1, pinch))
@@ -378,6 +413,51 @@ function heartPts(W: number, H: number, pinch: number, curl: number): Pt[] {
     .reverse()
     .map(([x, y]): Pt => ({ x: -x, y: -y }))
   return clean([...left, ...right])
+}
+
+/**
+ * The same heart as `heartPts`, as true curves: per side the notch cubic (deep pinch only), the lobe arc
+ * and the tail cubic, mirrored for the right side. Inches, y down, centred on (0,0).
+ */
+function heartPen(W: number, H: number, pinch: number, curl: number): PenContour[] {
+  const p = Math.max(0, Math.min(1, pinch))
+  const c = Math.max(-1, Math.min(1, curl))
+  const notchY = (1 - HEART_NOTCH_BUFFER) * (H / 2) - (p * (H - HEART_NOTCH_BUFFER)) / HEART_PINCH_RATIO
+  const depth = H / 2 - notchY
+  const r = heartLobeRadius(W, H, depth)
+  const C: V2 = [-(W / 2 - r), H / 2 - r]
+  const tip: V2 = [0, -H / 2]
+  const notch: V2 = [0, notchY]
+  const bottom = heartCurve(C, r, false, c, tip, 0.8, 0.4)
+  const deep = Math.hypot(C[0] - notch[0], C[1] - notch[1]) > r
+  const top = deep ? heartCurve(C, r, true, 0.9, notch, 0.8, 0.2) : null
+  const turn = (a: number) => ((a % TAU) + TAU) % TAU
+  const aStart = turn(top ? top.angle : Math.atan2(notch[1] - C[1], notch[0] - C[0]))
+  let aEnd = turn(bottom.angle)
+  if (aEnd < aStart) aEnd += TAU
+
+  // Left half in y-up inches, from the notch round the lobe to the tip.
+  const pt = ([x, y]: V2): Pt => ({ x, y })
+  const half: Seg[] = []
+  if (top) half.push({ p0: pt(top.bez[3]), c1: pt(top.bez[2]), c2: pt(top.bez[1]), p3: pt(top.bez[0]) })
+  const arc = arcSegs(pt(C), r, r, aStart, aEnd - aStart)
+  if (top) arc[0].p0 = pt(top.bez[0])
+  // A shallow notch can sit inside the lobe circle: the outline then runs straight from it to the circle.
+  else if (Math.hypot(arc[0].p0.x - notch[0], arc[0].p0.y - notch[1]) > 1e-9) half.push({ p0: pt(notch), p3: arc[0].p0 })
+  half.push(...arc)
+  half.push({ p0: arc[arc.length - 1].p3, c1: pt(bottom.bez[1]), c2: pt(bottom.bez[2]), p3: pt(bottom.bez[3]) })
+  // Snap the arc's far end onto the tail's start so the halves join exactly.
+  arc[arc.length - 1].p3 = pt(bottom.bez[0])
+  half[half.length - 1].p0 = pt(bottom.bez[0])
+
+  const flipY = (q: Pt | undefined): Pt | undefined => q && { x: q.x, y: -q.y }
+  const mirror = (q: Pt | undefined): Pt | undefined => q && { x: -q.x, y: -q.y }
+  const left: Seg[] = half.map((g) => ({ p0: flipY(g.p0)!, c1: flipY(g.c1), c2: flipY(g.c2), p3: flipY(g.p3)! }))
+  const right: Seg[] = half
+    .slice()
+    .reverse()
+    .map((g) => ({ p0: mirror(g.p3)!, c1: mirror(g.c2), c2: mirror(g.c1), p3: mirror(g.p0)! }))
+  return [segsToPen([...left, ...right], true)]
 }
 
 /**
@@ -650,30 +730,57 @@ export const TEMPLATES: Template[] = [
       // Studio's formulas carry an absolute inch constant, so the heart is built in inches and scaled back.
       const pts = heartPts(sx / MM_PER_IN, sy / MM_PER_IN, g('centerPinch'), g('tailCurl')).map((p) => ({ x: p.x * MM_PER_IN, y: p.y * MM_PER_IN }))
       let out: Contour[] = [{ pts, closed: true }]
-      // Studio caps the fillet at about 13% of the smaller side (0.392 in on a 3 in heart).
-      const r = Math.min(g('r'), 0.1307 * Math.min(sx, sy))
+      const r = heartFillet(g)
       if (r > 0) out = offsetContours(offsetContours(roundCorners(out, r), r, 'round'), -r, 'round')
       return out
     },
-  ),
-
-  tpl(
-    'keyhole',
-    'Keyhole',
-    [
-      prm('slotLength', 'slot length', 'length', 8.89, 0, undefined, { adorn: 'S', axis: 'y' }),
-      prm('headDiameter', 'head diameter', 'length', 10.49, 0, undefined, { adorn: 'H', axis: 'xy' }),
-      prm('slotWidth', 'neck diameter', 'length', 5, 0, undefined, { adorn: 'N', axis: 'xy' }),
-    ],
+    undefined,
+    // Unrounded, the heart is exact curves; a radius goes through offsets, whose arcs are recovered instead.
     (g) => {
-      const rr = g('headDiameter') / 2
-      const rs = g('slotWidth') / 2
-      // Neck runs from the head centre; its round end is centred slotLength away.
-      const yEnd = Math.max(0, g('slotLength'))
-      const slot = unite(move(rect(rs * 2, yEnd), 0, yEnd / 2), [circle(0, yEnd, rs)])
-      return centre(unite([circle(0, 0, rr)], slot))
+      if (heartFillet(g) > 0) return null
+      const pen = heartPen(g('width') / MM_PER_IN, g('height') / MM_PER_IN, g('centerPinch'), g('tailCurl'))
+      return pen.map((pc) => ({
+        closed: pc.closed,
+        nodes: pc.nodes.map((n) => {
+          const sc = (q: Pt): Pt => ({ x: q.x * MM_PER_IN, y: q.y * MM_PER_IN })
+          return { ...sc(n), ...(n.in && { in: sc(n.in) }), ...(n.out && { out: sc(n.out) }), ...(n.smooth && { smooth: true }) }
+        }),
+      }))
     },
   ),
+
+  {
+    ...tpl(
+      'keyhole',
+      'Keyhole',
+      [
+        // Studio's own defaults per unit; each length is clamped to its minimum, nothing else ties them together.
+        prm('slotLength', 'slot length', 'length', 0.35 * MM_PER_IN, KEYHOLE_MIN, undefined, { adorn: 'S', defaultMm: 9 }),
+        prm('headDiameter', 'head diameter', 'length', 0.4133 * MM_PER_IN, KEYHOLE_MIN, undefined, { adorn: 'H', defaultMm: 10.5 }),
+        // Studio's key is `neckDiameter`; ours stays `slotWidth` so saved designs keep loading.
+        prm('slotWidth', 'neck diameter', 'length', 0.1969 * MM_PER_IN, KEYHOLE_MIN, undefined, { adorn: 'N', defaultMm: 5 }),
+      ],
+      (g) => {
+        const rr = g('headDiameter') / 2
+        const rn = g('slotWidth') / 2
+        // Studio's slot (maker.js, round at both ends) runs from the neck centre on the origin (the template's
+        // anchor) to the head centre slotLength below it, where the head circle joins it.
+        const len = Math.max(0, g('slotLength'))
+        const slot = unite(move(rect(rn * 2, len), 0, len / 2), [circle(0, 0, rn)], [circle(0, len, rn)])
+        return unite([circle(0, len, rr)], slot)
+      },
+      undefined,
+      (g) => keyholePen(g('headDiameter') / 2, g('slotWidth') / 2, Math.max(0, g('slotLength'))),
+    ),
+    // Only the bottom handle drags, and only the slot follows it: the head's far edge stays under the
+    // pointer (Studio scales the distance from the neck centre to the bottom of the head).
+    resizeRestrictions: ['lm', 'rm', 'tm', 'tl', 'tr', 'bl', 'br'],
+    afterScale: (p, { dy }) => {
+      const h = p.headDiameter / 2
+      return { ...p, slotLength: Math.max((p.slotLength + h) * dy - h, KEYHOLE_MIN) }
+    },
+    ownAnchor: true,
+  },
 
   tpl(
     'linearHoles',

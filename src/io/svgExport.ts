@@ -9,7 +9,10 @@
 import type { CutType, Contour, Shape, StudioDoc } from '../model/types'
 import { contoursToD } from '../geometry/svgPath'
 import { offsetContours } from '../geometry/offset'
-import { bboxOfContours, bboxValid, emptyBBox, worldContours } from '../geometry/transform'
+import { bboxOfContours, bboxValid, emptyBBox, toWorld, worldContours } from '../geometry/transform'
+import { affineOf, composeAffine, mapPen, penOf, penToD } from '../geometry/pen'
+import { liveSource, sourceAttrs } from './svgSource'
+import { penBounds } from '../geometry/curves'
 
 export const SHAPER_NS = 'http://www.shapertools.com/namespaces/shaper'
 
@@ -58,12 +61,27 @@ export function exportSVG(doc: StudioDoc, only?: Shape[], { includeReference = f
     const allOpen = worldContours(s).every((c) => !c.closed)
     // Open paths can only be cut on-line or used as guides.
     const type: CutType = allOpen && s.cut.type !== 'guide' ? 'online' : s.cut.type
-    return { s, type, allOpen, cs: exportContours(s, type) }
+    // An imported element that is still exactly itself goes back out as that same element, offset and all.
+    const src = liveSource(s)
+    if (src) return { s, type, allOpen, cs: worldContours(s), pen: penOf(s), src }
+    // With no offset to apply, curved shapes export their true curves (exact arcs for the Origin, not facets).
+    const pen = !s.cut.offset || type === 'guide' ? penOf(s) : null
+    return { s, type, allOpen, cs: exportContours(s, type), pen, src: null }
   })
 
   // Bounding box of what is actually exported (offsets can grow past the design).
   const b = emptyBBox()
-  for (const it of items) bboxOfContours(it.cs, b)
+  for (const it of items) {
+    bboxOfContours(it.cs, b)
+    // A curve can bulge a hair past its flattened points, so take its exact extent too.
+    if (it.pen) {
+      const pb = penBounds(mapPen(it.pen, (p) => toWorld(it.s, p)))
+      b.minX = Math.min(b.minX, pb.minX)
+      b.minY = Math.min(b.minY, pb.minY)
+      b.maxX = Math.max(b.maxX, pb.maxX)
+      b.maxY = Math.max(b.maxY, pb.maxY)
+    }
+  }
   const valid = bboxValid(b)
   const minX = valid ? b.minX : 0
   const minY = valid ? b.minY : 0
@@ -79,26 +97,35 @@ export function exportSVG(doc: StudioDoc, only?: Shape[], { includeReference = f
     } else loose.push(it)
   }
 
-  const pathEl = ({ s, type, allOpen, cs }: (typeof items)[number]) => {
-    const local = cs.map((c) => ({ closed: c.closed, pts: c.pts.map((p) => ({ x: p.x - minX, y: p.y - minY })) }))
+  const pathEl = ({ s, type, allOpen, cs, pen, src }: (typeof items)[number]) => {
+    const toDoc = (p: { x: number; y: number }) => ({ x: p.x - minX, y: p.y - minY })
     const st = STYLE[type]
+    // The file's own paint while the shape is still cut the way that paint said; Shaper's colours otherwise.
+    const ownPaint = src && src.cutType === type
+    const fill = ownPaint && src.fill ? src.fill : st.fill
+    const stroke = ownPaint && src.stroke ? src.stroke : st.stroke
+    const tag = src ? src.tag : 'path'
+    const geometry = src
+      ? sourceAttrs(src, composeAffine(affineOf((p) => toDoc(toWorld(s, p))), src.m))
+      : [`d="${pen ? penToD(pen, (p) => toDoc(toWorld(s, p))) : contoursToD(cs.map((c) => ({ closed: c.closed, pts: c.pts.map(toDoc) })))}"`]
     const attrs = [
       `id="${esc(s.id)}"`,
-      `d="${contoursToD(local)}"`,
-      `fill="${st.fill}"`,
-      `stroke="${st.stroke}"`,
+      ...geometry,
+      `fill="${esc(fill)}"`,
+      `stroke="${esc(stroke)}"`,
       `stroke-width="0.1"`,
-      // Pocket holes and any other inner contours stay holes.
-      `fill-rule="evenodd"`,
+      // Pocket holes and any other inner contours stay holes (an imported element keeps its own rule).
+      `fill-rule="${src?.fillRule === 'nonzero' ? 'nonzero' : 'evenodd'}"`,
       `vector-effect="non-scaling-stroke"`,
       `shaper:cutType="${type}"`,
     ]
     // Guides are not cut, so they carry no depth.
     if (type !== 'guide' && s.cut.depth != null) attrs.push(`shaper:cutDepth="${inches(s.cut.depth)} in"`)
-    attrs.push(`shaper:cutOffset="0in"`)
+    // A baked offset is already in the geometry; an imported element is written as it was, so its offset is stated.
+    attrs.push(`shaper:cutOffset="${src && type !== 'guide' ? inches(s.cut.offset) : 0}in"`)
     if (s.cut.bitDia) attrs.push(`shaper:toolDia="${inches(s.cut.bitDia)}in"`)
     attrs.push(`shaper:pathType="${allOpen ? 'open' : 'closed'}"`)
-    return `    <path ${attrs.join(' ')}><title>${esc(s.name)}</title></path>`
+    return `    <${tag} ${attrs.join(' ')}><title>${esc(s.name)}</title></${tag}>`
   }
 
   const body: string[] = []

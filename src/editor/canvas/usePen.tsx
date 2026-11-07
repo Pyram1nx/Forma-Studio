@@ -68,8 +68,11 @@ export function penShapeFrom(nodes: PenNode[], close: boolean): Shape | null {
   })
 }
 
+/** Kinds that keep their curves but are not edited node by node: parametric shapes, text, and imported SVG (kept as in its file). */
+const PARAM_KINDS = new Set(['circle', 'ellipse', 'rect', 'polygon', 'triangle', 'template', 'text', 'import'])
+
 /** Whether this shape is an editable pen path. */
-export const isPenShape = (s: Shape | undefined): s is Shape => !!s && !s.locked && !!penOf(s)
+export const isPenShape = (s: Shape | undefined): s is Shape => !!s && !s.locked && !PARAM_KINDS.has(s.kind) && !!penOf(s)
 
 /** Open the node editor on a pen path: select it and bake its transform (no visible change, no undo step). */
 export function openPenEdit(id: string) {

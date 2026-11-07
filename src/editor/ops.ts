@@ -6,7 +6,7 @@ import { newShapeCut } from '../state/prefs'
 import { bake, bboxValid, recenter, type BBox } from '../geometry/transform'
 import { boolean, offsetContours, type JoinStyle } from '../geometry/offset'
 import { uid } from '../model/ids'
-import { normalizeParametric } from './shapeFactory'
+import { hasOwnAnchor, normalizeParametric } from './shapeFactory'
 import { wbbox, world } from './geomCache'
 import { boxJointPartsOf, scaleBoxJoint, syncBoxJointGuides } from './boxJointGuides'
 
@@ -38,6 +38,15 @@ export function anchorBBox(shapes: Shape[], b: BBox): BBox {
   const hx = Math.max(s.x - b.minX, b.maxX - s.x)
   const hy = Math.max(s.y - b.minY, b.maxY - s.y)
   return { minX: s.x - hx, maxX: s.x + hx, minY: s.y - hy, maxY: s.y + hy }
+}
+
+/**
+ * A lone template with its own anchor (Studio's custom anchor, the keyhole's neck centre) pivots on it while the
+ * origin is the centre, as in Studio where that anchor replaces the centre. Null for anything else.
+ */
+export function ownAnchorPoint(shapes: readonly Shape[], a: AnchorRef): Pt | null {
+  const s = shapes.length === 1 ? shapes[0] : undefined
+  return a === 'mc' && s && hasOwnAnchor(s) ? { x: s.x, y: s.y } : null
 }
 
 /** A pivot: one of the nine bounds points, or a free point given as fractions of the bounds. */
@@ -92,7 +101,7 @@ export function rotateSelection(ids: string[], deg: number, anchor: AnchorRef, a
   const b = selectionBBox(shapes)
   if (!b) return
   const delta = absolute && shapes.length === 1 ? deg - shapes[0].rotation : deg
-  const piv = anchorPoint(anchorBBox(shapes, b), anchor)
+  const piv = ownAnchorPoint(shapes, anchor) ?? anchorPoint(anchorBBox(shapes, b), anchor)
   const r = (delta * Math.PI) / 180
   const cos = Math.cos(r)
   const sin = Math.sin(r)

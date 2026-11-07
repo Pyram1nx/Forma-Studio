@@ -1,0 +1,47 @@
+/* Design preview tile (src/ui/DesignPreview.tsx), after Shaper Studio's file thumbnails:
+   blue drawing on a pale tile, round badge bottom-right. Set the size on the tile;
+   the margin and badge scale with it. */
+.design-preview {
+  position: relative;
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  box-sizing: border-box;
+  container-type: size;
+  border-radius: 8px;
+  background: var(--gray-50);
+  color: var(--gray-400);
+  overflow: hidden;
+}
+.design-preview__img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Clear of the badge's corner. */
+  padding: 4cqmin;
+  box-sizing: border-box;
+}
+.design-preview__empty {
+  width: 36cqmin;
+  height: 36cqmin;
+}
+.design-preview__badge {
+  position: absolute;
+  right: 3cqmin;
+  bottom: 3cqmin;
+  width: 18cqmin;
+  height: 18cqmin;
+  min-width: 12px;
+  min-height: 12px;
+  border-radius: 50%;
+  background: var(--white);
+  color: var(--blue-050);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 0.5px rgba(10, 10, 11, 0.06);
+}
+.design-preview__badge .icon {
+  width: 62%;
+  height: 62%;
+}

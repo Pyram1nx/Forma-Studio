@@ -76,6 +76,7 @@ export default function TextDialog() {
             kind: 'text',
             params: { text: entry, font: r.font, fontStyle: r.style, height: h },
             contours: r.contours,
+            pen: r.pen,
             x: (viewport.w / 2 - view.panX) / view.zoom,
             y: (viewport.h / 2 - view.panY) / view.zoom,
             rotation: 0,

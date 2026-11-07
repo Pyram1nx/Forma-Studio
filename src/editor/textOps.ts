@@ -1,7 +1,7 @@
 // Typesetting a text shape: shared by the Edit Text dialog and the font menu.
 import { useStore, withoutCheckpoint } from '../state/store'
-import type { Contour, Shape } from '../model/types'
-import { DEFAULT_FONT, DEFAULT_STYLE, resolveFont, textToContours } from '../io/text'
+import type { Contour, PenContour, Shape } from '../model/types'
+import { DEFAULT_FONT, DEFAULT_STYLE, resolveFont, textGeometry, type TextGeometry } from '../io/text'
 
 export const textParams = (s: Shape) => ({
   text: String(s.params?.text ?? ''),
@@ -18,26 +18,27 @@ export const FALLBACK_FONT_MESSAGE = 'Font changed to support all characters'
 /** Contours for the text in the requested font, falling back like Studio when glyphs are missing. */
 export async function typeset(text: string, font: string, fontStyle: string, height: number) {
   const r = await resolveFont(text, font, fontStyle)
-  const contours = await textToContours(text, r.font, height, r.style)
-  return { ...r, contours }
+  const g = await textGeometry(text, r.font, height, r.style)
+  return { ...r, ...g }
 }
 
 /** Snapshot taken before a hover preview so it can be put back. */
 export interface TextSnapshot {
   contours: Contour[]
+  pen?: PenContour[]
   params: Shape['params']
   name: string
 }
 
-export const snapshotOf = (s: Shape): TextSnapshot => ({ contours: s.contours, params: s.params, name: s.name })
+export const snapshotOf = (s: Shape): TextSnapshot => ({ contours: s.contours, pen: s.pen, params: s.params, name: s.name })
 
 /** Show a font on the canvas without touching undo history. */
-export function previewText(id: string, contours: Contour[]) {
-  withoutCheckpoint(() => useStore.getState().updateShapes([id], (s) => ({ ...s, contours })))
+export function previewText(id: string, g: TextGeometry) {
+  withoutCheckpoint(() => useStore.getState().updateShapes([id], (s) => ({ ...s, contours: g.contours, pen: g.pen })))
 }
 
 export function restoreText(id: string, snap: TextSnapshot) {
-  withoutCheckpoint(() => useStore.getState().updateShapes([id], (s) => ({ ...s, contours: snap.contours, params: snap.params, name: snap.name })))
+  withoutCheckpoint(() => useStore.getState().updateShapes([id], (s) => ({ ...s, contours: snap.contours, pen: snap.pen, params: snap.params, name: snap.name })))
 }
 
 /** Commit new text, font or style for a shape as one undo step. */
@@ -52,6 +53,7 @@ export async function applyText(id: string, patch: Partial<{ text: string; font:
     st.updateShapes([id], (s) => ({
       ...s,
       contours: r.contours,
+      pen: r.pen,
       name: textName(next.text),
       params: { ...s.params, text: next.text, font: r.font, fontStyle: r.style, height: next.height },
     }))

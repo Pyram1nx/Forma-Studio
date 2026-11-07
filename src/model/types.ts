@@ -69,6 +69,27 @@ export interface ShapeMeta {
   shifterSources?: Contour[][]
   /** Free-form note shown in the panel. */
   note?: string
+  /** SVG import: the element exactly as it was in the file, so export can write it back unchanged. */
+  svgSource?: SvgSource
+}
+
+/**
+ * An imported SVG element as it was in its file: tag, geometry attributes and paint, verbatim. `m` maps the
+ * element's own coordinates into the shape's local mm frame (a, b, c, d, e, f as in SVG's matrix()); it is
+ * kept in step whenever the shape's curves are moved, so the element can be exported with a transform
+ * instead of rewritten numbers.
+ */
+export interface SvgSource {
+  tag: 'path' | 'rect' | 'circle' | 'ellipse' | 'line' | 'polyline' | 'polygon'
+  attrs: Record<string, string>
+  m: [number, number, number, number, number, number]
+  /** Millimetres per user unit of the source file (resolves absolute units in the attributes). */
+  unit: number
+  /** Computed paint and fill rule in the file, and the cut type they were read as. */
+  fill?: string
+  stroke?: string
+  fillRule?: string
+  cutType: CutType
 }
 
 export interface Shape {

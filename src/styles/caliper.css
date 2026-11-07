@@ -1,37 +1,88 @@
-/* Flash shown on a field that just received a caliper reading (src/ui/caliperInput.ts).
-   Same green as Plan mode's selection controls: #1be09e outline over a 30% fill. */
-.caliper-hit {
-  animation: caliper-hit 3s linear forwards;
+/* The wipe shown when a field receives a caliper reading (src/ui/caliperInput.ts).
+   Same green as Plan mode's selection controls: #1be09e border over a 30% fill. A skewed green
+   panel slides across the whole field — animated as a transform, so it stays on the compositor
+   and holds 60 fps even while the canvas is busy — its diagonal leading edge revealing the fill
+   like a clipping mask. The ring and the glyph fade in as the edge reaches them; the glyph sits
+   where the unit text was, and the text comes back as the overlay fades. */
+.caliper-host {
+  position: relative;
 }
-/* Fade in and out take 0.25 s each (8.33% of 3 s). The 0% and 100% frames are left out so the field
-   fades from and back to its own colours. */
-@keyframes caliper-hit {
-  8.33%,
-  91.67% {
-    border-color: #1be09e;
-    background-color: rgba(27, 224, 158, 0.3);
-    box-shadow: 0 0 0 1px #1be09e;
+.caliper-wipe {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  animation: caliper-wipe-out 3s linear forwards;
+}
+/* The green frame: fades in while the sweep crosses, out with the overlay at the end. */
+.caliper-wipe::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid #1be09e;
+  box-shadow: 0 0 0 1px #1be09e;
+  opacity: 0;
+  animation: caliper-wipe-ring 3s linear forwards;
+}
+/* The sliding panel. Oversized so no edge of it shows inside the field mid-flight; the static
+   clip-path gives it the diagonal leading edge that rides along with the transform. */
+.caliper-wipe__sweep {
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: -70%;
+  width: 220%;
+  background-color: rgba(27, 224, 158, 0.3);
+  clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
+  transform: translateX(-100%);
+  animation: caliper-wipe-sweep 3s linear forwards;
+  will-change: transform;
+}
+/* 750 ms (25% of the 3 s the overlay is up), eased in and out. */
+@keyframes caliper-wipe-sweep {
+  0% {
+    transform: translateX(-100%);
+    animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  }
+  25% {
+    transform: translateX(0);
   }
 }
-/* A bare input has no wrapper, so give it a visible edge as well. */
-input.caliper-hit {
-  border-radius: var(--radius, 6px);
-}
-.caliper-badge {
-  position: fixed;
-  z-index: 10000;
-  width: 24px;
-  height: 24px;
-  pointer-events: none;
-  color: #1be09e;
-  animation: caliper-badge 3s linear forwards;
-}
-@keyframes caliper-badge {
-  0% {
+@keyframes caliper-wipe-ring {
+  0%,
+  8% {
     opacity: 0;
   }
-  8.33%,
-  91.67% {
+  25% {
+    opacity: 1;
+  }
+}
+/* The glyph appears as the edge reaches the unit-text spot near the right. */
+.caliper-wipe svg {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  opacity: 0;
+  animation: caliper-wipe-icon 3s linear forwards;
+}
+@keyframes caliper-wipe-icon {
+  0%,
+  15% {
+    opacity: 0;
+  }
+  22% {
+    opacity: 1;
+  }
+}
+/* The whole overlay — fill, ring, glyph — fades out over the last 300 ms. */
+@keyframes caliper-wipe-out {
+  0%,
+  90% {
     opacity: 1;
   }
   100% {

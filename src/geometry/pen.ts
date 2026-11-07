@@ -2,7 +2,7 @@
 // operations of the node editor (split a segment, delete a node, toggle smooth / corner).
 // Pen paths live in `Shape.pen`, in the same local frame as `Shape.contours`, which are
 // always regenerated from them so cutting, hit testing and export keep working on polylines.
-import type { Contour, PenContour, PenNode, Pt, Shape } from '../model/types'
+import type { Contour, PenContour, PenNode, Pt, Shape, ShapeMeta, SvgSource } from '../model/types'
 import { cubic } from './svgPath'
 
 /** Max chord deviation when flattening pen curves, in mm (the same as SVG import). */
@@ -84,20 +84,43 @@ export function mapPen(pens: PenContour[], f: (p: Pt) => Pt): PenContour[] {
   }))
 }
 
+/** Whether each contour is exactly what its pen contour flattens to, cached per contours array. */
+const checked = new WeakMap<Contour[], { pen: PenContour[]; ok: boolean }>()
+
 /**
  * The shape's pen paths, if they still describe its contours. Operations that rewrite contours
- * without knowing about pen data leave it stale; such a shape is edited as a plain path.
+ * without knowing about pen data leave it stale; such a shape draws, exports and edits as its polylines.
+ * Contours made from pen data (`withPen`, `penGeometry`) are always its flattening, so the check is exact.
  */
-export function penOf(s: Shape): PenContour[] | null {
+export function penOf(s: Pick<Shape, 'pen' | 'contours'>): PenContour[] | null {
   const p = s.pen
   if (!p || p.length !== s.contours.length) return null
-  for (let i = 0; i < p.length; i++) if (p[i].closed !== s.contours[i].closed || p[i].nodes.length < 2) return null
-  return p
+  const hit = checked.get(s.contours)
+  if (hit && hit.pen === p) return hit.ok ? p : null
+  let ok = true
+  for (let i = 0; i < p.length && ok; i++) {
+    const c = s.contours[i]
+    if (p[i].closed !== c.closed || p[i].nodes.length < 2) ok = false
+    else {
+      const f = flattenPen(p[i])
+      if (f.pts.length !== c.pts.length) ok = false
+      else for (let k = 0; k < f.pts.length; k++) if (Math.abs(f.pts[k].x - c.pts[k].x) > 1e-6 || Math.abs(f.pts[k].y - c.pts[k].y) > 1e-6) { ok = false; break }
+    }
+  }
+  checked.set(s.contours, { pen: p, ok })
+  return ok ? p : null
+}
+
+/** Pen paths and the contours flattened from them, known to agree. */
+export function penGeometry(pen: PenContour[]): { pen: PenContour[]; contours: Contour[] } {
+  const contours = pen.map((pc) => flattenPen(pc))
+  checked.set(contours, { pen, ok: true })
+  return { pen, contours }
 }
 
 /** The shape with new pen paths and the contours flattened from them. */
-export function withPen(s: Shape, pen: PenContour[]): Shape {
-  return { ...s, pen, contours: pen.map((pc) => flattenPen(pc)) }
+export function withPen<S extends Shape>(s: S, pen: PenContour[]): S {
+  return { ...s, ...penGeometry(pen) }
 }
 
 /** The closest point on any segment of the paths, by sampling and then refining t. */
@@ -253,4 +276,43 @@ export function parsePen(raw: unknown): PenContour[] | undefined {
     out.push({ nodes, closed: (c as PenContour).closed === true })
   }
   return out.length ? out : undefined
+}
+
+// ---- affine maps -------------------------------------------------------------------------------
+
+export type Affine = [number, number, number, number, number, number]
+
+/** The matrix of an affine point map (read off where it sends the origin and the unit axes). */
+export function affineOf(f: (p: Pt) => Pt): Affine {
+  const o = f({ x: 0, y: 0 })
+  const ex = f({ x: 1, y: 0 })
+  const ey = f({ x: 0, y: 1 })
+  return [ex.x - o.x, ex.y - o.y, ey.x - o.x, ey.y - o.y, o.x, o.y]
+}
+
+/** f ∘ g as matrices (apply g first). */
+export function composeAffine(f: Affine, g: Affine): Affine {
+  return [
+    f[0] * g[0] + f[2] * g[1],
+    f[1] * g[0] + f[3] * g[1],
+    f[0] * g[2] + f[2] * g[3],
+    f[1] * g[2] + f[3] * g[3],
+    f[0] * g[4] + f[2] * g[5] + f[4],
+    f[1] * g[4] + f[3] * g[5] + f[5],
+  ]
+}
+
+export const applyAffine = (m: Affine, p: Pt): Pt => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] })
+
+/**
+ * The shape's curves taken through an affine map `f`, with contours flattened again and an imported
+ * element's source matrix moved along, so the element still describes the shape exactly.
+ */
+export function mapCurves(s: Shape, pen: PenContour[], f: (p: Pt) => Pt): Pick<Shape, 'pen' | 'contours' | 'meta'> {
+  const g = penGeometry(mapPen(pen, f))
+  const src = s.meta?.svgSource
+  if (!src) return { ...g, meta: s.meta }
+  const moved: SvgSource = { ...src, m: composeAffine(affineOf(f), src.m) }
+  const meta: ShapeMeta = { ...s.meta, svgSource: moved }
+  return { ...g, meta }
 }

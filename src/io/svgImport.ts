@@ -1,24 +1,14 @@
 // Import SVG files: resolves real-world units, nested transforms, basic shapes,
 // local <use> references, and reads back shaper:cutType / shaper:cutDepth when present.
 // Untrusted input: the document is sanitised before it touches the live DOM.
-import type { Contour, CutType, Pt, ShapesImport } from '../model/types'
+import type { CutType, Pt, ShapesImport, SvgSource } from '../model/types'
 import { DEFAULT_CUT } from '../model/types'
-import { parsePathD } from '../geometry/svgPath'
-import { ellipse as ellipseC } from '../geometry/primitives'
+import { mapPen, penGeometry, type Affine } from '../geometry/pen'
 import { shapeFromWorld } from '../model/factory'
 import { SHAPER_NS } from './svgExport'
+import { elementPen, GEOMETRY_ATTRS, lenMM, UNIT_MM, userLength } from './svgSource'
 
-/** Millimetres per absolute CSS unit. Unitless and unknown units are CSS px. */
-const UNIT_MM: Record<string, number> = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, pc: 25.4 / 6, px: 25.4 / 96, '': 25.4 / 96 }
-const LEN_RE = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*([a-z%]*)\s*$/i
-
-/** Length in mm for a value with an absolute unit (unitless = px). Null for %/garbage. */
-export function lenMM(v: string | null | undefined): number | null {
-  if (!v) return null
-  const m = LEN_RE.exec(v)
-  if (!m || m[2] === '%') return null
-  return parseFloat(m[1]) * (UNIT_MM[m[2].toLowerCase()] ?? UNIT_MM.px)
-}
+export { lenMM, userLength } from './svgSource'
 
 /**
  * Millimetres per user unit of an SVG root, from width/height against the viewBox.
@@ -31,20 +21,6 @@ export function mmPerUserUnit(width: string | null, height: string | null, vb: {
   if (vb.width > 0 && wmm) return wmm / vb.width
   if (vb.height > 0 && hmm) return hmm / vb.height
   return UNIT_MM.px
-}
-
-/**
- * Convert an element attribute to user units. Unitless values already are user
- * units; absolute units (mm, in, pt, px, ...) are converted with mmPerUnit.
- * Percentages and garbage give 0.
- */
-export function userLength(v: string | null | undefined, mmPerUnit: number): number {
-  if (!v) return 0
-  const m = LEN_RE.exec(v)
-  if (!m || m[2] === '%') return 0
-  const n = parseFloat(m[1])
-  if (!m[2]) return n
-  return (n * (UNIT_MM[m[2].toLowerCase()] ?? UNIT_MM.px)) / mmPerUnit
 }
 
 /** Only fragment references and inline raster data are allowed in imported SVG. */
@@ -229,16 +205,18 @@ export function importSVGText(text: string, name: string): ShapesImport {
       if (el.closest('defs, clipPath, mask, symbol, marker, pattern')) return
       if (isHidden(el)) return
       const g = el as SVGGraphicsElement
-      const local = elementContours(el, mmPerUnit)
+      const tag = el.localName.toLowerCase() as SvgSource['tag']
+      // The element's outline as true curves in its own units: nothing is flattened or rewritten.
+      const local = elementPen(tag, (k) => el.getAttribute(k), mmPerUnit)
       if (!local.length) return
       let m = g.getCTM()
       if (m && rootInv) m = rootInv.multiply(m)
-      const tx = (p: Pt): Pt => {
-        const x = m ? m.a * p.x + m.c * p.y + m.e : p.x
-        const y = m ? m.b * p.x + m.d * p.y + m.f : p.y
-        return { x: x * mmPerUnit, y: y * mmPerUnit }
-      }
-      const world: Contour[] = local.map((c) => ({ closed: c.closed, pts: c.pts.map(tx) }))
+      const toMM: Affine = m
+        ? [m.a * mmPerUnit, m.b * mmPerUnit, m.c * mmPerUnit, m.d * mmPerUnit, m.e * mmPerUnit, m.f * mmPerUnit]
+        : [mmPerUnit, 0, 0, mmPerUnit, 0, 0]
+      const tx = (p: Pt): Pt => ({ x: toMM[0] * p.x + toMM[2] * p.y + toMM[4], y: toMM[1] * p.x + toMM[3] * p.y + toMM[5] })
+      const curves = penGeometry(mapPen(local, tx))
+      const world = curves.contours
       const declared = cutTypeFor(el)
       // Open paths can only be cut on-line (or used as guides).
       const type: CutType = world.every((c) => !c.closed) && declared !== 'guide' ? 'online' : declared
@@ -249,9 +227,17 @@ export function importSVGText(text: string, name: string): ShapesImport {
       // Shaper Studio ids look like "basePath-sg-<uuid>-pg-<uuid>"; they make poor names.
       const id = el.getAttribute('id')
       const title = el.querySelector('title')?.textContent || (id && !/^(basePath|sg|pg)-/.test(id) ? id : '') || `${name} ${++idx}`
+      const attrs: Record<string, string> = {}
+      for (const k of GEOMETRY_ATTRS[tag]) {
+        const v = el.getAttribute(k)
+        if (v != null) attrs[k] = v
+      }
+      const style = getComputedStyle(el)
+      const svgSource: SvgSource = { tag, attrs, m: toMM, unit: mmPerUnit, fill: style.fill, stroke: style.stroke, fillRule: style.fillRule || undefined, cutType: type }
       const s = shapeFromWorld('import', title, world, {
+        pen: curves.pen,
         cut: { ...DEFAULT_CUT, type, depth, offset, bitDia },
-        meta: { source: 'svg' },
+        meta: { source: 'svg', svgSource },
       })
       shapes.push(s)
     })
@@ -260,51 +246,4 @@ export function importSVGText(text: string, name: string): ShapesImport {
   } finally {
     host.remove()
   }
-}
-
-/** Local-space contours of a basic element, attributes converted to user units. */
-function elementContours(el: Element, mmPerUnit: number): Contour[] {
-  const a = (k: string) => userLength(el.getAttribute(k), mmPerUnit)
-  switch (el.localName.toLowerCase()) {
-    case 'path':
-      return parsePathD(el.getAttribute('d') || '', 0.02)
-    case 'rect': {
-      const x = a('x')
-      const y = a('y')
-      const w = a('width')
-      const h = a('height')
-      if (w <= 0 || h <= 0) return []
-      let rx = a('rx')
-      let ry = a('ry')
-      if (!rx && ry) rx = ry
-      if (!ry && rx) ry = rx
-      rx = Math.min(rx, w / 2)
-      ry = Math.min(ry, h / 2)
-      if (rx > 0 && ry > 0) {
-        const d = `M${x + rx} ${y}H${x + w - rx}A${rx} ${ry} 0 0 1 ${x + w} ${y + ry}V${y + h - ry}A${rx} ${ry} 0 0 1 ${x + w - rx} ${y + h}H${x + rx}A${rx} ${ry} 0 0 1 ${x} ${y + h - ry}V${y + ry}A${rx} ${ry} 0 0 1 ${x + rx} ${y}Z`
-        return parsePathD(d, 0.02)
-      }
-      return [{ closed: true, pts: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }] }]
-    }
-    case 'circle':
-    case 'ellipse': {
-      const cx = a('cx')
-      const cy = a('cy')
-      const isCircle = el.localName.toLowerCase() === 'circle'
-      const rx = isCircle ? a('r') : a('rx')
-      const ry = isCircle ? a('r') : a('ry')
-      if (rx <= 0 || ry <= 0) return []
-      return ellipseC(rx * 2, ry * 2).map((c) => ({ closed: true, pts: c.pts.map((p) => ({ x: p.x + cx, y: p.y + cy })) }))
-    }
-    case 'line':
-      return [{ closed: false, pts: [{ x: a('x1'), y: a('y1') }, { x: a('x2'), y: a('y2') }] }]
-    case 'polyline':
-    case 'polygon': {
-      const nums = (el.getAttribute('points') || '').match(/[-+]?(?:\d*\.\d+|\d+\.?)(?:e[-+]?\d+)?/gi)?.map(Number) || []
-      const pts: Pt[] = []
-      for (let i = 0; i + 1 < nums.length; i += 2) pts.push({ x: nums[i], y: nums[i + 1] })
-      return pts.length > 1 ? [{ closed: el.localName.toLowerCase() === 'polygon', pts }] : []
-    }
-  }
-  return []
 }

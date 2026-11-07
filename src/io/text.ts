@@ -1,9 +1,9 @@
 // Text → outline contours using opentype.js, with Studio's font library
 // (src/io/fontCatalog.ts). Users can also load their own TTF/OTF/WOFF font.
 import type opentype from 'opentype.js'
-import type { Contour } from '../model/types'
-import { parsePathD } from '../geometry/svgPath'
-import { unionNonZero } from '../geometry/offset'
+import type { Contour, PenContour } from '../model/types'
+import { parsePathPen, penBounds, unionCurves } from '../geometry/curves'
+import { mapPen, penGeometry } from '../geometry/pen'
 import { DEFAULT_FONT, DEFAULT_STYLE, FONTS, findFont, findStyle, fontUrl, isHeavyFont, type FontDef, type FontStyleDef } from './fontCatalog'
 
 export { DEFAULT_FONT, DEFAULT_STYLE }
@@ -20,11 +20,77 @@ export function fontNames(): string[] {
 
 export async function addCustomFont(file: File): Promise<string> {
   const buf = await file.arrayBuffer()
-  const font = (await ot()).parse(buf)
+  const font = await parseFont(buf)
   const name = font.names.fullName?.en || file.name.replace(/\.[^.]+$/, '')
   custom.set(name, buf)
   cache.set('custom:' + name, Promise.resolve(font))
   return name
+}
+
+/** GSUB subtable kinds (lookup type + format) opentype.js can apply; it throws on any other it reaches. */
+const SUPPORTED_GSUB = new Set(['11', '12', '21', '41', '51', '53', '63'])
+
+/** Renames a table in the font's directory so opentype.js skips it. Handles sfnt (TTF/OTF) and WOFF. */
+function hideTable(buf: ArrayBuffer, tag: string): ArrayBuffer {
+  const out = buf.slice(0)
+  const v = new DataView(out)
+  const woff = v.getUint32(0) === 0x774f4646 // 'wOFF'
+  const n = v.getUint16(woff ? 12 : 4)
+  const [dir, entry] = woff ? [44, 20] : [12, 16]
+  for (let i = 0; i < n; i++) {
+    const at = dir + i * entry
+    if (String.fromCharCode(...new Uint8Array(out, at, 4)) === tag) new Uint8Array(out, at, 4).set([0x7a, 0x7a, 0x7a, 0x7a]) // 'zzzz'
+  }
+  return out
+}
+
+/**
+ * Parses a font, tolerating what opentype.js can't handle: a malformed GDEF table (Caveat Bold ships one
+ * with version 0) is dropped, and GSUB subtables of unsupported kinds (chained contexts in formats 1–2, used
+ * by Inter, Dongle, Frank Ruhl Libre Black…) are removed so shaping skips them instead of throwing.
+ */
+async function parseFont(buf: ArrayBuffer): Promise<opentype.Font> {
+  const lib = await ot()
+  let font: opentype.Font
+  try {
+    font = lib.parse(buf)
+  } catch (e) {
+    if (!/GDEF/.test(String(e))) throw e
+    font = lib.parse(hideTable(buf, 'GDEF'))
+  }
+  type Subtable = { substFormat?: number; lookupType?: number; extension?: { substFormat?: number } }
+  const gsub = font.tables.gsub as { lookups?: { lookupType: number; subtables: Subtable[] }[] } | undefined
+  for (const l of gsub?.lookups ?? [])
+    l.subtables = l.subtables.filter((st) =>
+      SUPPORTED_GSUB.has(l.lookupType === 7 ? `${st.lookupType}${st.extension?.substFormat}` : `${l.lookupType}${st.substFormat}`),
+    )
+  return font
+}
+
+const num = (v: number, decimals: number) => {
+  const s = v.toFixed(decimals)
+  const t = s.includes('.') ? s.replace(/\.?0+$/, '') : s
+  return t === '-0' ? '0' : t
+}
+
+/**
+ * SVG path data for opentype.js path commands. opentype.js's own toPathData can't be used: its rounding
+ * writes NaN for any coordinate a hair off a whole number (54.00000000000001 → "7.1e-15e+2"), and the
+ * path parser stops at the first NaN, dropping the rest of the line. Commands with a non-finite
+ * coordinate are skipped so one bad glyph point can't truncate the others.
+ */
+export function commandsToPathData(cmds: opentype.PathCommand[], decimals: number): string {
+  let d = ''
+  for (const c of cmds) {
+    if (c.type === 'Z') {
+      d += 'Z'
+      continue
+    }
+    const v = c.type === 'C' ? [c.x1, c.y1, c.x2, c.y2, c.x, c.y] : c.type === 'Q' ? [c.x1, c.y1, c.x, c.y] : [c.x, c.y]
+    if (!v.every(Number.isFinite)) continue
+    d += c.type + v.map((n) => num(n, decimals)).join(' ')
+  }
+  return d
 }
 
 export const missingFontMessage = (name: string) => `Font "${name}" isn't loaded — re-upload it`
@@ -39,10 +105,11 @@ export function loadStyle(style: FontStyleDef): Promise<opentype.Font> {
   if (!p) {
     p = fetch(fontUrl(style))
       .then((r) => {
-        if (!r.ok) throw new Error(`Font file ${style.file} could not be loaded`)
+        // A missing file can come back as the app's HTML page rather than a 404.
+        if (!r.ok || r.headers.get('content-type')?.startsWith('text/html')) throw new Error(`Font file ${style.file} could not be loaded`)
         return r.arrayBuffer()
       })
-      .then(async (b) => (await ot()).parse(b))
+      .then(parseFont)
     // A failed fetch must not poison the cache.
     p.catch(() => cache.delete(style.file))
     cache.set(style.file, p)
@@ -104,42 +171,46 @@ export async function resolveFont(text: string, fontName: string, styleName: str
 }
 
 /** Outline of one line as SVG path data, at `size` em-pixels with the baseline at y. */
-export function linePathData(font: opentype.Font, line: string, size: number, x = 0, y = 0): string {
-  return font.getPath(line, x, y, size).toPathData(3)
+export function linePathData(font: opentype.Font, line: string, size: number, x = 0, y = 0, decimals = 3): string {
+  return commandsToPathData(font.getPath(line, x, y, size).commands, decimals)
+}
+
+/** Text outlines: the font's own curves (`pen`) and the contours flattened from them. */
+export interface TextGeometry {
+  contours: Contour[]
+  pen: PenContour[]
 }
 
 /**
- * Convert text to contours. `height` is the cap height in mm. Lines are split
- * on newlines. Returns contours with the text block centred on (0,0).
+ * Convert text to outlines. `height` is the cap height in mm. Lines are split on newlines. The outlines are
+ * the font's own Bézier curves (quadratics become the identical cubics), with the text block centred on (0,0).
  */
-export async function textToContours(text: string, fontName: string, height: number, styleName: string = DEFAULT_STYLE): Promise<Contour[]> {
+export async function textGeometry(text: string, fontName: string, height: number, styleName: string = DEFAULT_STYLE): Promise<TextGeometry> {
   if (!hasFont(fontName)) throw new Error(missingFontMessage(fontName))
   const font = await loadFont(fontName, styleName)
   const singleLine = !!findFont(fontName) && !!findStyle(findFont(fontName)!, styleName).singleLine
   const capH = (font.tables.os2?.sCapHeight || font.unitsPerEm * 0.7) / font.unitsPerEm
   const size = height / capH
   const lineH = size * 1.2
-  let out: Contour[] = []
+  let pens: PenContour[] = []
   text.split('\n').forEach((line, i) => {
     if (!line) return
-    for (const c of parsePathD(linePathData(font, line, size, 0, i * lineH), 0.02)) out.push({ ...c, closed: !singleLine })
+    // Full precision: the glyph points are written out exactly as the font scales them.
+    const d = linePathData(font, line, size, 0, i * lineH, 9)
+    for (const pc of parsePathPen(d)) pens.push({ ...pc, closed: !singleLine && pc.nodes.length >= 2 })
   })
   // Glyph outlines are always closed, even when the font's path data lacks the closing command;
-  // fonts also overlap their parts freely, and cutting needs each glyph as one clean outline.
-  if (!singleLine) out = unionNonZero(out)
-  if (!out.length) return out
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const c of out)
-    for (const p of c.pts) {
-      minX = Math.min(minX, p.x)
-      maxX = Math.max(maxX, p.x)
-      minY = Math.min(minY, p.y)
-      maxY = Math.max(maxY, p.y)
-    }
-  const cx = (minX + maxX) / 2
-  const cy = (minY + maxY) / 2
-  return out.map((c) => ({ closed: c.closed, pts: c.pts.map((p) => ({ x: p.x - cx, y: p.y - cy })) }))
+  // fonts also overlap their parts freely, and cutting needs each glyph as one clean outline. The
+  // merge keeps the curves: only where parts cross are new points made.
+  if (!singleLine) pens = unionCurves(pens)
+  if (!pens.length) return { contours: [], pen: [] }
+  const b = penBounds(pens)
+  const cx = (b.minX + b.maxX) / 2
+  const cy = (b.minY + b.maxY) / 2
+  return penGeometry(mapPen(pens, (p) => ({ x: p.x - cx, y: p.y - cy }))) as TextGeometry
+}
+
+/** Text outlines as contours only (see textGeometry). */
+export async function textToContours(text: string, fontName: string, height: number, styleName: string = DEFAULT_STYLE): Promise<Contour[]> {
+  return (await textGeometry(text, fontName, height, styleName)).contours
 }

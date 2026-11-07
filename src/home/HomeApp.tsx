@@ -1,12 +1,11 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import AccountPanel from '../account/AccountPanel'
 import { useSession } from '../account/useSession'
 import { accountsEnabled } from '../account/api'
 import SyncStatus from '../account/SyncStatus'
 import { persistPendingNow, subscribeDesigns } from '../storage/designStore'
 import { copyLocalDesigns, countLocalDesignsToCopy } from '../storage/sync'
-import { exportSVG } from '../io/svgExport'
-import { autosave, listRecent, loadRecent, nextUntitledName, type RecentEntry } from '../io/projectFile'
+import { autosave, listRecent, nextUntitledName, type RecentEntry } from '../io/projectFile'
 import { defaultUnits, newDoc } from '../state/store'
 import type { Units } from '../model/types'
 import LoadingDomino from '../ui/LoadingDomino'
@@ -16,6 +15,7 @@ import SettingsPage from './SettingsPage'
 const BitLibrary = lazy(() => import('../features/bitlibrary/BitLibrary'))
 import { openDesignInStudio } from '../desktop/windows'
 import * as Ic from '../ui/icons'
+import DesignPreview from '../ui/DesignPreview'
 import UpdatePrompt from '../desktop/UpdatePrompt'
 import '../styles/home.css'
 
@@ -182,24 +182,11 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
 }
 
 function DesignCard({ entry, onOpen }: { entry: RecentEntry; onOpen: () => void }) {
-  // Thumbnail of the design as it would export. Built once per saved version.
-  const thumb = useMemo(() => {
-    try {
-      const doc = loadRecent(entry.id)
-      if (!doc || !doc.shapes.length) return null
-      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(exportSVG(doc, undefined, { includeReference: true }))
-    } catch {
-      return null
-    }
-  }, [entry.id])
-
   const updated = new Date(entry.updatedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })
 
   return (
     <button className="home-card" onClick={onOpen} aria-label={`Open ${entry.name}`}>
-      <span className="home-card__thumb">
-        {thumb ? <img src={thumb} alt="" /> : <Ic.IconDraw size={28} />}
-      </span>
+      <DesignPreview id={entry.id} className="home-card__thumb" />
       <span className="home-card__name">{entry.name}</span>
       <span className="home-card__meta">
         {entry.shapes} {entry.shapes === 1 ? 'shape' : 'shapes'} · edited {updated}

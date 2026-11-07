@@ -1,5 +1,5 @@
 import type { Contour, FreeOrigin, Pt, Shape } from '../model/types'
-import { mapPen, penOf } from './pen'
+import { mapCurves, penOf } from './pen'
 
 export interface BBox {
   minX: number
@@ -79,12 +79,15 @@ export function recenter(s: Shape): Shape {
   const c = bboxCenter(b)
   if (Math.abs(c.x) < 1e-9 && Math.abs(c.y) < 1e-9) return s
   const w = toWorld(s, c)
+  const pen = penOf(s)
+  // Curves move with the geometry; the contours are flattened again from them so the two stay in step.
+  if (pen) return { ...s, x: w.x, y: w.y, ...mapCurves(s, pen, (p) => ({ x: p.x - c.x, y: p.y - c.y })) }
   return {
     ...s,
     x: w.x,
     y: w.y,
     contours: s.contours.map((ct) => ({ closed: ct.closed, pts: ct.pts.map((p) => ({ x: p.x - c.x, y: p.y - c.y })) })),
-    ...(s.pen && { pen: mapPen(s.pen, (p) => ({ x: p.x - c.x, y: p.y - c.y })) }),
+    pen: undefined,
   }
 }
 
@@ -103,12 +106,15 @@ export function bake(s: Shape): Shape {
   const parametric = PARAMETRIC_KINDS.has(s.kind)
   // Pen paths take the same transform, so a moved, scaled or rotated curve stays editable.
   const pen = penOf(s)
-  return {
-    ...s,
-    pen: pen ? mapPen(pen, (p) => {
+  const geom = pen
+    ? mapCurves(s, pen, (p) => {
       const w = toWorld(s, p)
       return { x: w.x - c.x, y: w.y - c.y }
-    }) : undefined,
+    })
+    : { pen: undefined, contours: cs.map((ct) => ({ closed: ct.closed, pts: ct.pts.map((p) => ({ x: p.x - c.x, y: p.y - c.y })) })) }
+  return {
+    ...s,
+    ...geom,
     kind: parametric ? 'path' : s.kind,
     params: parametric ? undefined : s.params,
     x: c.x,
@@ -116,7 +122,6 @@ export function bake(s: Shape): Shape {
     rotation: 0,
     sx: 1,
     sy: 1,
-    contours: cs.map((ct) => ({ closed: ct.closed, pts: ct.pts.map((p) => ({ x: p.x - c.x, y: p.y - c.y })) })),
   }
 }
 

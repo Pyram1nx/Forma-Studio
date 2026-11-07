@@ -1,14 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { usePrefs } from '../state/prefs'
 import { useStore } from '../state/store'
-import { iconPayload, iconUrl, iconsEnabled, searchIcons, type IconHit } from '../io/iconSearch'
+import { iconPayload, iconTitle, iconUrl, iconsEnabled, searchIcons, type IconHit } from '../io/iconSearch'
 import * as Ic from '../ui/icons'
 import { BASIC_SHAPES, createBasic, createTemplate } from './shapeFactory'
 import { TEMPLATES } from '../geometry/templates'
 import { TemplateIcon } from '../geometry/templateIcons'
 import { placeBoxJoint } from './boxJointGuides'
 import { boxJointKind } from '../geometry/boxJoints'
-import { MM_PER_IN } from '../model/types'
 
 function viewCentre() {
   const { view, viewport } = useStore.getState()
@@ -36,21 +35,23 @@ export function ShapesPopover() {
   const popover = useStore((s) => s.popover)
   const mode = useStore((s) => s.mode)
   const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement | null>(null)
   // Results are tagged with the query they answer, so a slow reply never shows under a newer query.
-  const [iconRes, setIconRes] = useState<{ q: string; hits: IconHit[]; error: boolean } | null>(null)
+  const [iconRes, setIconRes] = useState<{ q: string; hits: IconHit[]; total: number; error: boolean; loadingMore?: boolean } | null>(null)
   useOutsideDismiss(popover === 'shapes' && mode === 'design', SHAPE_INSIDE)
   const trimmed = query.trim()
   const icons = iconRes?.q === trimmed ? iconRes.hits : []
   const iconError = iconRes?.q === trimmed && iconRes.error
+  const iconTotal = iconRes?.q === trimmed ? iconRes.total : 0
   // Debounced icon search. Each keystroke aborts the request still in flight.
   useEffect(() => {
     if (!iconsEnabled() || trimmed.length < 2 || popover !== 'shapes') return
     const ac = new AbortController()
     const t = setTimeout(() => {
-      searchIcons(trimmed, ac.signal)
-        .then((hits) => setIconRes({ q: trimmed, hits, error: false }))
+      searchIcons(trimmed, 0, ac.signal)
+        .then((page) => setIconRes({ q: trimmed, hits: page.icons, total: page.total, error: false }))
         .catch(() => {
-          if (!ac.signal.aborted) setIconRes({ q: trimmed, hits: [], error: true })
+          if (!ac.signal.aborted) setIconRes({ q: trimmed, hits: [], total: 0, error: true })
         })
     }, 250)
     return () => {
@@ -58,8 +59,27 @@ export function ShapesPopover() {
       ac.abort()
     }
   }, [trimmed, popover])
+  // Focus immediately so typing right after Find Art / Make Shape filters. Skipped on touch
+  // devices (mobile/tablet), where it would pop the on-screen keyboard over the popover.
+  useEffect(() => {
+    if (popover !== 'shapes' || mode !== 'design') return
+    if (window.matchMedia?.('(pointer: coarse)').matches) return
+    searchRef.current?.focus()
+  }, [popover, mode])
   if (popover !== 'shapes' || mode !== 'design') return null
   const st = useStore.getState
+  // Next page of icon results, appended. Dropped if the query changed while it loaded.
+  const moreIcons = () => {
+    if (!iconRes || iconRes.q !== trimmed || iconRes.loadingMore) return
+    const { q: forQ, hits } = iconRes
+    setIconRes({ ...iconRes, loadingMore: true })
+    searchIcons(forQ, hits.length)
+      .then((page) => setIconRes((r) => (r?.q === forQ ? { ...r, hits: [...r.hits, ...page.icons], total: page.total, loadingMore: false } : r)))
+      .catch(() => {
+        setIconRes((r) => (r?.q === forQ ? { ...r, loadingMore: false } : r))
+        st().showToast('Could not load more icons')
+      })
+  }
   const placeIcon = async (id: string) => {
     try {
       const payload = await iconPayload(id)
@@ -69,21 +89,19 @@ export function ShapesPopover() {
       st().showToast('Import failed: ' + (e as Error).message)
     }
   }
-  // Box joints (basic and pro) come with their guides as a group; other templates are a single shape.
-  const placeTemplate = (id: string) => {
-    const s = createTemplate(id, viewCentre().x, viewCentre().y, st().doc.units)
-    if (!boxJointKind(id) || !s) return place(s)
-    placeBoxJoint(s)
-    const { view, viewport } = st()
-    if (view.zoom * MM_PER_IN < Math.min(viewport.w, viewport.h) / 8) st().zoomToFit()
-  }
+  const isEmpty = () => !st().doc.shapes.some((x) => !x.hidden)
+  // As in Studio: the new object is centred on the view and selected, and the popover closes. The view only
+  // moves when the design was empty, to frame that first object; after that the zoom is left alone.
   const place = (s: ReturnType<typeof createBasic> | null) => {
     if (!s) return
-    st().addShapes([s])
-    // Zoom so a fresh 1" shape is comfortably visible, like Studio does.
-    const { view, viewport } = st()
-    if (s.contours.length && view.zoom * MM_PER_IN < Math.min(viewport.w, viewport.h) / 8) st().zoomToFit()
+    const wasEmpty = isEmpty()
+    // Box joints (basic and pro) come with their guides as a group; other templates are a single shape.
+    if (s.kind === 'template' && boxJointKind(String(s.params?.template))) placeBoxJoint(s)
+    else st().addShapes([s])
+    dismissPopover()
+    if (wasEmpty) st().zoomToFit()
   }
+  const placeTemplate = (id: string) => place(createTemplate(id, viewCentre().x, viewCentre().y, st().doc.units))
   // The search filters basic shapes (by label) and templates (by name).
   const q = query.trim().toLowerCase()
   const basics = q ? BASIC_SHAPES.filter((b) => b.label.toLowerCase().includes(q)) : BASIC_SHAPES
@@ -92,8 +110,7 @@ export function ShapesPopover() {
     <div className="shape-creator" role="dialog" aria-label="Make shape">
       <input
         id="shape-search"
-        // Focus immediately so typing right after Find Art / Make Shape filters.
-        autoFocus
+        ref={searchRef}
         type="search"
         className="shape-creator__search"
         placeholder={iconsEnabled() ? 'Search shapes, templates & icons' : 'Search shapes & templates'}
@@ -129,17 +146,26 @@ export function ShapesPopover() {
       )}
       {trimmed.length >= 2 && iconsEnabled() && (
         <>
-          <div className="shape-creator__label">icons</div>
+          <div className="shape-creator__label">
+            icons {iconTotal > 0 && <span className="shape-creator__count">{iconTotal.toLocaleString()}</span>}
+          </div>
           {iconError ? (
             <div className="ss-muted shape-creator__none">Icon search is unavailable right now.</div>
           ) : (
-            <div className="shape-creator__icons">
-              {icons.map((h) => (
-                <button key={h.id} className="icon-result-btn" title={h.id} aria-label={h.id} onClick={() => placeIcon(h.id)}>
-                  <img src={iconUrl(h.id)} alt="" />
+            <>
+              <div className="shape-creator__icons">
+                {icons.map((h) => (
+                  <button key={h.id} className="icon-result-btn" title={iconTitle(h)} aria-label={h.name} onClick={() => placeIcon(h.id)}>
+                    <img src={iconUrl(h.id)} alt="" loading="lazy" decoding="async" />
+                  </button>
+                ))}
+              </div>
+              {icons.length > 0 && icons.length < iconTotal && (
+                <button className="ss-btn shape-creator__more" onClick={moreIcons} disabled={iconRes?.loadingMore}>
+                  {iconRes?.loadingMore ? 'Loading…' : 'More icons'}
                 </button>
-              ))}
-            </div>
+              )}
+            </>
           )}
         </>
       )}

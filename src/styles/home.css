@@ -178,20 +178,8 @@
 }
 .home-card__thumb {
   height: 140px;
-  display: grid;
-  /* A definite single cell, so the image can be sized to it (an auto track lets big designs overflow). */
-  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  place-items: center;
-  background: var(--gray-50);
+  border-radius: 0;
   border-bottom: 1px solid var(--gray-200);
-  color: var(--gray-400);
-  padding: 12px;
-  box-sizing: border-box;
-}
-.home-card__thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 .home-card__name {
   padding: 0 14px;

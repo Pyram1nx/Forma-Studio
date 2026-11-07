@@ -4,6 +4,12 @@
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "regions": ["fra1"],
+  "functions": {
+    "api/icons/search.js": { "includeFiles": "server/icons/catalog.json" },
+    "api/icons/sets.js": { "includeFiles": "server/icons/catalog.json" },
+    "api/icons/svg.js": { "includeFiles": "server/icons/**" }
+  },
   "rewrites": [
     {
       "source": "/studio",

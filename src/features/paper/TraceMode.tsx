@@ -28,7 +28,7 @@
 // background by imageMask.ts. It has no real size, so it starts at
 // IMAGE_LONG_MM and Resize (in place of Paper Outline) scales the traced design
 // to the size it should be.
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, JSX, PointerEvent, ReactNode } from 'react'
 import { MM_PER_IN, type Contour, type ImportPayload, type Pt, type Shape, type Units } from '../../model/types'
 import { newShapeCut } from '../../state/prefs'
@@ -246,47 +246,17 @@ function useFit(aspect: number) {
 const pathD = (c: Contour) =>
   c.pts.length < 2 ? '' : 'M' + c.pts.map((p) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('L') + (c.closed ? 'Z' : '')
 
-/** One traced group with its layer colour, when traced by colour layers. */
-interface VecPiece {
-  g: Contour[]
-  color?: string
-}
-
 /**
  * Vector contours drawn like a selected shape in the studio: closed loops get
  * the selection fill (even-odd, so holes stay open), open lines stroke only.
- * Pieces carrying a colour (layered trace) paint in their own colour instead.
+ * Every traced piece gets this same look in every mode — layered pieces are
+ * separate shapes, not separate colours.
  */
-function VecPaths({ pieces, className = 'trace-path' }: { pieces: VecPiece[]; className?: string }) {
-  if (pieces.some((p) => p.color)) {
-    return (
-      <>
-        {pieces.map((p, i) => {
-          const closed = p.g.filter((c) => c.closed)
-          const open = p.g.filter((c) => !c.closed)
-          return (
-            <Fragment key={i}>
-              {closed.length > 0 && (
-                <path
-                  d={closed.map(pathD).join('')}
-                  fillRule="evenodd"
-                  className={className}
-                  style={{ fill: p.color, fillOpacity: 0.15, stroke: p.color }}
-                />
-              )}
-              {open.length > 0 && (
-                <path d={open.map(pathD).join('')} className={className + ' is-open'} style={{ stroke: p.color }} />
-              )}
-            </Fragment>
-          )
-        })}
-      </>
-    )
-  }
+function VecPaths({ groups, className = 'trace-path' }: { groups: Contour[][]; className?: string }) {
   let closed = ''
   let open = ''
-  for (const p of pieces)
-    for (const c of p.g) {
+  for (const g of groups)
+    for (const c of g) {
       if (c.closed) closed += pathD(c)
       else open += pathD(c)
     }
@@ -383,11 +353,43 @@ type Box = { x0: number; y0: number; x1: number; y1: number }
 /**
  * Thin outline around the traced motif with its width above and its height
  * down the right side. `box` is in mm on the sheet; `size` is the stage in px.
+ * The labels sit just outside the motif box, but they are measured and clamped
+ * so they never cross the stage's frame.
  */
 function MotifDims({ box, scan, size, units, shown }: { box: Box; scan: ScanImage; size: Size; units: Units; shown: boolean }) {
+  const wRef = useRef<HTMLSpanElement>(null)
+  const hRef = useRef<HTMLSpanElement>(null)
+  // Label offsets from the motif box's top-left corner (the .trace-dims origin), px.
+  const [off, setOff] = useState<{ wx: number; wy: number; hx: number; hy: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const w = wRef.current
+    const h = hRef.current
+    if (!w || !h || size.w <= 0 || size.h <= 0) return
+    const x0 = (box.x0 / scan.wMm) * size.w
+    const x1 = (box.x1 / scan.wMm) * size.w
+    const y0 = (box.y0 / scan.hMm) * size.h
+    const y1 = (box.y1 / scan.hMm) * size.h
+    const GAP = 8
+    // Width: centred above the box and clamped at the frame's left and right
+    // edges; drops just inside the box when the frame's top edge is too close.
+    const ww = w.offsetWidth
+    const wh = w.offsetHeight
+    const wx = clamp(x0 + (x1 - x0) / 2 - ww / 2, 0, Math.max(0, size.w - ww))
+    const wy = y0 - GAP - wh >= 0 ? y0 - GAP - wh : y0 + GAP
+    // Height: right of the box and clamped at the frame's top and bottom
+    // edges; tucks just inside the box when the frame's right edge is too close.
+    const hw = h.offsetWidth
+    const hh = h.offsetHeight
+    const hx = x1 + GAP + hw <= size.w ? x1 + GAP : x1 - GAP - hw
+    const hy = clamp(y0 + (y1 - y0) / 2 - hh / 2, 0, Math.max(0, size.h - hh))
+    setOff((p) => {
+      const n = { wx: wx - x0, wy: wy - y0, hx: hx - x0, hy: hy - y0 }
+      return p && p.wx === n.wx && p.wy === n.wy && p.hx === n.hx && p.hy === n.hy ? p : n
+    })
+  }, [box, scan, size, units])
+
   const pct = (v: number, of: number) => `${(v / of) * 100}%`
-  // Too close to the sheet's right edge for the label outside: tuck it inside.
-  const tight = ((scan.wMm - box.x1) / scan.wMm) * size.w < 28
   return (
     <div
       className={'trace-dims' + (shown ? ' is-in' : '')}
@@ -399,8 +401,12 @@ function MotifDims({ box, scan, size, units, shown }: { box: Box; scan: ScanImag
       }}
       aria-label={`Traced size ${fmtDim(box.x1 - box.x0, units)} by ${fmtDim(box.y1 - box.y0, units)}`}
     >
-      <span className="trace-dims__w">{fmtDim(box.x1 - box.x0, units)}</span>
-      <span className={'trace-dims__h' + (tight ? ' is-inside' : '')}>{fmtDim(box.y1 - box.y0, units)}</span>
+      <span ref={wRef} className="trace-dims__w" style={off ? { left: off.wx, top: off.wy } : undefined}>
+        {fmtDim(box.x1 - box.x0, units)}
+      </span>
+      <span ref={hRef} className="trace-dims__h" style={off ? { left: off.hx, top: off.hy } : undefined}>
+        {fmtDim(box.y1 - box.y0, units)}
+      </span>
     </div>
   )
 }
@@ -1233,17 +1239,9 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
   // The traced groups with the smoothness slider applied; indexes match vec.groups.
   const groups = useMemo(() => (vec ? smoothGroups(vec.groups, smooth) : []), [vec, smooth])
 
-  // Preview and import show only the groups kept in Modify. Pieces carry their
-  // layer colour, aligned with the full (unfiltered) group list.
+  // Preview and import show only the groups kept in Modify.
   const vecPaths = useMemo(
-    () =>
-      vec
-        ? (
-            <VecPaths
-              pieces={groups.map((g, i) => ({ g, color: vec.colors?.[i] })).filter((_, i) => keep.has(i))}
-            />
-          )
-        : null,
+    () => (vec ? <VecPaths groups={groups.filter((_, i) => keep.has(i))} /> : null),
     [vec, groups, keep],
   )
 
@@ -1733,10 +1731,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
                     <g key={i} data-testid={`trace-group-${i}`} onClick={() => tapGroup(i)}>
                       {/* invisible wide stroke = forgiving tap target */}
                       <path d={d} className="trace-group-hit" />
-                      <VecPaths
-                        pieces={[{ g: groups[i], color: vec.colors?.[i] }]}
-                        className={'trace-path trace-group' + (keep.has(i) ? '' : ' is-dropped')}
-                      />
+                      <VecPaths groups={[groups[i]]} className={'trace-path trace-group' + (keep.has(i) ? '' : ' is-dropped')} />
                     </g>
                   ) : null,
                 )}

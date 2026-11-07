@@ -4,7 +4,9 @@
 import type { Contour, CutType, FreeOrigin, Group, OriginPoint, Shape, ShapeKind, StudioDoc, Units } from '../model/types'
 import { DEFAULT_CUT, SNAP_KINDS } from '../model/types'
 import { uid } from '../model/ids'
-import { parsePen } from '../geometry/pen'
+import { parsePen, penGeometry, penOf } from '../geometry/pen'
+import { bboxValid, localBBox, toWorld } from '../geometry/transform'
+import { withParams } from '../editor/shapeFactory'
 import { useStore } from '../state/store'
 import { isDesktop } from '../desktop/runtime'
 import { desktopPickOpen, desktopPickSave, desktopRead, desktopWrite, type DesktopFileHandle } from '../desktop/files'
@@ -31,8 +33,12 @@ const w = (typeof window !== 'undefined' ? window : {}) as FSWindow
 
 export const supportsFileSystemAccess = () => typeof w.showSaveFilePicker === 'function'
 
+/**
+ * Design JSON. A shape with true curves is stored as its curves alone: the polyline contours are
+ * flattened from them, so they are rebuilt on open instead of costing hundreds of points per circle.
+ */
 export function serialize(doc: StudioDoc): string {
-  return JSON.stringify(doc)
+  return JSON.stringify({ ...doc, shapes: doc.shapes.map((s) => (penOf(s) ? { ...s, contours: [] } : s)) })
 }
 
 const SHAPE_KINDS: ShapeKind[] = ['circle', 'ellipse', 'rect', 'polygon', 'triangle', 'template', 'path', 'text', 'import', 'slice', 'sketch']
@@ -47,14 +53,17 @@ const freeOrigin = (v: unknown): FreeOrigin | null => (isObj(v) && finite(v.fx) 
 
 /** Rebuild one shape from untrusted JSON, dropping bad contours. Null = unusable. */
 function repairShape(raw: unknown): Shape | null {
-  if (!isObj(raw) || !Array.isArray(raw.contours)) return null
-  const contours: Contour[] = []
-  for (const c of raw.contours) {
+  if (!isObj(raw)) return null
+  const pen = parsePen(raw.pen)
+  let contours: Contour[] = []
+  for (const c of Array.isArray(raw.contours) ? raw.contours : []) {
     if (!isObj(c) || !Array.isArray(c.pts)) continue
     const pts = c.pts.filter((p): p is { x: number; y: number } => isObj(p) && finite(p.x) && finite(p.y)).map((p) => ({ x: p.x, y: p.y }))
     if (pts.length < 2) continue
     contours.push({ pts, closed: c.closed === true && pts.length >= 3 })
   }
+  // Curves saved without their contours (see serialize): flatten them again.
+  if (!contours.length && pen) contours = penGeometry(pen).contours.filter((c) => c.pts.length >= 2)
   if (!contours.length) return null
   const cut = isObj(raw.cut) ? raw.cut : {}
   const sx = numOr(raw.sx, 1) || 1
@@ -88,9 +97,26 @@ function repairShape(raw: unknown): Shape | null {
   if (raw.locked === true) shape.locked = true
   if (typeof raw.groupId === 'string') shape.groupId = raw.groupId
   if (isObj(raw.meta)) shape.meta = raw.meta as Shape['meta']
-  const pen = parsePen(raw.pen)
   if (pen) shape.pen = pen
-  return shape
+  return migrateKeyhole(shape)
+}
+
+/**
+ * Keyholes used to be centred on their bounds with the head on top. They are now Studio's: the neck centre is
+ * the origin and the head hangs below it. An old one is rebuilt flipped, placed by its neck, so it looks the same.
+ */
+function migrateKeyhole(s: Shape): Shape {
+  if (s.kind !== 'template' || s.params?.template !== 'keyhole') return s
+  const b = localBBox(s)
+  if (!bboxValid(b) || Math.abs(b.minY + b.maxY) > 1e-6 || Math.abs(b.minX + b.maxX) > 1e-6) return s
+  const p = s.params
+  const len = Math.max(0, Number(p.slotLength ?? 0))
+  const h = Number(p.headDiameter ?? 0) / 2
+  const n = Number(p.slotWidth ?? 0) / 2
+  // The old outline before centring: head circle on 0, neck end circle on +len.
+  const c = (Math.min(-h, -n) + Math.max(h, len + n)) / 2
+  const neck = toWorld(s, { x: 0, y: len - c })
+  return withParams({ ...s, x: neck.x, y: neck.y, sy: -s.sy }, p)
 }
 
 /**

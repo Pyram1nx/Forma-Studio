@@ -1,8 +1,9 @@
 // Memoised derived geometry per shape object (shapes are immutable, so the
 // object identity is a perfect cache key).
 import type { Contour, Shape } from '../model/types'
-import { worldContours, bboxOfContours, type BBox } from '../geometry/transform'
+import { worldContours, bboxOfContours, toWorld, type BBox } from '../geometry/transform'
 import { contoursToD } from '../geometry/svgPath'
+import { penOf, penToD } from '../geometry/pen'
 import { computeCutGeometry, type CutGeometry } from './canvas/canvasMath'
 
 const worldCache = new WeakMap<Shape, Contour[]>()
@@ -31,7 +32,9 @@ export function wbbox(s: Shape): BBox {
 export function worldD(s: Shape): string {
   let d = dCache.get(s)
   if (d === undefined) {
-    d = contoursToD(world(s))
+    // Shapes with true curves draw them (an affine map keeps a Bézier exact), so they stay smooth at any zoom.
+    const pen = penOf(s)
+    d = pen ? penToD(pen, (p) => toWorld(s, p)) : contoursToD(world(s))
     dCache.set(s, d)
   }
   return d

@@ -3,14 +3,14 @@ import type { OriginPoint, OriginRef, Pt, Shape } from '../model/types'
 import { activeOrigin, useStore } from '../state/store'
 import { requestCut, subscribeCut, wbbox, world } from './geomCache'
 import { bake, bboxValid, distToContours, emptyBBox, pointInContours, type BBox } from '../geometry/transform'
-import { anchorBBox, anchorPoint } from './ops'
+import { anchorBBox, anchorPoint, ownAnchorPoint } from './ops'
 import { gridShown, gridSizeMm, gridSnaps, labelsShown } from './grid'
 import { GRID_SNAP_PX, OBJECT_SNAP_PX, alignLines, guideFor, orthoDelta, snapAxis, snapKindsOn, snapPoint } from './snapTargets'
 import { fmtLen } from '../model/factory'
 import { uid } from '../model/ids'
 import { getPrefs, newShapeCut } from '../state/prefs'
 import { contoursToD } from '../geometry/svgPath'
-import { normalizeParametric } from './shapeFactory'
+import { disallowedHandles, normalizeParametric } from './shapeFactory'
 import { IconArrowDown } from '../ui/icons'
 import { boxJointForSelection, boxJointPartsOf, scaleBoxJoint, setBoxJointAnchor, stockAnchorOf, stockAnchorWorld, syncBoxJointGuides } from './boxJointGuides'
 import { STOCK_ANCHORS, type StockAnchor } from '../geometry/boxJoints'
@@ -725,7 +725,11 @@ export default function Canvas() {
           hit.groupId && design && !hit.locked
             ? st.doc.shapes.filter((s) => s.groupId === hit.groupId && !s.locked).map((s) => s.id)
             : [hit.id]
-        const multi = selectionUnitCount(st.doc.shapes.filter((s) => sel.includes(s.id)), design) > 1
+        // Touch has no shift key: taps always accumulate into the selection, and tapping a selected one removes it.
+        const multi =
+          e.pointerType === 'touch'
+            ? sel.length > 0
+            : selectionUnitCount(st.doc.shapes.filter((s) => sel.includes(s.id)), design) > 1
         if (sel.includes(hit.id) && multi) {
           toggleOnUp.current = unit
         } else if (multi) {
@@ -782,8 +786,10 @@ export default function Canvas() {
       x: hh.includes('l') ? b.minX : hh.includes('r') ? b.maxX : (b.minX + b.maxX) / 2,
       y: hh.startsWith('t') ? b.minY : hh.startsWith('b') ? b.maxY : (b.minY + b.maxY) / 2,
     })
-    // Scaling is always about the anchor (the centre unless another point was picked), as in Studio.
-    const anchor = anchorPoint(b, activeOrigin(st.doc, st.selection) ?? 'mc')
+    // Scaling is always about the anchor (the centre unless another point was picked, or a template's own
+    // anchor such as the keyhole's neck centre), as in Studio.
+    const origin = activeOrigin(st.doc, st.selection) ?? 'mc'
+    const anchor = ownAnchorPoint(selShapes, origin) ?? anchorPoint(b, origin)
     // No checkpoint here: the undo step is taken on the first real movement.
     const orig = new Map<string, Shape>()
     // Rotated shapes or multi-selections are baked so scaling is axis-aligned in world space.
@@ -880,7 +886,9 @@ export default function Canvas() {
         if (snap) {
           // Studio lines up the selection's left, right and centre (and the anchor) with every target line.
           const b = d.bbox
-          const ap = anchorPoint(anchorBBox(st.doc.shapes.filter((q) => d.orig.has(q.id)).map((q) => ({ ...q, ...d.orig.get(q.id)! })), b), activeOrigin(st.doc, st.selection) ?? 'mc')
+          const moving = st.doc.shapes.filter((q) => d.orig.has(q.id)).map((q) => ({ ...q, ...d.orig.get(q.id)! }))
+          const origin = activeOrigin(st.doc, st.selection) ?? 'mc'
+          const ap = ownAnchorPoint(moving, origin) ?? anchorPoint(anchorBBox(moving, b), origin)
           const hx = snapAxis([b.minX, b.maxX, (b.minX + b.maxX) / 2, ap.x], dx, snap.xs, snap.tol, snap.grid)
           const hy = snapAxis([b.minY, b.maxY, (b.minY + b.maxY) / 2, ap.y], dy, snap.ys, snap.tol, snap.grid)
           if (hx) dx += hx.shift
@@ -1109,9 +1117,12 @@ export default function Canvas() {
         x: hh.includes('l') ? hb.minX : hh.includes('r') ? hb.maxX : (hb.minX + hb.maxX) / 2,
         y: hh.startsWith('t') ? hb.minY : hh.startsWith('b') ? hb.maxY : (hb.minY + hb.maxY) / 2,
       })
-      const handleAnchor = anchorPoint(hb, activeOrigin(doc, selection) ?? 'mc')
+      const handleOrigin = activeOrigin(doc, selection) ?? 'mc'
+      const handleAnchor = ownAnchorPoint(selShapes, handleOrigin) ?? anchorPoint(hb, handleOrigin)
+      // Studio hides the handles a selected template cannot be dragged by (the keyhole keeps only the bottom one).
+      const noHandles = disallowedHandles(selShapes)
       const H = (h: Handle, x: number, y: number, dx: number, dy: number) => {
-        if (!handleUsable(h, hpos(h), handleAnchor)) return null
+        if (noHandles.has(h) || !handleUsable(h, hpos(h), handleAnchor)) return null
         const corner = !h.includes('m')
         const half = handleSize / 2
         return (
@@ -1159,7 +1170,7 @@ export default function Canvas() {
           {/* The origin marker: the usual centre dot, or the picked point (blue when snapped, red when free). */}
           {(() => {
             const o = activeOrigin(doc, selection) ?? 'mc'
-            const ap = anchorPoint(anchorBBox(selShapes, selBBox), o)
+            const ap = ownAnchorPoint(selShapes, o) ?? anchorPoint(anchorBBox(selShapes, selBBox), o)
             const free = typeof o !== 'string'
             const cls = o === 'mc' ? 'cv-center' : 'cv-anchor-mark' + (free ? ' is-free' : '')
             return <rect x={sx(ap.x) - ANCHOR_SIZE / 2} y={sy(ap.y) - ANCHOR_SIZE / 2} width={ANCHOR_SIZE} height={ANCHOR_SIZE} rx={ANCHOR_RX} className={cls} />

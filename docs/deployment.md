@@ -35,9 +35,14 @@ Everything is local-first. The app never waits for the network to save.
 1. **Vercel project.** At vercel.com (signed in as the repository owner), *Add New → Project*,
    import `Pyram1nx/Forma-Studio`. Vercel reads `vercel.json`; keep the defaults.
 2. **Database.** In the project: *Storage → Create Database → Neon (Serverless Postgres)*, free
-   plan, region close to your users. Connect it to the project and **tick only Production**
-   (untick Preview and Development). This adds `DATABASE_URL`. Leave Neon's "preview
-   branches" off. Tables are created on the first request; nothing to run by hand.
+   plan, region **Frankfurt (fra1)**, the region `vercel.json` runs the API in (change both
+   together, or every query crosses an ocean). Set **Auth to False**: the app has its own
+   accounts, and Neon Auth would only add unused tables and variables. Realtime stays False.
+   On *Connect a Project*: Environments **Production** only; under *Create database branch for
+   deployment* **untick both** Production and Preview (production must use the main branch,
+   not a fresh copy per deployment); Custom Prefix **`DATABASE`**, so it adds `DATABASE_URL`;
+   Sensitive **on**. Afterwards check *Settings → Environment Variables* lists `DATABASE_URL`
+   for Production only. Tables are created on the first request; nothing to run by hand.
 3. **Environment variables** (*Settings → Environment Variables*), all **Production only**,
    marked *Sensitive*:
 
@@ -91,7 +96,7 @@ saved on their device, so nothing is lost.
 
 ## Limits worth knowing
 
-- Neon's free plan has a storage cap (0.5 GB per project when this was written); the default
+- Neon's free plan has a storage cap (1 GB per project when this was written); the default
   quota of 50 MB per account and 3 MB per design keeps usage well inside it for small
   numbers of users. Check the current limits on neon.tech.
 - Vercel's free Hobby plan is for non-commercial use. A commercial site needs Pro.

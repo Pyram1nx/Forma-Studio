@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { Contour, CutSettings, FreeOrigin, Group, ImportPayload, Mode, OriginRef, OriginPoint, Pt, Shape, SnapKind, StudioDoc, Units } from '../model/types'
 import { uid } from '../model/ids'
 import type { DocHandle } from '../io/projectFile'
-import { mapPen } from '../geometry/pen'
+import { mapCurves, penOf } from '../geometry/pen'
 import { bake, bboxCenter, bboxH, bboxValid, bboxW, shapesBBox, type BBox } from '../geometry/transform'
 import { getPrefs, newDocSettings } from './prefs'
 import { readScoped, SYNCED_SETTINGS, writeScoped } from '../storage/space'
@@ -292,6 +292,8 @@ interface State {
 }
 
 const HISTORY_LIMIT = 100
+/** Share of the viewport that Zoom to Fit fills with the content, as in Shaper Studio. */
+const FIT_FRACTION = 0.7
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 let suppressCheckpoints = 0
@@ -536,15 +538,25 @@ export const useStore = create<State>((set, get) => {
       const ids = editableIds(get().selection, doc)
       if (!ids.length) return
       const sel = doc.shapes.filter((s) => ids.includes(s.id))
-      const c = bboxCenter(shapesBBox(sel))
+      // Mirror about the active anchor (a stock point, a group anchor or the custom anchor), not the centre.
+      const b = shapesBBox(sel)
+      const o = activeOrigin(doc, get().selection) ?? 'mc'
+      const c = typeof o === 'object'
+        ? { x: b.minX + o.fx * (b.maxX - b.minX), y: b.minY + o.fy * (b.maxY - b.minY) }
+        : {
+            x: o[1] === 'l' ? b.minX : o[1] === 'r' ? b.maxX : (b.minX + b.maxX) / 2,
+            y: o[0] === 't' ? b.minY : o[0] === 'b' ? b.maxY : (b.minY + b.maxY) / 2,
+          }
       get().updateShapes(ids, (s0) => {
         const s = bake(s0)
         const flip = (cs: Contour[]) =>
           cs.map((ct) => ({ closed: ct.closed, pts: ct.pts.map((p) => (axis === 'h' ? { x: -p.x, y: p.y } : { x: p.x, y: -p.y })) }))
+        const pen = penOf(s)
         return {
           ...s,
-          contours: flip(s.contours),
-          pen: s.pen && mapPen(s.pen, (p) => (axis === 'h' ? { x: -p.x, y: p.y } : { x: p.x, y: -p.y })),
+          ...(pen
+            ? mapCurves(s, pen, (p) => (axis === 'h' ? { x: -p.x, y: p.y } : { x: p.x, y: -p.y }))
+            : { contours: flip(s.contours), pen: undefined }),
           x: axis === 'h' ? 2 * c.x - s.x : s.x,
           y: axis === 'v' ? 2 * c.y - s.y : s.y,
           // Text keeps its params (it can be re-typeset); every other kind becomes a plain path.
@@ -552,6 +564,27 @@ export const useStore = create<State>((set, get) => {
           params: s.kind === 'text' ? s.params : undefined,
         }
       })
+      // The anchor is a fixed point in the world: it is the mirror axis, so it must not move. Anchors are
+      // stored relative to the bounds, which just reflected, so re-express them against the new bounds.
+      const after = get().doc
+      const g = groupForSelection(after, get().selection)
+      if (g?.anchor) {
+        const all = shapesBBox(after.shapes.filter((s) => s.groupId === g.id))
+        if (bboxValid(all)) {
+          get().setGroupAnchor(g.id, {
+            fx: (c.x - all.minX) / Math.max(all.maxX - all.minX, 1e-9),
+            fy: (c.y - all.minY) / Math.max(all.maxY - all.minY, 1e-9),
+          })
+        }
+      } else if (after.settings.originPoint) {
+        const op = after.settings.originPoint
+        const swap = (a: string, x: string, y: string) => (a === x ? y : a === y ? x : a)
+        const next: OriginRef =
+          typeof op === 'object'
+            ? { fx: axis === 'h' ? 1 - op.fx : op.fx, fy: axis === 'v' ? 1 - op.fy : op.fy }
+            : ((axis === 'h' ? op[0] + swap(op[1], 'l', 'r') : swap(op[0], 't', 'b') + op[1]) as OriginRef)
+        commitDoc({ ...after, settings: { ...after.settings, originPoint: next } })
+      }
     },
     replaceShapes: (removeIds, add) => {
       get().checkpoint()
@@ -685,12 +718,10 @@ export const useStore = create<State>((set, get) => {
         set({ view: { zoom, panX: viewport.w / 2, panY: viewport.h / 2 } })
         return
       }
-      // Padding never eats the whole viewport, so zoom stays positive on tiny windows.
-      const padX = Math.min(160, viewport.w * 0.2)
-      const padY = Math.min(160, viewport.h * 0.2)
+      // Studio frames the content at 70% of the viewport on its tighter axis.
       const w = Math.max(bboxW(b), 1)
       const h = Math.max(bboxH(b), 1)
-      const zoom = Math.max(0.05, Math.min((viewport.w - padX * 2) / w, (viewport.h - padY * 2) / h, 400))
+      const zoom = Math.max(0.05, Math.min((viewport.w * FIT_FRACTION) / w, (viewport.h * FIT_FRACTION) / h, 400))
       const c = bboxCenter(b)
       set({ view: { zoom, panX: viewport.w / 2 - c.x * zoom, panY: viewport.h / 2 - c.y * zoom } })
     },

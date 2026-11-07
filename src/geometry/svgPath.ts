@@ -51,7 +51,7 @@ class Scanner {
   }
 }
 
-function segCount(len: number, tol: number) {
+export function segCount(len: number, tol: number) {
   return Math.max(2, Math.min(256, Math.ceil(Math.sqrt(len / Math.max(tol, 1e-6)) * 1.2)))
 }
 
@@ -78,11 +78,20 @@ function quad(out: Pt[], p0: Pt, p1: Pt, p2: Pt, tol: number) {
   }
 }
 
-function arc(out: Pt[], p0: Pt, rx: number, ry: number, phiDeg: number, large: boolean, sweep: boolean, p: Pt, tol: number) {
-  if (rx === 0 || ry === 0) {
-    out.push(p)
-    return
-  }
+/** An elliptical arc in centre form: angles in radians, `phi` the x-axis rotation. Null when it is a straight line. */
+export interface ArcCentre {
+  cx: number
+  cy: number
+  rx: number
+  ry: number
+  phi: number
+  t1: number
+  dt: number
+}
+
+/** SVG endpoint arc parameters to centre form (SVG 1.1 implementation notes F.6.5, with radius correction). */
+export function arcCentre(p0: Pt, rx: number, ry: number, phiDeg: number, large: boolean, sweep: boolean, p: Pt): ArcCentre | null {
+  if (rx === 0 || ry === 0 || (p0.x === p.x && p0.y === p.y)) return null
   rx = Math.abs(rx)
   ry = Math.abs(ry)
   const phi = (phiDeg * Math.PI) / 180
@@ -106,40 +115,54 @@ function arc(out: Pt[], p0: Pt, rx: number, ry: number, phiDeg: number, large: b
   const cy1 = (-f * ry * x1) / rx
   const cx = cos * cx1 - sin * cy1 + (p0.x + p.x) / 2
   const cy = sin * cx1 + cos * cy1 + (p0.y + p.y) / 2
-  const ang = (ux: number, uy: number, vx: number, vy: number) => {
-    const a = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
-    return a
-  }
+  const ang = (ux: number, uy: number, vx: number, vy: number) => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
   const t1 = ang(1, 0, (x1 - cx1) / rx, (y1 - cy1) / ry)
   let dt = ang((x1 - cx1) / rx, (y1 - cy1) / ry, (-x1 - cx1) / rx, (-y1 - cy1) / ry)
   if (!sweep && dt > 0) dt -= 2 * Math.PI
   if (sweep && dt < 0) dt += 2 * Math.PI
-  const n = segCount(Math.abs(dt) * Math.max(rx, ry), tol)
-  for (let i = 1; i <= n; i++) {
-    const t = t1 + (dt * i) / n
-    const ex = rx * Math.cos(t)
-    const ey = ry * Math.sin(t)
-    out.push({ x: cos * ex - sin * ey + cx, y: sin * ex + cos * ey + cy })
-  }
+  return { cx, cy, rx, ry, phi, t1, dt }
 }
 
-/** Parse SVG path data into flattened contours. Stops at the first malformed token. */
-export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
+/** A point on a centre-form arc at angle t. */
+export function arcPoint(a: ArcCentre, t: number): Pt {
+  const ex = a.rx * Math.cos(t)
+  const ey = a.ry * Math.sin(t)
+  const cos = Math.cos(a.phi)
+  const sin = Math.sin(a.phi)
+  return { x: cos * ex - sin * ey + a.cx, y: sin * ex + cos * ey + a.cy }
+}
+
+function arc(out: Pt[], p0: Pt, rx: number, ry: number, phiDeg: number, large: boolean, sweep: boolean, p: Pt, tol: number) {
+  const a = arcCentre(p0, rx, ry, phiDeg, large, sweep, p)
+  if (!a) {
+    out.push(p)
+    return
+  }
+  const n = segCount(Math.abs(a.dt) * Math.max(a.rx, a.ry), tol)
+  for (let i = 1; i <= n; i++) out.push(arcPoint(a, a.t1 + (a.dt * i) / n))
+}
+
+/**
+ * One drawing command of SVG path data in absolute coordinates, with the shorthand forms (H V S T, relative
+ * commands, implicit repeats) resolved. Quadratics stay quadratics and arcs stay arcs: nothing is approximated.
+ */
+export type PathOp =
+  | { op: 'M'; p: Pt }
+  | { op: 'L'; p: Pt }
+  | { op: 'C'; p1: Pt; p2: Pt; p: Pt }
+  | { op: 'Q'; p1: Pt; p: Pt }
+  | { op: 'A'; rx: number; ry: number; phi: number; large: boolean; sweep: boolean; p: Pt }
+  | { op: 'Z' }
+
+/** Read SVG path data into absolute drawing commands. Stops at the first malformed token. */
+export function pathOps(d: string): PathOp[] {
   const sc = new Scanner(d)
-  const contours: Contour[] = []
-  let cur: Pt[] = []
+  const ops: PathOp[] = []
   let pos: Pt = { x: 0, y: 0 }
   let start: Pt = { x: 0, y: 0 }
   let lastCtrl: Pt | null = null
   let lastCmd = ''
   let cmd = ''
-  const ensure = () => {
-    if (!cur.length) cur.push(pos)
-  }
-  const flush = (closed: boolean) => {
-    if (cur.length > 1) contours.push({ pts: dedupe(cur, closed), closed })
-    cur = []
-  }
   outer: while (!sc.eof()) {
     const letter = sc.cmd()
     if (letter) cmd = letter
@@ -162,10 +185,9 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
       case 'M': {
         const a = nums(2)
         if (!a) break outer
-        flush(false)
         pos = { x: ox + a[0], y: oy + a[1] }
         start = pos
-        cur = [pos]
+        ops.push({ op: 'M', p: pos })
         cmd = rel ? 'l' : 'L'
         lastCtrl = null
         break
@@ -173,27 +195,24 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
       case 'L': {
         const a = nums(2)
         if (!a) break outer
-        ensure()
         pos = { x: ox + a[0], y: oy + a[1] }
-        cur.push(pos)
+        ops.push({ op: 'L', p: pos })
         lastCtrl = null
         break
       }
       case 'H': {
         const a = nums(1)
         if (!a) break outer
-        ensure()
         pos = { x: ox + a[0], y: pos.y }
-        cur.push(pos)
+        ops.push({ op: 'L', p: pos })
         lastCtrl = null
         break
       }
       case 'V': {
         const a = nums(1)
         if (!a) break outer
-        ensure()
         pos = { x: pos.x, y: oy + a[0] }
-        cur.push(pos)
+        ops.push({ op: 'L', p: pos })
         lastCtrl = null
         break
       }
@@ -203,8 +222,7 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
         const p1 = { x: ox + a[0], y: oy + a[1] }
         const p2 = { x: ox + a[2], y: oy + a[3] }
         const p3 = { x: ox + a[4], y: oy + a[5] }
-        ensure()
-        cubic(cur, pos, p1, p2, p3, tol)
+        ops.push({ op: 'C', p1, p2, p: p3 })
         lastCtrl = p2
         pos = p3
         break
@@ -215,8 +233,7 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
         const p1: Pt = lastCtrl && /[CS]/.test(lastCmd) ? { x: 2 * pos.x - lastCtrl.x, y: 2 * pos.y - lastCtrl.y } : pos
         const p2 = { x: ox + a[0], y: oy + a[1] }
         const p3 = { x: ox + a[2], y: oy + a[3] }
-        ensure()
-        cubic(cur, pos, p1, p2, p3, tol)
+        ops.push({ op: 'C', p1, p2, p: p3 })
         lastCtrl = p2
         pos = p3
         break
@@ -226,8 +243,7 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
         if (!a) break outer
         const p1 = { x: ox + a[0], y: oy + a[1] }
         const p2 = { x: ox + a[2], y: oy + a[3] }
-        ensure()
-        quad(cur, pos, p1, p2, tol)
+        ops.push({ op: 'Q', p1, p: p2 })
         lastCtrl = p1
         pos = p2
         break
@@ -237,8 +253,7 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
         if (!a) break outer
         const p1: Pt = lastCtrl && /[QT]/.test(lastCmd) ? { x: 2 * pos.x - lastCtrl.x, y: 2 * pos.y - lastCtrl.y } : pos
         const p2 = { x: ox + a[0], y: oy + a[1] }
-        ensure()
-        quad(cur, pos, p1, p2, tol)
+        ops.push({ op: 'Q', p1, p: p2 })
         lastCtrl = p1
         pos = p2
         break
@@ -253,18 +268,16 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
         const e = nums(2)
         if (!e) break outer
         const p = { x: ox + e[0], y: oy + e[1] }
-        ensure()
-        arc(cur, pos, a[0], a[1], a[2], large, sweep, p, tol)
+        ops.push({ op: 'A', rx: a[0], ry: a[1], phi: a[2], large, sweep, p })
         pos = p
         lastCtrl = null
         break
       }
       case 'Z':
-        flush(true)
+        ops.push({ op: 'Z' })
         // After Z the current point is the subpath start; implicit segments
         // that follow start a new subpath from there.
         pos = start
-        cur = [start]
         lastCtrl = null
         // Z takes no arguments: stray numbers after it are malformed.
         cmd = ''
@@ -273,6 +286,56 @@ export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
         break outer
     }
     lastCmd = C
+  }
+  return ops
+}
+
+/** Parse SVG path data into flattened contours. Stops at the first malformed token. */
+export function parsePathD(d: string, tol = DEFAULT_TOL): Contour[] {
+  const contours: Contour[] = []
+  let cur: Pt[] = []
+  let pos: Pt = { x: 0, y: 0 }
+  let start: Pt = { x: 0, y: 0 }
+  const ensure = () => {
+    if (!cur.length) cur.push(pos)
+  }
+  const flush = (closed: boolean) => {
+    if (cur.length > 1) contours.push({ pts: dedupe(cur, closed), closed })
+    cur = []
+  }
+  for (const o of pathOps(d)) {
+    switch (o.op) {
+      case 'M':
+        flush(false)
+        pos = start = o.p
+        cur = [pos]
+        break
+      case 'L':
+        ensure()
+        cur.push(o.p)
+        pos = o.p
+        break
+      case 'C':
+        ensure()
+        cubic(cur, pos, o.p1, o.p2, o.p, tol)
+        pos = o.p
+        break
+      case 'Q':
+        ensure()
+        quad(cur, pos, o.p1, o.p, tol)
+        pos = o.p
+        break
+      case 'A':
+        ensure()
+        arc(cur, pos, o.rx, o.ry, o.phi, o.large, o.sweep, o.p, tol)
+        pos = o.p
+        break
+      case 'Z':
+        flush(true)
+        pos = start
+        cur = [start]
+        break
+    }
   }
   flush(false)
   return contours

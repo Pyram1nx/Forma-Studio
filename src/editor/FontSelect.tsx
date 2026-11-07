@@ -4,7 +4,7 @@ import { useStore } from '../state/store'
 import type { Shape } from '../model/types'
 import * as Ic from '../ui/icons'
 import { FONTS, FONT_FILTERS, fontUrl, isHeavyFont, findFont, findStyle, type FontCategory, type FontDef, type FontStyleDef } from '../io/fontCatalog'
-import { fontSupports, linePathData, loadStyle, textToContours } from '../io/text'
+import { fontSupports, linePathData, loadStyle, textGeometry } from '../io/text'
 import { FONT_FILTER_ICONS, IconUnfoldLess, IconUnfoldMore } from './fontIcons'
 import { applyText, previewText, restoreText, snapshotOf, textParams, type TextSnapshot } from './textOps'
 
@@ -110,7 +110,7 @@ export default function FontSelect({ shape, disabled }: { shape: Shape; disabled
     if (!snap.current) snap.current = snapshotOf(live)
     const mine = ++token.current
     const p = textParams(live)
-    textToContours(p.text, name, p.height, style.displayStyle).then(
+    textGeometry(p.text, name, p.height, style.displayStyle).then(
       (c) => mine === token.current && snap.current && previewText(id, c),
       () => {},
     )

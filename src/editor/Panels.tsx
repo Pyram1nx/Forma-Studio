@@ -6,8 +6,8 @@ import { MM_PER_IN } from '../model/types'
 import { fmtNum } from '../model/factory'
 import * as Ic from '../ui/icons'
 import { worldD } from './geomCache'
-import { anchorBBox, anchorPoint, parseLength, resizeSelection, rotateSelection, selectionBBox, type Anchor, type AnchorRef } from './ops'
-import { buildFromParams } from './shapeFactory'
+import { anchorBBox, anchorPoint, ownAnchorPoint, parseLength, resizeSelection, rotateSelection, selectionBBox, type Anchor, type AnchorRef } from './ops'
+import { withParams } from './shapeFactory'
 import { isBoxJoint, updateBoxJoint } from './boxJointGuides'
 import { TEMPLATES } from '../geometry/templates'
 import { polygonUnitSize } from '../geometry/primitives'
@@ -457,7 +457,7 @@ export function DesignPanel() {
   const tool = useStore((s) => s.tool)
   const dialog = useStore((s) => s.dialog)
   const penEditId = useStore((s) => s.penEditId)
-  const [lock, setLock] = useState(false)
+  const [lock, setLock] = useState(true)
   // Mobile bottom sheet: active tab and collapsed state (CSS shows these only at <=700px).
   const [mtab, setMtab] = useState('size')
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -477,11 +477,11 @@ export function DesignPanel() {
   const anchor: AnchorRef = activeOrigin(doc, selection) ?? 'mc'
   const anchorPicking = useStore((s) => s.anchorPicking)
   const sel = selectedShapes({ doc, selection })
-  // Studio opens a polygon with its size fields linked.
-  const polygonId = sel.length === 1 && sel[0].kind === 'polygon' ? sel[0].id : ''
+  // Studio opens any selection with its size fields linked (until unlinked for that selection).
+  const selKey = sel.map((s) => s.id).join(',')
   useEffect(() => {
-    if (polygonId) setLock(true)
-  }, [polygonId])
+    setLock(true)
+  }, [selKey])
   // The Offset panel takes the right dock while it is open.
   if (mode !== 'design' || !sel.length || tool !== 'select' || dialog === 'offset' || dialog === 'radius' || anchorPicking) return null
   const units = doc.units
@@ -538,8 +538,7 @@ export function DesignPanel() {
           if (!next) return s
           params = { ...s.params!, ...next }
         }
-        const contours = buildFromParams(s.kind, params)
-        return contours ? { ...s, params, contours } : s
+        return withParams(s, params)
       }),
     )
   }
@@ -551,15 +550,14 @@ export function DesignPanel() {
       st().updateShapes([single.id], (s) => {
         const params: Record<string, number | string | boolean> = { ...s.params!, r: Math.max(0, v) }
         delete params.cr
-        const contours = buildFromParams(s.kind, params)
-        return contours ? { ...s, params, contours } : s
+        return withParams(s, params)
       }),
     )
   }
 
   const tpl = single?.kind === 'template' ? TEMPLATES.find((t) => t.id === single.params?.template) : undefined
   const group = single?.groupId ? doc.groups.find((g) => g.id === single.groupId) : undefined
-  const pos = anchorPoint(anchorBBox(sel, b), anchor)
+  const pos = ownAnchorPoint(sel, anchor) ?? anchorPoint(anchorBBox(sel, b), anchor)
   const moveBy = (dx: number, dy: number, c: boolean) => mut(c, () => st().updateShapes(editableIds(ids), (s) => ({ ...s, x: s.x + dx, y: s.y + dy })))
 
   // Templates use Studio's own settings panel: their parameters, then rotation and anchor. No size fields.

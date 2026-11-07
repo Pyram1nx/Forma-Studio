@@ -10,13 +10,14 @@
 //   GET    /item?kind=K&id=ID                                   -> one item with its data
 //   PUT    /item?kind=K&id=ID    { name, shapes, updatedAt, data, baseRev }
 //   DELETE /item?kind=K&id=ID&baseRev=REV
-//   GET    /icons/search?q=      GET /icons/svg?id=              (Find Art, no sign-in)
+//   GET    /icons/search?q=      GET /icons/svg?id=   GET /icons/sets   (Find Art, no sign-in)
 //
 // Env: DATABASE_URL (Neon Postgres), SESSION_SECRET (32+ random bytes), ALLOWED_ORIGINS
 //      (comma list, for the desktop app), TOKEN_TTL_DAYS (default 30), USER_QUOTA_MB (default 50).
 import { createHash, createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import { createNeonDb } from './db.js'
+import { iconSetsRoute, iconSvgRoute, searchIconsRoute } from './icons.js'
 
 const scryptAsync = promisify(scrypt)
 // Same parameters and encoding as the previous AWS accounts API, so imported users keep their passwords.
@@ -297,34 +298,23 @@ async function deleteItem(ctx) {
 
 // ---------- icon search (Find Art) ----------
 
-// Proxies Iconify (open-licensed icon sets, no API key) so the editor only talks to this
-// origin. Only solid, filled sets: stroke-only icons do not import as shapes.
-const ICON_PREFIXES = 'mdi,bi'
-const ICON_ID_RE = /^(mdi|bi):[a-z0-9-]{1,80}$/
-const ICONIFY = 'https://api.iconify.design'
-
-async function iconSearch(ctx) {
-  const q = String(ctx.url.searchParams.get('q') ?? '').trim()
-  if (q.length < 2 || q.length > 80) throw new HttpError(400, 'Search for at least 2 characters.')
-  const max = Math.min(Math.max(Number(ctx.url.searchParams.get('limit')) || 36, 1), 60)
-  const params = new URLSearchParams({ query: q, limit: String(max), prefixes: ICON_PREFIXES })
-  const res = await fetch(`${ICONIFY}/search?${params}`, { signal: AbortSignal.timeout(8000) })
-  if (!res.ok) throw new HttpError(502, 'Icon search is unavailable right now.')
-  const data = await res.json()
-  const icons = (data.icons ?? []).filter((id) => ICON_ID_RE.test(id)).map((id) => ({ id }))
-  return json(200, { icons }, { 'cache-control': 'public, max-age=3600' })
+// Forma's own icon index (server/icons.js): open-licensed sets, searched and served from this
+// origin. Results are the same for everyone, so the CDN caches them.
+async function iconRoute(fn, ctx, cache) {
+  const out = await fn(ctx.url)
+  if (out.error) throw new HttpError(out.status, out.error)
+  if (out.svg) {
+    return new Response(out.svg, {
+      status: 200,
+      headers: { 'content-type': 'image/svg+xml', 'cache-control': cache, 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" },
+    })
+  }
+  return json(200, out.body, { 'cache-control': cache })
 }
 
-async function iconSvg(ctx) {
-  const id = String(ctx.url.searchParams.get('id') ?? '')
-  if (!ICON_ID_RE.test(id)) throw new HttpError(400, 'Unknown icon.')
-  const [prefix, name] = id.split(':')
-  // Black fill at 24px so the importer reads real geometry, not 1em or currentColor.
-  const params = new URLSearchParams({ color: '#000000', width: '24', height: '24' })
-  const res = await fetch(`${ICONIFY}/${prefix}/${name}.svg?${params}`, { signal: AbortSignal.timeout(8000) })
-  if (!res.ok) throw new HttpError(404, 'Icon not found.')
-  return new Response(await res.text(), { status: 200, headers: { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' } })
-}
+const iconSearch = (ctx) => iconRoute(searchIconsRoute, ctx, 'public, max-age=3600, s-maxage=86400')
+const iconSvg = (ctx) => iconRoute(iconSvgRoute, ctx, 'public, max-age=604800, s-maxage=31536000')
+const iconSets = (ctx) => iconRoute(iconSetsRoute, ctx, 'public, max-age=3600, s-maxage=86400')
 
 const ROUTES = {
   'POST /auth/signup': { fn: signup, needsDb: true },
@@ -337,6 +327,7 @@ const ROUTES = {
   'DELETE /item': { fn: deleteItem, needsDb: true },
   'GET /icons/search': { fn: iconSearch },
   'GET /icons/svg': { fn: iconSvg },
+  'GET /icons/sets': { fn: iconSets },
 }
 
 /** The production handler (Vercel Functions in api/ call this). */

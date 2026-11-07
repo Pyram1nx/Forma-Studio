@@ -36,7 +36,6 @@
   position: relative;
   flex: none;
   background: var(--white);
-  box-shadow: var(--shadow-pop);
 }
 .trace-stage__inner > canvas {
   display: block;
@@ -185,24 +184,9 @@
   color: var(--blue-050);
   white-space: nowrap;
 }
-.trace-dims__w {
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 8px;
-}
 /* Reads top to bottom, turned clockwise like the studio's side dimension. */
 .trace-dims__h {
-  left: 100%;
-  top: 50%;
-  transform: translateY(-50%);
-  margin-left: 8px;
   writing-mode: vertical-rl;
-}
-.trace-dims__h.is-inside {
-  left: auto;
-  right: 0;
-  margin: 0 6px 0 0;
 }
 /* The slider line rides the reveal edge: same duration and easing as the clip. */
 .trace-reveal__line {
@@ -594,10 +578,6 @@
   .trace-stage {
     padding: 40px 10px 12px;
   }
-  /* The drawing fills the screen, framed on the traced selection. */
-  .trace-stage__inner {
-    box-shadow: none;
-  }
   .trace-controls {
     display: flex;
     flex-direction: column;
@@ -779,7 +759,6 @@
    simply disappears, leaving the sheet. */
 .trace-stage__inner.is-bare {
   background: transparent;
-  box-shadow: none;
 }
 /* The full photo is clipped away from the left in step with the line; the
    copy clipped to the sheet underneath stays. */

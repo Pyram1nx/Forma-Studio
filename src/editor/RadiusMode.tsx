@@ -11,7 +11,7 @@ import { world } from './geomCache'
 import { contoursToD } from '../geometry/svgPath'
 import { bboxOfContours } from '../geometry/transform'
 import { filletPolygon, formatRadii, maxFillet } from '../geometry/fillet'
-import { buildFromParams } from './shapeFactory'
+import { buildFromParams, withParams } from './shapeFactory'
 import { isMixed, radiusValues, VERTEX_KINDS, vertexCount, VIEW_RADIUS_PRESETS, presetLabel } from './radius'
 
 /** Shape-to-world transform, applied to the sharp and the rounded outline alike. */
@@ -73,8 +73,7 @@ function RadiusView({ shape }: { shape: Shape }) {
   const apply = () => {
     useStore.getState().updateShapes([shape.id], (s) => {
       const params = { ...s.params!, cr: formatRadii(draft) }
-      const contours = buildFromParams(s.kind, params)
-      return contours ? { ...s, params, contours } : s
+      return withParams(s, params)
     })
     close()
   }
