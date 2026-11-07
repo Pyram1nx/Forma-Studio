@@ -6,11 +6,17 @@
 //
 // Outline mode (filled shapes): marching squares on the mask -> closed loops
 // (outer boundaries and holes) -> mm -> smoothing -> RDP -> holes grouped
-// under the outer loop that contains them.
+// under the outer loop that contains them, so cutting the shape cuts the
+// holes right through it.
+//
+// Layered mode: the same loops, but every loop becomes its own shape — the
+// holes (eyes in a face) and islands come out as separate pieces and the
+// outer boundary stays solid, so nothing cuts through anything. Colour
+// separation lives above this file: per-colour masks arrive already split.
 import type { Contour, Pt } from '../../model/types'
 import { signedArea, simplify } from '../../geometry/offset'
 
-export type VectorMode = 'centerline' | 'outline'
+export type VectorMode = 'centerline' | 'outline' | 'layered'
 
 export interface VectorResult {
   mode: VectorMode
@@ -19,6 +25,8 @@ export interface VectorResult {
   /** Average stroke width estimate in mm (ink area / line length). */
   strokeWidthMm: number
   lineCount: number
+  /** Per-group fill colour (hex), when the trace was split into colour layers. */
+  colors?: string[]
 }
 
 /** Polylines shorter than this (mm) are dropped as noise. */
@@ -539,6 +547,9 @@ async function centerline(
   // grain) are wider than the join tolerance: bridge them over the ink.
   pieces = joinEndpoints(pieces, bridge, onInk)
   pieces = dropBranchStubs(pieces, sw, 'touch', undefined, tol)
+  // The skeleton's caps sit half a stroke width inside the drawn ends; walk
+  // each tip back out to the ink before smoothing pins the endpoints.
+  extendCaps(pieces, mask, w, h, swPx, ppm, ppmY)
   await yieldToUi()
 
   const groups: Contour[][] = []
@@ -553,6 +564,48 @@ async function centerline(
     groups.push([{ pts: simp, closed }])
   }
   return { groups, lengthMm }
+}
+
+/**
+ * Thinning pulls the skeleton's cap up to half a stroke width inside the
+ * drawn stroke end, so an on-line cut would come up short at every endpoint.
+ * Walk each open end outward along its own direction while there is ink and
+ * put the tip just past the boundary. Ends with no ink ahead — thin strokes,
+ * whose skeleton already reaches the paper — stay put.
+ */
+function extendCaps(pieces: Piece[], mask: Uint8Array, w: number, h: number, swPx: number, ppm: number, ppmY: number): void {
+  const pxX = (q: Pt) => q.x * ppm - 0.5
+  const pxY = (q: Pt) => q.y * ppmY - 0.5
+  const maxSteps = Math.ceil(swPx / 2) + 3
+  for (const piece of pieces) {
+    if (piece.closed || piece.pts.length < 2) continue
+    const pts = piece.pts
+    for (const atStart of [true, false]) {
+      const n = pts.length
+      const tip = atStart ? pts[0] : pts[n - 1]
+      const inner = atStart ? pts[Math.min(3, n - 1)] : pts[Math.max(0, n - 4)]
+      let dx = pxX(tip) - pxX(inner)
+      let dy = pxY(tip) - pxY(inner)
+      const L = Math.hypot(dx, dy)
+      if (!(L > 1e-6)) continue
+      dx /= L
+      dy /= L
+      const bx = pxX(tip)
+      const by = pxY(tip)
+      let steps = 0
+      while (steps < maxSteps) {
+        const x = Math.round(bx + dx * (steps + 1))
+        const y = Math.round(by + dy * (steps + 1))
+        if (x < 0 || y < 0 || x >= w || y >= h || !mask[y * w + x]) break
+        steps++
+      }
+      if (!steps) continue
+      // Just past the last ink pixel, so the cut reaches the drawn end.
+      const tip2 = { x: (bx + dx * (steps + 1.2) + 0.5) / ppm, y: (by + dy * (steps + 1.2) + 0.5) / ppmY }
+      if (atStart) pts[0] = tip2
+      else pts[n - 1] = tip2
+    }
+  }
 }
 
 /**
@@ -969,8 +1022,11 @@ function pointInPoly(p: Pt, poly: Pt[]): boolean {
 /**
  * Group loops into shapes: a loop nested at even depth is an outer boundary (or
  * an island), at odd depth it is a hole that belongs to its immediate parent.
+ * In layered mode every loop is its own shape instead — holes and islands come
+ * out as separate pieces and nothing nests.
  */
-export function groupLoops(loops: Pt[][]): Contour[][] {
+export function groupLoops(loops: Pt[][], layered = false): Contour[][] {
+  if (layered) return loops.map((l) => [{ pts: l, closed: true }])
   const n = loops.length
   const area = loops.map((l) => Math.abs(signedArea(l)))
   const boxes = loops.map(boxOf)
@@ -1034,7 +1090,9 @@ export async function vectorise(
     return { mode, groups, strokeWidthMm: round2(sw), lineCount: groups.length }
   }
 
-  // Outline: marching squares, then mm, then simplify and smooth each loop.
+  // Outline and layered: marching squares, then mm, then simplify and smooth
+  // each loop. Outline nests each hole under its outer loop; layered leaves
+  // every loop its own shape.
   const loopsMm = marchingLoops(mask, w, h).map((l) =>
     l.map((p) => ({ x: p.x / ppm, y: p.y / ppmY })),
   )
@@ -1048,10 +1106,30 @@ export async function vectorise(
     perimeterMm += polylineLength(s, true)
     smooth.push(s)
   }
-  const groups = groupLoops(smooth)
+  const groups = groupLoops(smooth, mode === 'layered')
   // A thin stroke has perimeter ~ 2 x its length, so width ~ area / (perimeter / 2).
   const sw = perimeterMm > 0 ? inkAreaMm2 / (perimeterMm / 2) : 0
   return { mode, groups, strokeWidthMm: round2(sw), lineCount: groups.length }
+}
+
+/**
+ * Combine per-layer vector results into one layered result. Layers run bottom
+ * (largest) first, so groups keep that stacking order; every group inherits
+ * its layer's colour, one entry per group.
+ */
+export function mergeLayered(parts: VectorResult[], colors: string[]): VectorResult {
+  const groups = parts.flatMap((p) => p.groups)
+  const groupColors: string[] = []
+  parts.forEach((p, i) => {
+    for (let g = 0; g < p.groups.length; g++) groupColors.push(colors[i])
+  })
+  return {
+    mode: 'layered',
+    groups,
+    strokeWidthMm: 0,
+    lineCount: groups.length,
+    colors: groupColors,
+  }
 }
 
 function round2(v: number): number {

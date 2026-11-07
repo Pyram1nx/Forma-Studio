@@ -1,8 +1,8 @@
-// Find Art icon search, served by the accounts Lambda (server/index.mjs, GET /icons/*).
+// Find Art icon search, served by the accounts API (server/app.js, GET /api/icons/*).
 // No sign-in needed. Only works in builds with VITE_API_URL set (see src/account/api.ts).
 import { API_URL, accountsEnabled } from '../account/api'
 import { importSVGText } from './svgImport'
-import type { ImportPayload } from '../model/types'
+import type { ShapesImport } from '../model/types'
 
 export interface IconHit {
   id: string
@@ -21,7 +21,7 @@ export async function searchIcons(q: string, signal?: AbortSignal): Promise<Icon
 }
 
 /** Fetches an icon and parses it into the same payload File Import produces. */
-export async function iconPayload(id: string): Promise<ImportPayload> {
+export async function iconPayload(id: string): Promise<ShapesImport> {
   const res = await fetch(iconUrl(id))
   if (!res.ok) throw new Error('Could not load that icon.')
   return importSVGText(await res.text(), id.split(':')[1] ?? 'icon')

@@ -121,7 +121,7 @@ export function installCaliperInput() {
             flashed = true
           }
         } else if (e.key === 'Enter' && cand.el === el && caliperUnit(cand.buf) && e.timeStamp - cand.last <= BURST_GAP_MS * 2) {
-          field = cand.el
+          field = el as HTMLInputElement
           buf = cand.buf
           cand = { el: null, buf: '', last: 0 }
           finish()

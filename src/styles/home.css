@@ -127,6 +127,22 @@
   font-size: 13px;
   margin: 0 0 16px;
 }
+.home__head .sync-status {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.home__notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--blue-lighter);
+  border: 1px solid var(--blue-tint);
+  font-size: 14px;
+}
 
 .home-grid {
   list-style: none;

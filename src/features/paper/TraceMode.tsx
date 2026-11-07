@@ -28,7 +28,7 @@
 // background by imageMask.ts. It has no real size, so it starts at
 // IMAGE_LONG_MM and Resize (in place of Paper Outline) scales the traced design
 // to the size it should be.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, JSX, PointerEvent, ReactNode } from 'react'
 import { MM_PER_IN, type Contour, type ImportPayload, type Pt, type Shape, type Units } from '../../model/types'
 import { newShapeCut } from '../../state/prefs'
@@ -40,9 +40,9 @@ import { Detector } from './detectClient'
 import { computeHomography, warpPerspective } from './homography'
 import { grayFromImageData } from './ink'
 import { estimateAspect, guessPaper, PRESETS, TRACE_FRAME, type PaperPreset, type SheetKind } from './paperSize'
-import { CancelledError, cancelPaperJobs, runImageMask, runInk, runVector } from './pipeline'
+import { CancelledError, cancelPaperJobs, runImageMask, runInk, runLayers, runVector } from './pipeline'
 import { captureFromTrack, defaultTrack, traceFrameFromTrack } from './traceDots'
-import type { VectorMode, VectorResult } from './trace'
+import { mergeLayered, type VectorMode, type VectorResult } from './trace'
 import TraceIntro from './TraceIntro'
 import './trace.css'
 
@@ -246,15 +246,47 @@ function useFit(aspect: number) {
 const pathD = (c: Contour) =>
   c.pts.length < 2 ? '' : 'M' + c.pts.map((p) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('L') + (c.closed ? 'Z' : '')
 
+/** One traced group with its layer colour, when traced by colour layers. */
+interface VecPiece {
+  g: Contour[]
+  color?: string
+}
+
 /**
  * Vector contours drawn like a selected shape in the studio: closed loops get
  * the selection fill (even-odd, so holes stay open), open lines stroke only.
+ * Pieces carrying a colour (layered trace) paint in their own colour instead.
  */
-function VecPaths({ groups, className = 'trace-path' }: { groups: Contour[][]; className?: string }) {
+function VecPaths({ pieces, className = 'trace-path' }: { pieces: VecPiece[]; className?: string }) {
+  if (pieces.some((p) => p.color)) {
+    return (
+      <>
+        {pieces.map((p, i) => {
+          const closed = p.g.filter((c) => c.closed)
+          const open = p.g.filter((c) => !c.closed)
+          return (
+            <Fragment key={i}>
+              {closed.length > 0 && (
+                <path
+                  d={closed.map(pathD).join('')}
+                  fillRule="evenodd"
+                  className={className}
+                  style={{ fill: p.color, fillOpacity: 0.15, stroke: p.color }}
+                />
+              )}
+              {open.length > 0 && (
+                <path d={open.map(pathD).join('')} className={className + ' is-open'} style={{ stroke: p.color }} />
+              )}
+            </Fragment>
+          )
+        })}
+      </>
+    )
+  }
   let closed = ''
   let open = ''
-  for (const g of groups)
-    for (const c of g) {
+  for (const p of pieces)
+    for (const c of p.g) {
       if (c.closed) closed += pathD(c)
       else open += pathD(c)
     }
@@ -784,7 +816,9 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
   /**
    * Any image: no sheet to find or flatten. The picture (resampled to a
    * comfortable tracing size) is the scan, IMAGE_LONG_MM on its long side,
-   * traced as filled shapes, which suits logos and artwork best.
+   * traced as layered pieces — each colour its own shapes, enclosed holes
+   * (eyes in a face) as pieces of their own — which suits logos and artwork
+   * best.
    */
   function startImage(p: HTMLCanvasElement) {
     ++flow.current
@@ -807,14 +841,14 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
     const s: ScanImage = { img: ctx.getImageData(0, 0, c.width, c.height), ppmX: c.width / wMm, ppmY: c.height / hMm, wMm, hMm, label: 'Image' }
     setInvert(false)
     appliedInvert.current = false
-    setMode('outline')
+    setMode('layered')
     setScan(s)
     setFlat(c)
     setBw(c)
     setSweep('wait')
     setResultMode('view')
     setPhase('working')
-    void vectorise(s, 'outline', false)
+    void vectorise(s, 'layered', false)
   }
 
   /* ----- photo loading ----- */
@@ -1080,26 +1114,41 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
 
   /**
    * Ink (or, for any image, design) mask and vectors for a scan. Resolves
-   * null when a newer job has started meanwhile.
+   * null when a newer job has started meanwhile. Layered mode splits an image
+   * into its design colours first and vectorises each on its own, so every
+   * piece comes out in its own colour; on paper (no colour to split) it just
+   * keeps every loop as its own shape.
    */
   async function traceScan(s: ScanImage, myJob: number, md: VectorMode = mode, inv: boolean = invert, det: number = detail): Promise<VectorResult | null> {
     const w = s.img.width
     const h = s.img.height
-    const m =
-      sheet === 'image'
-        ? await runImageMask(s.img, { detail: det, invert: inv })
-        : // Raw grayscale: the ink pipeline does its own lighting normalisation.
-          await runInk(grayFromImageData(s.img), w, h, {
-            ppm: s.ppmX,
-            sensitivity: det,
-            cOffset: 0,
-            marginMm: MARGIN_MM,
-            minBlobMm2: 3,
-            closeGaps: false,
-          })
-    if (myJob !== job.current) return null
-    const r = await runVector(m, w, h, s.ppmX, md, s.ppmY)
-    if (myJob !== job.current) return null
+    let r: VectorResult
+    if (sheet === 'image' && md === 'layered') {
+      const { masks, colors } = await runLayers(s.img, det)
+      if (myJob !== job.current) return null
+      const parts: VectorResult[] = []
+      for (const m of masks) {
+        parts.push(await runVector(m, w, h, s.ppmX, 'layered', s.ppmY))
+        if (myJob !== job.current) return null
+      }
+      r = mergeLayered(parts, colors)
+    } else {
+      const m =
+        sheet === 'image'
+          ? await runImageMask(s.img, { detail: det, invert: inv })
+          : // Raw grayscale: the ink pipeline does its own lighting normalisation.
+            await runInk(grayFromImageData(s.img), w, h, {
+              ppm: s.ppmX,
+              sensitivity: det,
+              cOffset: 0,
+              marginMm: MARGIN_MM,
+              minBlobMm2: 3,
+              closeGaps: false,
+            })
+      if (myJob !== job.current) return null
+      r = await runVector(m, w, h, s.ppmX, md, s.ppmY)
+      if (myJob !== job.current) return null
+    }
     if (sheet === 'image') setError(r.groups.length ? null : 'Nothing to trace was found in this image. Try Adjust Image.')
     return r
   }
@@ -1172,7 +1221,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
     const shapes = groups
       .filter((_, i) => keep.has(i))
       .map((g, i) => {
-        const name = vec.mode === 'centerline' ? `Line ${i + 1}` : `Outline ${i + 1}`
+        const name = vec.mode === 'centerline' ? `Line ${i + 1}` : vec.mode === 'layered' ? `Piece ${i + 1}` : `Outline ${i + 1}`
         return withoutId(shapeFromWorld('sketch', name, g, { cut: cutFor(cutType), meta }))
       })
     onImport({ shapes })
@@ -1184,9 +1233,17 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
   // The traced groups with the smoothness slider applied; indexes match vec.groups.
   const groups = useMemo(() => (vec ? smoothGroups(vec.groups, smooth) : []), [vec, smooth])
 
-  // Preview and import show only the groups kept in Modify.
+  // Preview and import show only the groups kept in Modify. Pieces carry their
+  // layer colour, aligned with the full (unfiltered) group list.
   const vecPaths = useMemo(
-    () => (vec ? <VecPaths groups={groups.filter((_, i) => keep.has(i))} /> : null),
+    () =>
+      vec
+        ? (
+            <VecPaths
+              pieces={groups.map((g, i) => ({ g, color: vec.colors?.[i] })).filter((_, i) => keep.has(i))}
+            />
+          )
+        : null,
     [vec, groups, keep],
   )
 
@@ -1676,7 +1733,10 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
                     <g key={i} data-testid={`trace-group-${i}`} onClick={() => tapGroup(i)}>
                       {/* invisible wide stroke = forgiving tap target */}
                       <path d={d} className="trace-group-hit" />
-                      <VecPaths groups={[groups[i]]} className={'trace-path trace-group' + (keep.has(i) ? '' : ' is-dropped')} />
+                      <VecPaths
+                        pieces={[{ g: groups[i], color: vec.colors?.[i] }]}
+                        className={'trace-path trace-group' + (keep.has(i) ? '' : ' is-dropped')}
+                      />
                     </g>
                   ) : null,
                 )}
@@ -1818,8 +1878,11 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
             <div className={'trace-stats' + (revealed ? ' is-in' : '')}>
               <div className="modeview__label">display</div>
               <div className="ss-seg trace-seg" role="group" aria-label="Display mode">
+                <button type="button" className={mode === 'layered' ? 'is-active' : ''} onClick={() => setMode('layered')}>
+                  Layered
+                </button>
                 <button type="button" className={mode === 'outline' ? 'is-active' : ''} onClick={() => setMode('outline')}>
-                  Outline
+                  Shape shifted
                 </button>
                 <button type="button" className={mode === 'centerline' ? 'is-active' : ''} onClick={() => setMode('centerline')}>
                   Centerline
@@ -1849,7 +1912,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
                 ) : (
                   <p className="modeview__hint">{isImage ? 'Retrieving the original image…' : 'Retrieving the original scan…'}</p>
                 )}
-                {isImage && adjustReady && (
+                {isImage && adjustReady && mode !== 'layered' && (
                   <>
                     <p className="modeview__hint">More detail takes in fainter parts of the image. Invert traces the background instead of the design.</p>
                     <div className="ss-seg trace-seg" role="group" aria-label="Trace">
@@ -1971,7 +2034,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
             adjustReady ? (
               <>
                 <TraceSlider value={detail} min={1} max={100} onChange={setDetail} label="Detail" />
-                {isImage && (
+                {isImage && mode !== 'layered' && (
                   <div className="trace-controls__row trace-controls__row--modes" role="group" aria-label="Trace">
                     <button type="button" className={'trace-chip' + (!invert ? ' is-active' : '')} onClick={() => setInvert(false)}>
                       Design
@@ -2036,8 +2099,11 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
           ) : (
             <>
           <div className="trace-controls__row trace-controls__row--modes" role="group" aria-label="Display mode">
+            <button type="button" className={'trace-chip' + (mode === 'layered' ? ' is-active' : '')} onClick={() => setMode('layered')}>
+              Layered
+            </button>
             <button type="button" className={'trace-chip' + (mode === 'outline' ? ' is-active' : '')} onClick={() => setMode('outline')}>
-              Outline
+              Shape shifted
             </button>
             <button type="button" className={'trace-chip' + (mode === 'centerline' ? ' is-active' : '')} onClick={() => setMode('centerline')}>
               Centerline

@@ -211,7 +211,7 @@ export function ShortcutsDialog() {
           ))}
         </div>
         <div className="ss-muted" style={{ marginTop: 12 }}>
-          Forma Studio runs entirely in your browser. Designs autosave locally; use Save to keep a <code>.forma</code> file on your computer and Export SVG to
+          Forma Studio runs in your browser. Designs autosave in this browser (and sync to your account when you are signed in); use Save to keep a <code>.forma</code> file on your computer and Export SVG to
           send it to Shaper Origin.
         </div>
       </div>

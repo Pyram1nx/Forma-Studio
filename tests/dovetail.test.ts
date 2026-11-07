@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { autoTails, DEFAULT_PRESET, dovetailCuts, dovetailLayout, dovetailShapes, maxTails, type DovetailParams } from '../src/features/dovetail/dovetail'
+import { autoTails, DEFAULT_PRESET, dovetailCuts, dovetailLayout, dovetailParts, maxTails, type DovetailParams } from '../src/features/dovetail/dovetail'
+import { shapesBBox } from '../src/geometry/transform'
+import type { Shape } from '../src/model/types'
 
 const base: DovetailParams = {
   bit: DEFAULT_PRESET.bit,
@@ -83,15 +85,35 @@ describe('dovetail cuts', () => {
     expect(dovetailCuts({ ...base, pinWidth: 20 }).tail.online).toBe(false)
   })
 
-  it('shapes carry the depths, bits and glue gap', () => {
-    const shapes = dovetailShapes(base, 'SF1-8-DC15')
-    const sockets = shapes.filter((s) => s.name.startsWith('Tail board · socket'))
-    const pockets = shapes.filter((s) => s.name.startsWith('Pin board · tail socket'))
-    expect(sockets).toHaveLength(5)
-    expect(pockets).toHaveLength(4)
+  it('imports as two groups, one per board, each with its guide rectangle and cuts', () => {
+    const parts = dovetailParts(base, 'SF1-8-DC15')
+    const L = dovetailLayout(base)
+    expect(parts.tail.shapes.map((s) => s.name)).toEqual(['Tail board · end', ...L.centres.map((_, i) => `Tail board · socket ${i + 1}`)])
+    expect(parts.pin.shapes.map((s) => s.name)).toEqual(['Pin board · end', ...L.tails.map((_, i) => `Pin board · tail socket ${i + 1}`)])
+    const sockets = parts.tail.shapes.filter((s) => s.name.startsWith('Tail board · socket'))
+    const pockets = parts.pin.shapes.filter((s) => s.name.startsWith('Pin board · tail socket'))
     expect(sockets[0].cut).toMatchObject({ type: 'online', depth: 12, bitDia: 13.8 })
     expect(sockets[0].meta?.bitId).toBe('SF1-8-DC15')
     expect(pockets[0].cut).toMatchObject({ type: 'pocket', depth: 12, bitDia: 6.35, offset: 0.1 })
-    expect(shapes.filter((s) => s.cut.type === 'guide')).toHaveLength(2)
+    expect(parts.tail.shapes.filter((s) => s.cut.type === 'guide')).toHaveLength(1)
+    expect(parts.pin.shapes.filter((s) => s.cut.type === 'guide')).toHaveLength(1)
+  })
+
+  it('anchors each group on the bottom-left corner of its guide rectangle', () => {
+    const parts = dovetailParts(base)
+    for (const [part, guideName] of [
+      [parts.tail, 'Tail board · end'],
+      [parts.pin, 'Pin board · end'],
+    ] as const) {
+      // World bounds of the guide rectangle alone and of the whole group (its cuts run out past the faces).
+      const guide = shapesBBox([part.shapes.find((s) => s.name === guideName) as Shape])
+      const all = shapesBBox(part.shapes as Shape[])
+      // Resolved the way activeOrigin does: the anchor is a fraction of the group's bounds.
+      const wx = all.minX + part.anchor.fx * (all.maxX - all.minX)
+      const wy = all.minY + part.anchor.fy * (all.maxY - all.minY)
+      // y points down, so the bottom-left corner is the smallest x at the largest y.
+      expect(wx).toBeCloseTo(guide.minX, 6)
+      expect(wy).toBeCloseTo(guide.maxY, 6)
+    }
   })
 })

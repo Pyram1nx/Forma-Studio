@@ -26,6 +26,23 @@ describe('paper trace', () => {
     expect(r.strokeWidthMm).toBeGreaterThan(0.7)
     expect(r.strokeWidthMm).toBeLessThan(1.4)
   })
+  it('centerline strokes reach their drawn ends at any width', async () => {
+    // Thinning pulls the skeleton cap inside the stroke end by half its
+    // width; the traced line must be walked back out to the ink.
+    for (const swMm of [1, 4, 8]) {
+      const ppm = 6
+      const W = 120 * ppm, H = 40 * ppm
+      const m = new Uint8Array(W * H)
+      for (let y = 0; y < H; y++)
+        for (let x = 20 * ppm; x < 100 * ppm; x++)
+          if (Math.abs(y - H / 2) <= (swMm / 2) * ppm) m[y * W + x] = 1
+      const r = await vectorise(m, W, H, ppm, 'centerline')
+      expect(r.groups.length).toBe(1)
+      const p = r.groups[0][0].pts
+      expect(Math.abs(Math.min(...p.map((q) => q.x)) - 20)).toBeLessThan(0.4)
+      expect(Math.abs(Math.max(...p.map((q) => q.x)) - 100)).toBeLessThan(0.4)
+    }
+  })
   it('outline of a ring gives an outer loop with a hole', async () => {
     const ppm = 4
     const m = ringMask(200, 200, 100, 100, 60, 12)

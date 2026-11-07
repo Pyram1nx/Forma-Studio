@@ -1,8 +1,7 @@
 // Full-screen "Dovetails" dialog: pick a bit and two boards, see the joint in 3D, add the two
 // end-grain layouts (tail board, pin board) to the design. Geometry lives in ./dovetail.
 import { useMemo, useState } from 'react'
-import type { Group, Units } from '../../model/types'
-import type { ImportPayload } from '../../model/types'
+import type { ImportPayload, Units } from '../../model/types'
 import { fmtLen } from '../../model/factory'
 import { IconClose } from '../../ui/icons'
 import { NumField, StepperParam } from '../../editor/Panels'
@@ -10,7 +9,7 @@ import { BITS, DEFAULT_BIT_ID } from '../carve3d/bits'
 import { Field } from '../carve3d/fields'
 import BitPhoto from '../bitlibrary/BitPhoto'
 import DovetailViewer from './DovetailViewer'
-import { autoTails, DEFAULT_PRESET, DOVETAIL_PRESETS, dovetailCuts, dovetailLayout, dovetailShapes, DEFAULT_GLUE_GAP, maxTails, type DovetailBit, type DovetailParams } from './dovetail'
+import { autoTails, DEFAULT_PRESET, DOVETAIL_PRESETS, dovetailCuts, dovetailLayout, dovetailParts, DEFAULT_GLUE_GAP, maxTails, type DovetailBit, type DovetailParams } from './dovetail'
 import '../carve3d/carve3d.css'
 import './dovetail.css'
 
@@ -110,18 +109,35 @@ export default function DovetailDialog({ units, onClose, onImport }: DovetailDia
   const pos = (set: (v: number) => void, min = 0.5) => (v: number) => v > 0 && set(Math.max(min, v))
 
   function add() {
-    const shapes = dovetailShapes(params, preset?.bitId)
-    const group: Omit<Group, 'id'> = {
-      name: `Dovetails – ${tails} tail${tails === 1 ? '' : 's'}, ${+bit.angle.toFixed(2)}°`,
-      info: {
-        bit: preset?.name ?? `Custom ${+bit.angle.toFixed(2)}° · Ø${+bit.diameter.toFixed(2)} mm`,
-        'tail sockets depth': L(pinThick),
-        'pin pockets depth': L(tailThick),
-        'straight bit': straight.name,
-        'glue gap': L(glueGap),
-      },
-    }
-    onImport({ group, shapes })
+    const parts = dovetailParts(params, preset?.bitId)
+    const name = `Dovetails – ${tails} tail${tails === 1 ? '' : 's'}, ${+bit.angle.toFixed(2)}°`
+    onImport({
+      parts: [
+        {
+          group: {
+            name: `${name} · tail board`,
+            info: {
+              bit: preset?.name ?? `Custom ${+bit.angle.toFixed(2)}° · Ø${+bit.diameter.toFixed(2)} mm`,
+              'tail sockets depth': L(pinThick),
+            },
+            anchor: parts.tail.anchor,
+          },
+          shapes: parts.tail.shapes,
+        },
+        {
+          group: {
+            name: `${name} · pin board`,
+            info: {
+              'pin pockets depth': L(tailThick),
+              'straight bit': straight.name,
+              'glue gap': L(glueGap),
+            },
+            anchor: parts.pin.anchor,
+          },
+          shapes: parts.pin.shapes,
+        },
+      ],
+    })
     onClose()
   }
 

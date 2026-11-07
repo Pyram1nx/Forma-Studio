@@ -7,6 +7,7 @@ import { uid } from '../../model/ids'
 import { exportSVG } from '../../io/svgExport'
 import { offsetContours } from '../../geometry/offset'
 import { pointInContours } from '../../geometry/transform'
+import { readScoped, SYNCED_SETTINGS, writeScoped } from '../../storage/space'
 import { IconClose, IconDelete, IconDownload, IconDuplicate, IconRedo, IconUndo } from '../../ui/icons'
 import { NumField } from '../../editor/Panels'
 import { Field } from '../carve3d/fields'
@@ -24,18 +25,21 @@ export interface SystainerDialogProps {
   onImport: (p: ImportPayload) => void
 }
 
-const STORE_KEY = 'formastudio:systainer-layout'
+const STORE_KEY = SYNCED_SETTINGS.systainer
 
 /** A fresh random spin for each roll of a newly placed tape item (see ItemDef.randomSpin). */
 const newSpinSeed = () => Math.floor(Math.random() * 0x7fffffff)
 
 function loadSaved(): Layout | null {
   try {
-    const raw = localStorage.getItem(STORE_KEY)
+    const raw = readScoped(STORE_KEY)
     if (!raw) return null
     const l = JSON.parse(raw) as Layout
     if (!Array.isArray(l.items) || !SYS_SIZES.some((s) => s.size === l.size)) return null
-    return { ...defaultLayout(), ...l, items: l.items.filter((i) => getItem(i.item)) }
+    // "Snug" was the old name for the no-clearance fit. Its semantics are now Standard:
+    // the source SVG outline, with no added offset.
+    const fit: Fit = l.fit === 'roomy' || l.fit === 'loose' ? l.fit : 'standard'
+    return { ...defaultLayout(), ...l, fit, items: l.items.filter((i) => getItem(i.item)) }
   } catch {
     return null
   }
@@ -161,11 +165,9 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
   const L = (mm: number) => fmtLen(mm, units)
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(layout))
-    } catch {
-      // Storage full or blocked: the layout just isn't remembered.
-    }
+    // Storage full or blocked: the layout just isn't remembered.
+    const next = JSON.stringify(layout)
+    if (readScoped(STORE_KEY) !== next) writeScoped(STORE_KEY, next)
   }, [layout])
 
   /** Apply a change as one undo step. */
@@ -478,7 +480,7 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
                           window.addEventListener('pointerup', endDepthSlide, { once: true })
                         }}
                         onChange={(e) => {
-                          // Stored depths belong to the reference thickness (placedDepth converts).
+                          // Stored depths are measured from the foam surface.
                           const v = Math.round(placedDepth(selEv, ev, +e.target.value) * 100) / 100
                           const s = depthSlide.current
                           if (s && s.uid === sel.uid) {
@@ -584,11 +586,11 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
               </div>
             </Field>
             <span className="c3d-muted-note">
-              Base is {L(baseDepth(layout.size))} deep. {ev.lidRoom >= 0 ? `${L(ev.lidRoom)} of room above the foam with the lid shut.` : 'Too thick for the lid to close.'} Default depths are the ShaperHub ones, cut in Shaper’s {L(SHAPER_FOAM)} stock foam; a thicker or thinner insert moves them all by the difference.
+              Base is {L(baseDepth(layout.size))} deep. {ev.lidRoom >= 0 ? `${L(ev.lidRoom)} of room above the foam with the lid shut.` : 'Too thick for the lid to close.'} Every depth is measured down from the foam surface, so changing thickness carries the item and its pocket with that surface.
             </span>
             <Field label="fit">
               <div className="ss-seg" role="group" aria-label="Fit">
-                {(['snug', 'standard', 'loose'] as Fit[]).map((f) => (
+                {(['standard', 'roomy', 'loose'] as Fit[]).map((f) => (
                   <button key={f} type="button" aria-pressed={layout.fit === f} onClick={() => setLayoutField({ fit: f })}>
                     {f[0].toUpperCase() + f.slice(1)}
                   </button>

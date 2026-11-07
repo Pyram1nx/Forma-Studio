@@ -24,11 +24,16 @@ whenever a catalogue item is restyled from a shop photo.
    *every* edge, ends included, and collapse on narrow necks. To get a round section with flat caps use
    `roundedBar` (catalog.ts): slice the outline at each x, make the section an ellipse as wide as the
    outline at that x. Sides are exactly the outline; ends stay flat.
-6. **Split what is too thin to bevel.** A neck/stem narrower than ~2× the bevel (the hex key's sleeve)
-   is cut out of the outline and modelled separately (a `lathe`). Close the cut with a straight V/line
-   so the rounding has a clean edge; a rectangular notch leaves "wing" artefacts.
-7. **Match widths at the tip.** A ball end uses the hex's circumradius (`2 / cos 30°`) so the footprint
-   width is unchanged to the tip.
+6. **Split what is too thin to bevel, then blend it back.** A neck/stem narrower than ~2× the bevel (the
+   hex key's sleeve) is modelled separately. Don't cut the neck out of the outline with a polygon: the
+   cut's corners show as creases across the rounded bar. Instead give `roundedBar` smooth `edges` through
+   the middle (the key's V becomes a parabola over |x| < 8) and grow the stem into the bar with
+   `filletedSleeve` (a rolling fillet per half-plane, tucked just under the bar's surface). Where the
+   visible model then departs from the trace (a dropped bump, a smoothed kink), add the traced outline
+   as a hidden `footprint` so the pocket stays the SVG path.
+7. **Match widths at the tip.** The key's tip is a knob cut from the hex itself (`hexKnob`): four
+   loop cuts over one across-corners width, the end cap and the third loop scaled down on their own
+   centres. The full rings keep the footprint width unchanged right up to the groove.
 8. **Materials:** handle/sleeve use `gloss` (new, models.ts), shafts `black`. Add a `MatName` only when
    an existing one cannot match the photo.
 9. **Print/decals** are textures on a plane (`keyPrint`): canvas → `CanvasTexture`, `MeshBasicMaterial`

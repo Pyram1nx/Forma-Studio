@@ -164,6 +164,22 @@ describe('group / ungroup', () => {
     expect(st().doc.groups).toEqual([])
   })
 
+  it('a parts import makes one group per part, each wrapping only its own shapes', () => {
+    st().importPayload({
+      parts: [
+        { group: { name: 'A' }, shapes: [createBasic('rect', 0, 0)] },
+        { group: { name: 'B', anchor: { fx: 0, fy: 1 } }, shapes: [createBasic('circle', 30, 0)] },
+      ],
+    })
+    expect(st().doc.groups.map((g) => g.name)).toEqual(['A', 'B'])
+    const [ga, gb] = st().doc.groups
+    expect(st().doc.shapes.filter((s) => s.groupId === ga.id)).toHaveLength(1)
+    expect(st().doc.shapes.filter((s) => s.groupId === gb.id)).toHaveLength(1)
+    expect(gb.anchor).toEqual({ fx: 0, fy: 1 })
+    // Imported together: placed as one, selected as one.
+    expect(st().selection).toHaveLength(2)
+  })
+
   it('user groups survive save and load', () => {
     const [a, b] = addRects(2)
     st().select([a.id, b.id])

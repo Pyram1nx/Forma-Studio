@@ -165,15 +165,29 @@ export const DEFAULT_CUT: CutSettings = {
   bitDia: 3.175,
 }
 
+/** One group of a multi-group import: the group (name, metadata, anchor) and the shapes it wraps. */
+export interface ImportPart {
+  group: Omit<Group, 'id'>
+  shapes: Omit<Shape, 'id'>[]
+}
+
+/** An import of loose shapes, optionally wrapped in one group (SVG files, icons, most dialogs). */
+export type ShapesImport = {
+  group?: Omit<Group, 'id'>
+  shapes: Omit<Shape, 'id'>[]
+  /** Non-fatal problems to show the user (unsupported content, skipped elements). */
+  warnings?: string[]
+}
+
 /**
  * Payload a feature dialog (3D carve, paper scan, SVG import) hands back to the
  * editor. Shapes are placed as-is (world coordinates in mm); the editor assigns
  * the group id and selects them. Without a group the shapes import as separate,
- * independently movable objects.
+ * independently movable objects. `parts` imports several groups at once, each
+ * wrapping its own shapes (the dovetail dialog's two board layouts).
  */
-export interface ImportPayload {
-  group?: Omit<Group, 'id'>
-  shapes: Omit<Shape, 'id'>[]
+export type ImportPayload = ShapesImport | {
+  parts: ImportPart[]
   /** Non-fatal problems to show the user (unsupported content, skipped elements). */
   warnings?: string[]
 }

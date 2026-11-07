@@ -201,12 +201,82 @@ export const IconGroup = I(<><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" />
 export const IconUngroup = I(<><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1" /><rect x="13" y="13" width="7.5" height="7.5" rx="1" fill="currentColor" fillOpacity={0.3} /><path d="M14 3.5h6.5V10M3.5 14V20.5H10" strokeDasharray="2 2.25" /></>)
 export const IconBack = I(<><rect x="10" y="10" width="10" height="10" rx="1" /><rect x="4" y="4" width="10" height="10" rx="1" fill="currentColor" fillOpacity={0.3} /></>)
 
-// Cut type icons (Plan mode). Only Guide is dashed; the other cut types are solid.
-export const IconCutOnline = I(<rect x="5" y="5" width="14" height="14" rx="1" />)
-export const IconCutGuide = I(<path d="M5 19V6.5A1.5 1.5 0 0 1 6.5 5H19" strokeDasharray="2.5 2" />)
-export const IconCutInside = I(<><rect x="4" y="4" width="16" height="16" rx="1" /><rect x="8" y="8" width="8" height="8" rx="1" fill="currentColor" fillOpacity={0.35} /></>)
-export const IconCutPocket = I(<><rect x="4" y="4" width="16" height="16" rx="1" /><path d="M8 8h8M8 11h8M8 14h8M8 17h8" /></>)
-export const IconCutOutside = I(<><rect x="3.5" y="3.5" width="17" height="17" rx="2" fill="currentColor" fillOpacity={0.25} /><rect x="7" y="7" width="10" height="10" rx="1" /></>)
+// Studio's cut-type glyphs from its Plan-mode selector (originals in brand/original-icons/cut-*.svg).
+export const IconCutOnline = F(
+  <>
+    <path d="M20 2.001V0L23.0011 0.0006L23.001 3H21L21.0001 2.0016L20 2.001Z" />
+    <path d="M21.5 17C22.881 17 24 15.881 24 14.5C24 13.119 22.881 12 21.5 12C20.119 12 19 13.119 19 14.5C19 15.881 20.119 17 21.5 17Z" />
+    <path d="M21.001 9H23.002V6H21.001V9Z" />
+    <path d="M2.001 10H0V7H2.001V10Z" />
+    <path d="M0 16H2.001V13H0V16Z" />
+    <path d="M21.0006 21.0008L20.999 20H23L23.0016 23.0008L20 23V21L21.0006 21.0008Z" />
+    <path d="M15.358 23.001H17.929V21.001H15.358V23.001Z" />
+    <path d="M12.786 23.001H10.214V21.001H12.786V23.001Z" />
+    <path d="M5.072 23.001H7.643V21.001H5.072V23.001Z" />
+    <path d="M0 23.0008V19H2V21.0008L3 21V23L0 23.0008Z" />
+    <path d="M0 0.0006V4H2V2.0016L3 2.001V0L0 0.0006Z" />
+    <path d="M17.93 2.001H15.358V0H17.93V2.001Z" />
+    <path d="M10.215 2.001H12.786V0H10.215V2.001Z" />
+    <path d="M7.644 2.001H5.072V0H7.644V2.001Z" />
+  </>,
+  '0 0 24 23',
+)
+export const IconCutGuide = F(
+  <>
+    <path d="M6 0H22V16H20V2H6V0Z" />
+    <path d="M16 22V20H2V6H0V22H16Z" />
+  </>,
+  '0 0 22 22',
+)
+export const IconCutInside = F(
+  <>
+    <path d="M15 16V18H18V16H15Z" />
+    <path d="M13 18H10V16H13V18Z" />
+    <path d="M8 18H5V15H7V16H8V18Z" />
+    <path d="M7 13H5V10H7V13Z" />
+    <path d="M7 8H5V5H8V7H7V8Z" />
+    <path d="M13.167 7H10V5H13.167V7Z" />
+    <path d="M18 7H15V5H18V7Z" />
+    <path d="M16.5 14C17.881 14 19 12.881 19 11.5C19 10.119 17.881 9 16.5 9C15.119 9 14 10.119 14 11.5C14 12.881 15.119 14 16.5 14Z" />
+    <path fillRule="evenodd" clipRule="evenodd" d="M0 23H23.001V0H0V23ZM2 21H21.001V2H2V21Z" />
+  </>,
+  '0 0 23 23',
+)
+export const IconCutPocket = F(
+  <>
+    <path d="M4.30916 2.87194L2.81638 4.36472L5.80194 7.35029L7.29472 5.8575L4.30916 2.87194Z" />
+    <path d="M8.81638 10.3647L10.3092 8.87193L14.2947 12.8575L12.8019 14.3503L8.81638 10.3647Z" />
+    <path d="M4.36244 15L3 16.3624L6.72488 20.0873L8.08731 18.7249L4.36244 15Z" />
+    <path d="M15 4.36244L16.3624 3L20.0873 6.72488L18.7249 8.08731L15 4.36244Z" />
+    <path d="M5.80194 8.87193L7.29472 10.3647L4.30916 13.3503L2.81638 11.8575L5.80194 8.87193Z" />
+    <path d="M13.2947 4.36472L11.8019 2.87194L8.81638 5.8575L10.3092 7.35028L13.2947 4.36472Z" />
+    <path d="M15.8164 17.3647L17.3092 15.8719L20.2947 18.8575L18.8019 20.3503L15.8164 17.3647Z" />
+    <path d="M14.2947 17.3647L12.8019 15.8719L9.81638 18.8575L11.3092 20.3503L14.2947 17.3647Z" />
+    <path d="M18.8019 9.87193L20.2947 11.3647L17.3092 14.3503L15.8164 12.8575L18.8019 9.87193Z" />
+    <path fillRule="evenodd" clipRule="evenodd" d="M23 0V23H0V0H23ZM21 2H2V21H21V2Z" />
+  </>,
+  '0 0 23 23',
+)
+export const IconCutOutside = F(
+  <>
+    <path d="M20 0V2.001L21.0001 2.0016L21 3H23.001L23.0011 0.0006L20 0Z" />
+    <path d="M21.001 9H23.002V6H21.001V9Z" />
+    <path d="M2.001 10H0V7H2.001V10Z" />
+    <path d="M0 16H2.001V13H0V16Z" />
+    <path d="M21.0006 21.0008L20.999 20H23L23.0016 23.0008L20 23V21L21.0006 21.0008Z" />
+    <path d="M15.358 23.001H17.929V21.001H15.358V23.001Z" />
+    <path d="M12.786 23.001H10.214V21.001H12.786V23.001Z" />
+    <path d="M5.072 23.001H7.643V21.001H5.072V23.001Z" />
+    <path d="M0 23.0008V19H2V21.0008L3 21V23L0 23.0008Z" />
+    <path d="M0 0.0006V4H2V2.0016L3 2.001V0L0 0.0006Z" />
+    <path d="M17.93 2.001H15.358V0H17.93V2.001Z" />
+    <path d="M10.215 2.001H12.786V0H10.215V2.001Z" />
+    <path d="M7.644 2.001H5.072V0H7.644V2.001Z" />
+    <path fillRule="evenodd" clipRule="evenodd" d="M5 18V5H18V18H5ZM7 16H16V7H7V16Z" />
+    <path d="M21.5 17C22.881 17 24 15.881 24 14.5C24 13.119 22.881 12 21.5 12C20.119 12 19 13.119 19 14.5C19 15.881 20.119 17 21.5 17Z" />
+  </>,
+  '0 0 24 23',
+)
 // Neutral glyph for a selection with mixed cut types (no single cut type to show).
 export const IconCutMixed = I(
   <>

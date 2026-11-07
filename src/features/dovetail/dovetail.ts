@@ -8,8 +8,9 @@
 //
 // Joint frame (mm): `a` across the board width (0..width), `c` along the tails from their end
 // (c = 0, flush with the pin board's outer face) to the baseline (c = pinThick).
-import type { Contour, Pt, Shape } from '../../model/types'
+import type { Contour, FreeOrigin, Pt, Shape } from '../../model/types'
 import { shapeFromWorld } from '../../model/factory'
+import { bboxFraction, shapesBBox } from '../../geometry/transform'
 import { BITS } from '../carve3d/bits'
 
 export interface DovetailBit {
@@ -203,37 +204,49 @@ export function dovetailCuts(p: DovetailParams): DovetailCut {
   }
 }
 
-/** Shapes for the editor: board outlines as guides, sockets and pockets with their bits and depths. */
-export function dovetailShapes(p: DovetailParams, bitId?: string): Omit<Shape, 'id'>[] {
+/** One board's layout as it imports: its shapes and the group that holds them. */
+export interface DovetailPart {
+  /** The board's guide rectangle plus its cuts. */
+  shapes: Omit<Shape, 'id'>[]
+  /** The group's anchor (fractions of the group's bounds) on the guide rectangle's bottom-left corner. */
+  anchor: FreeOrigin
+}
+
+/**
+ * The two end-grain layouts as they import: one group per board (its guide rectangle with the cuts
+ * that go with it), each group's anchor — its default custom anchor point — on the bottom-left
+ * corner of the guide rectangle, so the board positions by its corner.
+ */
+export function dovetailParts(p: DovetailParams, bitId?: string): { tail: DovetailPart; pin: DovetailPart } {
   const c = dovetailCuts(p)
-  const shapes: Shape[] = []
-  shapes.push(
+  const tail: Shape[] = [
     shapeFromWorld('rect', 'Tail board · end', [c.tail.board], {
       cut: { type: 'guide', depth: null, offset: 0, bitDia: p.bit.diameter },
       meta: { role: 'guide', note: 'Tail board end grain' },
     }),
-  )
-  c.tail.sockets.forEach((s, i) =>
-    shapes.push(
+    ...c.tail.sockets.map((s, i) =>
       shapeFromWorld('path', `Tail board · socket ${i + 1}`, [s], {
         cut: { type: c.tail.online ? 'online' : 'pocket', depth: p.pinThick, offset: 0, bitDia: p.bit.diameter },
         meta: { bitId, note: `Dovetail bit, one full-depth pass (${+p.pinThick.toFixed(2)} mm). Start off the board: a dovetail bit cannot plunge.` },
       }),
     ),
-  )
-  shapes.push(
+  ]
+  const pin: Shape[] = [
     shapeFromWorld('rect', 'Pin board · end', [c.pin.board], {
       cut: { type: 'guide', depth: null, offset: 0, bitDia: p.straightBit },
       meta: { role: 'guide', note: 'Pin board end grain' },
     }),
-  )
-  c.pin.pockets.forEach((s, i) =>
-    shapes.push(
+    ...c.pin.pockets.map((s, i) =>
       shapeFromWorld('path', `Pin board · tail socket ${i + 1}`, [s], {
         cut: { type: 'pocket', depth: p.tailThick, offset: p.glueGap, bitDia: p.straightBit },
         meta: { note: `Straight bit, ${+p.tailThick.toFixed(2)} mm deep.` },
       }),
     ),
-  )
-  return shapes.map(({ id: _id, ...s }) => s)
+  ]
+  // Bottom-left of a guide rectangle (y points down, so its largest y at its smallest x).
+  const corner = (r: Contour): Pt => ({ x: Math.min(...r.pts.map((q) => q.x)), y: Math.max(...r.pts.map((q) => q.y)) })
+  return {
+    tail: { shapes: tail.map(({ id: _id, ...s }) => s), anchor: bboxFraction(shapesBBox(tail), corner(c.tail.board)) },
+    pin: { shapes: pin.map(({ id: _id, ...s }) => s), anchor: bboxFraction(shapesBBox(pin), corner(c.pin.board)) },
+  }
 }

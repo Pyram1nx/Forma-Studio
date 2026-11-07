@@ -1,7 +1,7 @@
 // Import SVG files: resolves real-world units, nested transforms, basic shapes,
 // local <use> references, and reads back shaper:cutType / shaper:cutDepth when present.
 // Untrusted input: the document is sanitised before it touches the live DOM.
-import type { Contour, CutType, ImportPayload, Pt } from '../model/types'
+import type { Contour, CutType, Pt, ShapesImport } from '../model/types'
 import { DEFAULT_CUT } from '../model/types'
 import { parsePathD } from '../geometry/svgPath'
 import { ellipse as ellipseC } from '../geometry/primitives'
@@ -151,7 +151,7 @@ function cutTypeFor(el: Element): CutType {
   return cutTypeFromPaint(cs.fill, cs.stroke)
 }
 
-export async function importSVGFile(file: File): Promise<ImportPayload> {
+export async function importSVGFile(file: File): Promise<ShapesImport> {
   const text = await file.text()
   return importSVGText(text, file.name.replace(/\.svg$/i, ''))
 }
@@ -165,7 +165,7 @@ function isHidden(el: Element): boolean {
   return false
 }
 
-export function importSVGText(text: string, name: string): ImportPayload {
+export function importSVGText(text: string, name: string): ShapesImport {
   const parsed = new DOMParser().parseFromString(text, 'image/svg+xml')
   if (parsed.getElementsByTagName('parsererror').length) throw new Error('Could not read this SVG file')
   const src = parsed.documentElement
@@ -222,7 +222,7 @@ export function importSVGText(text: string, name: string): ImportPayload {
     })
     if (unresolved) warnings.push(`${unresolved} <use> reference(s) could not be resolved and were skipped.`)
 
-    const shapes: ImportPayload['shapes'] = []
+    const shapes: ShapesImport['shapes'] = []
     const els = svg.querySelectorAll('path, rect, circle, ellipse, line, polyline, polygon')
     let idx = 0
     els.forEach((el) => {

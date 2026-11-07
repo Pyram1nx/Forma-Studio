@@ -20,6 +20,7 @@ import LoadingDomino from './ui/LoadingDomino'
 import { installPinchZoomGuard } from './ui/pinchZoomGuard'
 import { installCaliperInput } from './ui/caliperInput'
 import { installTheme } from './state/theme'
+import { initStorage } from './storage/init'
 
 // The bit gallery is code-split like the other heavy features.
 const BitLibraryPage = lazy(() => import('./features/bitlibrary/BitLibrary').then((m) => ({ default: m.BitLibraryPage })))
@@ -49,8 +50,23 @@ installCaliperInput()
 // index.html makes the same call before the first paint; keep the routes in step.
 if (view !== 'tracecard' && ['/studio', '/account', '/bits'].includes(path)) installTheme()
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Root />
-  </StrictMode>,
-)
+// The app pages open browser storage (designs in IndexedDB, account sync) before the first
+// render; the landing page and the printed card do not need it.
+const needsStorage = view !== 'tracecard' && ['/studio', '/account', '/bits'].includes(path)
+
+async function start() {
+  if (needsStorage) {
+    try {
+      await initStorage()
+    } catch (err) {
+      console.error('Browser storage could not be opened', err)
+    }
+  }
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <Root />
+    </StrictMode>,
+  )
+}
+
+void start()

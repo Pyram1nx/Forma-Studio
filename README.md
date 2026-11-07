@@ -10,9 +10,10 @@ Shaper Tools' Studio (Design / Plan / Review modes), with two extras:
 - **Paper Scan:** photograph a sketch on paper, pick the paper size, and the
   page is flattened and the pen lines are vectorised into **real-size** paths.
 
-Everything runs on your computer. Designs are saved as files you control. The editor
-works without an account; an optional account (email and password) is available when
-the build is configured with an accounts API.
+Everything runs on your computer. Designs, presets and your bit kit are saved in the
+browser (they survive closing it), and as `.forma` files whenever you choose. The editor
+works fully without an account; an optional account (email and password) syncs designs and
+settings across devices.
 
 ## Features
 
@@ -91,7 +92,7 @@ WebKitGTK packages listed in the [Tauri prerequisites](https://tauri.app/start/p
 
 ### Home window
 
-The desktop app opens to a home window. It lists the designs saved on this computer
+The desktop app opens to a home window. It lists the designs saved on this device
 (newest first, with a thumbnail), starts new designs, and has the account page. Opening
 a design, or using **Designs** in the studio's app menu, shows the studio in its own
 window. A design that is already open in the studio is switched to in place. In a
@@ -111,10 +112,18 @@ designs, and `/studio` the editor.
 - Before a release, bump `version` in `src-tauri/tauri.conf.json` and `package.json`,
   and add a changelog section.
 
-### Accounts
+### Saving and accounts
 
-Accounts are optional. Set `VITE_API_URL` at build time to the base URL of an accounts
-API (see `server/index.mjs`). Without it, accounts are disabled and everything else works.
+Designs are saved in the browser's IndexedDB as you work; presets, the bit kit and other
+settings in localStorage. Each browser keeps a space for "no account" and one per account:
+signing in shows the account's designs, signing out shows this device's own designs again,
+and nothing mixes. Signed in, a background sync keeps devices in step and never drops a
+version when a design changed on two devices. See `src/storage/` and
+[docs/deployment.md](docs/deployment.md).
+
+Accounts are optional. A build has them when `VITE_API_URL` is set (`/api` on Vercel, where
+`api/` and `server/` run as Vercel Functions on Neon Postgres). Without it, accounts are off
+and everything else works. To try accounts locally, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Project layout
 
@@ -125,13 +134,16 @@ src/
   state/        zustand store (document, selection, view, undo/redo)
   editor/       canvas, chrome, panels, popovers, text dialog, app menu
   io/           save/open/autosave, SVG export/import (sanitised), text outlines
+  storage/      local storage spaces (IndexedDB designs, settings) and account sync
   features/
     carve3d/    3D model loading, slicer, bit gallery, carve planner
     paper/      paper detection, homography, ink mask, centerline/outline tracing
   home/         home window: saved designs and account page
+  account/      sign in, account page, sync status
   styles/       design tokens + component styles
 src-tauri/      Tauri desktop shell (Rust): window, native file dialogs, updater
-server/         accounts API (AWS Lambda), stores users in S3
+api/            Vercel Functions (thin wrappers around server/app.js)
+server/         accounts and sync API: routing, auth, Postgres (Neon) and in-memory stores
 docs/research/  design notes
 ```
 

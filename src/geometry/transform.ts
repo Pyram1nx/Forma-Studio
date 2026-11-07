@@ -1,4 +1,4 @@
-import type { Contour, Pt, Shape } from '../model/types'
+import type { Contour, FreeOrigin, Pt, Shape } from '../model/types'
 import { mapPen, penOf } from './pen'
 
 export interface BBox {
@@ -30,6 +30,14 @@ export const bboxValid = (b: BBox) => Number.isFinite(b.minX) && b.maxX >= b.min
 export const bboxW = (b: BBox) => b.maxX - b.minX
 export const bboxH = (b: BBox) => b.maxY - b.minY
 export const bboxCenter = (b: BBox): Pt => ({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 })
+
+/** Where `p` sits within `b` as fractions of its size (the inverse of anchor → point on bounds). */
+export function bboxFraction(b: BBox, p: Pt): FreeOrigin {
+  return {
+    fx: (p.x - b.minX) / Math.max(b.maxX - b.minX, 1e-9),
+    fy: (p.y - b.minY) / Math.max(b.maxY - b.minY, 1e-9),
+  }
+}
 
 /** Map a local point of a shape to world coordinates. */
 export function toWorld(s: Pick<Shape, 'x' | 'y' | 'rotation' | 'sx' | 'sy'>, p: Pt): Pt {

@@ -51,3 +51,90 @@
   color: var(--error-text);
   font-size: 13px;
 }
+.account-panel__sync {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.account-panel__notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--blue-lighter);
+  border: 1px solid var(--blue-tint);
+}
+.account-panel__notice--danger {
+  align-items: stretch;
+  background: transparent;
+  border-color: var(--error-text);
+}
+.account-panel__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.account-panel__row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.account-panel__link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--error-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.account-panel__link:hover {
+  text-decoration: underline;
+}
+.ss-btn--danger {
+  background: var(--error-text);
+  border-color: var(--error-text);
+  color: var(--on-accent);
+}
+
+/* "Synced just now" / "Offline" line, with a status dot. */
+.sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--panel-text);
+}
+.sync-status__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--cut-green);
+}
+.sync-status--syncing .sync-status__dot {
+  background: var(--blue-soft);
+  animation: sync-pulse 1s ease-in-out infinite alternate;
+}
+.sync-status--offline .sync-status__dot,
+.sync-status--signin .sync-status__dot {
+  background: var(--warn-orange);
+}
+.sync-status--error .sync-status__dot {
+  background: var(--error-text);
+}
+@keyframes sync-pulse {
+  to {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sync-status--syncing .sync-status__dot {
+    animation: none;
+  }
+}

@@ -19,6 +19,23 @@ npm run dev
 
 The studio opens at `/studio`, the account view at `/account`, and the home page at `/`. The desktop app needs Rust and the [Tauri prerequisites](https://tauri.app/start/prerequisites/); build it with `npm run tauri dev`.
 
+### Accounts and sync in local development
+
+Accounts are off by default, and the app works fully without them. To work on accounts or
+sync, create `.env.development.local` (git-ignored) with:
+
+```bash
+FORMA_LOCAL_API=memory
+```
+
+and restart `npm run dev`. The accounts API (`server/app.js`) then runs inside the dev server
+with an in-memory database: no setup, no keys, and accounts vanish on restart. To use a real
+Postgres instead, create your own free Neon database and set `FORMA_LOCAL_API=db`,
+`DATABASE_URL` and `SESSION_SECRET`. Never use the production database for development.
+
+`npm test` covers the API (`tests/server.test.ts`) and two-device sync
+(`tests/storageSync.test.ts`) without any database.
+
 ## Sending a change
 
 1. Fork the repository and create a branch from `main`.
@@ -40,7 +57,7 @@ Follow the code around your change: naming, comments and structure. Prefer small
 
 ## Releases
 
-Releases and deployments are made by the maintainer only. A pull request cannot publish a release, and the release workflow refuses to run for anyone else.
+Releases and deployments are made by the maintainer only. A pull request cannot publish a release, and the release workflow refuses to run for anyone else. Production deploys come from `main` on Vercel; pull requests get preview builds with accounts off, which never have access to the production database or secrets (see [docs/deployment.md](docs/deployment.md)).
 
 ## Conduct
 

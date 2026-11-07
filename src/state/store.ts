@@ -5,6 +5,7 @@ import type { DocHandle } from '../io/projectFile'
 import { mapPen } from '../geometry/pen'
 import { bake, bboxCenter, bboxH, bboxValid, bboxW, shapesBBox, type BBox } from '../geometry/transform'
 import { getPrefs, newDocSettings } from './prefs'
+import { readScoped, SYNCED_SETTINGS, writeScoped } from '../storage/space'
 
 export type Tool = 'select' | 'pen' | 'draw'
 export type Dialog = null | 'text' | 'carve3d' | 'trace' | 'offset' | 'radius' | 'shortcuts' | 'account' | 'reference' | 'bits' | 'dovetail' | 'systainer'
@@ -17,28 +18,19 @@ export interface View {
   panY: number
 }
 
-const UNITS_KEY = 'formastudio:units'
+const UNITS_KEY = SYNCED_SETTINGS.units
 
 /** Units the user last picked; new designs start in them. */
 export function lastUnits(): Units {
-  try {
-    const u = localStorage.getItem(UNITS_KEY)
-    if (u === 'mm' || u === 'in') return u
-  } catch {
-    /* no storage */
-  }
-  return 'in'
+  const u = readScoped(UNITS_KEY)
+  return u === 'mm' || u === 'in' ? u : 'in'
 }
 
 /** Units new designs start in: the account's preset, else the units last picked. */
 export const defaultUnits = (): Units => getPrefs().units ?? lastUnits()
 
 function rememberUnits(u: Units) {
-  try {
-    localStorage.setItem(UNITS_KEY, u)
-  } catch {
-    /* no storage */
-  }
+  if (readScoped(UNITS_KEY) !== u) writeScoped(UNITS_KEY, u)
 }
 
 export function newDoc(name = 'Untitled-1'): StudioDoc {
@@ -460,8 +452,15 @@ export const useStore = create<State>((set, get) => {
       set({ selection: shapes.map((s) => s.id) })
     },
     importPayload: (p) => {
-      const g: Group | undefined = p.group && { ...p.group, id: uid('g') }
-      const shapes: Shape[] = p.shapes.map((s) => ({ ...s, id: uid(), ...(g && { groupId: g.id }) }) as Shape)
+      const groups: Group[] = []
+      const shapes: Shape[] = []
+      const take = (part: { group?: Omit<Group, 'id'>; shapes: Omit<Shape, 'id'>[] }) => {
+        const g: Group | undefined = part.group && { ...part.group, id: uid('g') }
+        if (g) groups.push(g)
+        for (const s of part.shapes) shapes.push({ ...s, id: uid(), ...(g && { groupId: g.id }) } as Shape)
+      }
+      if ('parts' in p) p.parts.forEach(take)
+      else take(p)
       const warnings = p.warnings ?? []
       if (!shapes.length) {
         get().showToast(warnings[0] ?? 'Nothing to import')
@@ -480,7 +479,7 @@ export const useStore = create<State>((set, get) => {
         }
       }
       get().checkpoint()
-      commitDoc({ ...doc, shapes: [...doc.shapes, ...shapes], groups: g ? [...doc.groups, g] : doc.groups })
+      commitDoc({ ...doc, shapes: [...doc.shapes, ...shapes], groups: [...doc.groups, ...groups] })
       set({ selection: shapes.map((s) => s.id), popover: null })
       setTimeout(() => get().zoomToFit(shapesBBox(shapes)), 0)
       if (warnings.length) get().showToast(warnings.length > 1 ? `${warnings[0]} (+${warnings.length - 1} more)` : warnings[0])

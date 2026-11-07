@@ -4,6 +4,14 @@ Each `## <version>` section becomes the release notes shown in the app's update 
 
 ## Unreleased
 
+- **Saving** is now local-first and keeps everything: designs are stored in the browser's own database
+  (no more 20-design limit) and survive closing the browser, along with presets, your bit kit and the
+  Systainer layout. Designs made without an account and each account's designs are kept apart on the
+  device: signing in shows the account's designs, signing out brings your own back.
+- **Accounts** now sync designs, presets and your bit kit across devices in the background, offline
+  included. If a design was changed on two devices, both versions are kept. Signed in, you can copy the
+  designs you made without an account into the account. Accounts can be deleted from the account page.
+
 - **Snapping** now behaves like Shaper Studio's. A moved selection lines up its left, right and centre
   (not just the anchor) with other shapes' bounding box and centre lines within 12 px, and grid lines
   within 6 px; whichever is nearest wins on each axis. Edge handles snap the dragged edge while

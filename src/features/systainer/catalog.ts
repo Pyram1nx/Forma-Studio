@@ -104,6 +104,40 @@ function hexBar(af: number, len: number): THREE.BufferGeometry {
   return g
 }
 
+/**
+ * The tip of a hex bar as a knob, along +y from 0 to `len`: the hex cut by four loop cuts `len/4`
+ * apart, with the end cap and the third loop cut scaled down about their own centres (every other
+ * ring full width), so the end reads as a knob in the shaft's own facets. Vertex angles match
+ * `hexBar`, so the knob and the bar behind it meet without a seam.
+ */
+function hexKnob(af: number, len: number): THREE.BufferGeometry {
+  const r = af / Math.sqrt(3)
+  const step = len / 4
+  // Tip to shaft: the cap tapers the nose in, loops 1–2 stay full, loop 3 dips into the groove
+  // behind the knob, loop 4 is full hex again.
+  const rings: [number, number][] = [
+    [0, 0.75],
+    [step, 1],
+    [2 * step, 1],
+    [3 * step, 0.9],
+    [len, 1],
+  ]
+  const pos: number[] = [0, 0, 0]
+  const idx: number[] = []
+  for (const [y, s] of rings)
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3
+      pos.push(s * r * Math.cos(a), y, -s * r * Math.sin(a))
+    }
+  const at = (j: number, i: number) => 1 + 6 * j + (i % 6)
+  // The cap, wound to face the tip (-y).
+  for (let i = 0; i < 6; i++) idx.push(0, at(0, i + 1), at(0, i))
+  // The bands between rings, wound outward.
+  for (let j = 0; j + 1 < rings.length; j++)
+    for (let i = 0; i < 6; i++) idx.push(at(j, i), at(j, i + 1), at(j + 1, i + 1), at(j, i), at(j + 1, i + 1), at(j + 1, i))
+  return faceted(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)).setIndex(idx))
+}
+
 // ---------- Origin ----------
 
 /**
@@ -249,9 +283,14 @@ export const uidSeed = (uid: string): number => {
   return h >>> 0
 }
 
-/** The Gen 1 USB stick: a slim 42 × 12 × 4.5 mm metal stick, plug and body the same section. */
+/**
+ * The Gen 1 USB stick from LeoTurlock's SYS 3 insert: a 42 × 12 × 4.5 mm stick with a fully
+ * rounded body end and a square connector end. The 4.5 mm source label is its pocket depth.
+ */
 function usbGen1() {
-  return G(M(extrude(roundRect(30, 12, 1.2), 4.5, 0.6), 'grey', -6), M(box(12, 12, 4.5), 'steel', 15))
+  const body = M(extrude(roundRect(30, 12, 6), 4.5, 0.6), 'grey', -6)
+  const connector = M(box(12, 12, 4.5), 'steel', 15)
+  return G(body, connector)
 }
 
 /** A USB stick: body plus plug, lying along x. */
@@ -265,7 +304,7 @@ function dustAdapter() {
 
 /** Origin's open-end collet wrench (ShaperHub "profile type A"), 6.5 mm thick. */
 function colletWrench() {
-  return G(M(extrudeOutline(profile(OPEN_WRENCH, 0.4), 6.5, 0.5), 'steel'))
+  return G(M(extrudeOutline(profile(OPEN_WRENCH, 0), 6.5, 0.5), 'steel'))
 }
 
 // ---------- Workstation ----------
@@ -278,10 +317,10 @@ function colletWrench() {
  */
 function supportArm() {
   const t = 12.5
-  const all = profile(SUPPORT_ARM, 0.5)
+  const all = profile(SUPPORT_ARM, 0)
   const pegX = boundsOf(all).x0 + 10.3
-  const parts: THREE.Object3D[] = [M(extrudeOutline(profile(SUPPORT_ARM, 0.5, { minX: pegX }), t, 0.8), 'anodized')]
-  const lobes = splitRegions(profile(SUPPORT_ARM, 0.5, { maxX: pegX + 0.01 }))
+  const parts: THREE.Object3D[] = [M(extrudeOutline(profile(SUPPORT_ARM, 0, { minX: pegX }), t, 0.8), 'anodized')]
+  const lobes = splitRegions(profile(SUPPORT_ARM, 0, { maxX: pegX + 0.01 }))
     .map(boundsOf)
     .filter((b) => b.w >= 1 && b.h >= 1)
     .sort((p, q) => q.h - p.h)
@@ -341,11 +380,7 @@ function arcSlot(a: Pt, m: Pt, b: Pt, w: number, n = 24): Contour {
   return { closed: true, pts: out }
 }
 
-/**
- * A notch cut into the bar's edge (at y = `edge`) from x0 to x1, down to y = yd. Both the deep corners
- * (radius r) and the two corners at the mouth, where the plate edge turns into the walls (radius rf),
- * are rounded. The cut overshoots the edge so it is clean.
- */
+/** A rounded notch cut into a visual plate edge, without changing its pocket outline. */
 function notchContour(x0: number, x1: number, yd: number, edge: number, r: number, rf: number, n = 8): Contour {
   const pts: Pt[] = [{ x: x0 - rf, y: edge + 2 }, { x: x0 - rf, y: edge }]
   const arc = (cx: number, cy: number, rad: number, from: number, to: number) => {
@@ -354,40 +389,35 @@ function notchContour(x0: number, x1: number, yd: number, edge: number, r: numbe
       pts.push({ x: cx + rad * Math.cos(a), y: cy + rad * Math.sin(a) })
     }
   }
-  // Mouth fillet (material corner at x0), down the wall, round the deep corner, along the floor.
   arc(x0 - rf, edge - rf, rf, Math.PI / 2, 0)
   pts.push({ x: x0, y: yd + r })
   arc(x0 + r, yd + r, r, Math.PI, (Math.PI * 3) / 2)
   pts.push({ x: x1 - r, y: yd })
   arc(x1 - r, yd + r, r, (Math.PI * 3) / 2, Math.PI * 2)
   pts.push({ x: x1, y: edge - rf })
-  // Mouth fillet at x1.
   arc(x1 + rf, edge - rf, rf, Math.PI, Math.PI / 2)
   pts.push({ x: x1 + rf, y: edge + 2 })
   return { closed: true, pts }
 }
 
 /**
- * Angle Fence (white anodised), lying flat, on its traced outline (unchanged). Styled on the shop
- * photo (workstation_angle): the Ø8 pivot hole near the bar end and the curved slot the Lock Screw rides
- * in, both through the plate (interior holes don't change the pocket: islands are off), and the small
- * square notch in the bar's long edge (10 × 11 mm, all four corners rounded), on the same side as the bulge. The notch is the one change to
- * the traced footprint, added on request.
+ * Angle Fence (white anodised), lying flat, on its traced SVG outline. The 3D plate keeps its
+ * rounded side notch, while an invisible source-outline solid remains authoritative for the pocket.
  */
 function angleFence() {
-  const outline = profile(ANGLE_FENCE, 0.5)
-  const holes: Contour[] = [
+  const outline = profile(ANGLE_FENCE, 0)
+  const visualCuts: Contour[] = [
     circleContour(50.2, -13.4, 4),
     arcSlot({ x: 22.6, y: 10.4 }, { x: 18.9, y: -9.1 }, { x: 15.3, y: -16.2 }, 7),
-    // The outline's edge sits at y = -4.5 once inset by 0.5.
-    notchContour(-34.8, -24.7, -14.8, -4.5, 2.2, 1.2),
+    notchContour(-34.8, -24.7, -14.8, -4.01, 2.2, 1.2),
   ]
   // White faces, very dark brown-black sides and bevel (extrude groups: 0 = faces, 1 = sides + bevel).
-  const plate = new THREE.Mesh(extrudeOutline(boolean('difference', outline, holes), 9.5, 0.8), [mat('white'), mat('edgeblack')])
+  const plate = new THREE.Mesh(extrudeOutline(boolean('difference', outline, visualCuts), 9.5, 0.8), [mat('white'), mat('edgeblack')])
   // The small black dot printed on the bulge, just under where the knob sits (decoration: not in the pocket).
   const dot = M(cyl(0.65, 0.65, 0.06, 20), 'edgeblack', 16.4, 15.3, 9.47)
   dot.userData.deco = true
-  return G(plate, dot)
+  // The full source outline is hidden in 3D but included in silhouettes, SVG export and foam booleans.
+  return G(plate, dot, footprint(outline, 0, 9.5))
 }
 
 /** The Angle Fence's Lock Screw: knurled Ø18 × 13 head on a Ø7 × 15 screw (the hub's 13 / 28 mm pockets). */
@@ -427,21 +457,24 @@ function footprint(cs: Contour[], z0: number, z1: number): THREE.Mesh {
  */
 /** The bolt's axis height: half the cap's diameter, so the knob's lowest point is the floor. */
 const CLAMP_AXIS = 23.65
-const CLAMP_SINK = CLAMP_AXIS + 9
+const CLAMP_SINK = 28
 
 function holdDownClamp() {
   const t = 18
   const R = CLAMP_AXIS
-  const z0 = R - t / 2
-  const lever = profile(CLAMP_LEVER, 0.5)
+  // The source SVG has a 28 mm knob cutout and 20 mm bolt / lever cutouts.
+  // Their physical solids are decorative; these z levels make the SVG outlines authoritative for
+  // the pockets and their boolean in the foam.
+  const z0 = 8
+  const lever = profile(CLAMP_LEVER, 0)
   // The pads are the rubber caps over the lever's two ends; cut where the outline steps down to the bar.
   const leftCut = halfPlane({ x: -44.45, y: 5.6 }, { x: 0.28, y: 1 }, { x: -1, y: 0.28 })
   const rightCut = halfPlane({ x: 44.55, y: -1.4 }, { x: -0.33, y: 1 }, { x: 1, y: 0.33 })
   const bar = boolean('difference', lever, [leftCut, rightCut])
   const padL = boolean('intersection', lever, [leftCut])
   const padR = boolean('intersection', lever, [rightCut])
-  const bolt = boundsOf(profile(CLAMP_BOLT, 0.5))
-  const knob = boundsOf(profile(CLAMP_KNOB, 0.5))
+  const bolt = boundsOf(profile(CLAMP_BOLT, 0))
+  const knob = boundsOf(profile(CLAMP_KNOB, 0))
   const bx = bolt.cx
   // Faces black, edges steel (extrude groups 0 and 1).
   const barMesh = new THREE.Mesh(extrudeOutline(bar, t, 0.8), [mat('anodized'), mat('steel')])
@@ -472,38 +505,41 @@ function holdDownClamp() {
     M(extrude(cap, capLen, 3, 4), 'knob', bx, capEnd, R, -90),
     M(cyl(4.5, 4.5, 1.2, 24), 'steel', bx, capEnd - 1.2, R, -90),
     // Symmetric about the bolt's axis, so the flipped pose gets the same pockets.
-    footprint(profile(CLAMP_BOLT, 0.5), z0, 2 * R - z0),
-    footprint(profile(CLAMP_KNOB, 0.5), 0, 2 * R),
+    footprint(lever, 8, 26),
+    footprint(profile(CLAMP_BOLT, 0), 8, 2 * R - 8),
+    footprint(profile(CLAMP_KNOB, 0), 0, 2 * R),
   )
 }
 
 /** A T-handle hex key lying flat: handle outline `t` thick, a 4 mm hex shaft through its middle. */
 function tHexKey(handle: typeof LONG_HEX_HANDLE, t: number, y0: number, y1: number) {
-  return () => G(M(extrudeOutline(profile(handle, 0.4), t, 0.8), 'knob'), M(hexBar(4, y1 - y0), 'steel', 0, y0, t / 2))
+  return () => G(M(extrudeOutline(profile(handle, 0), t, 0.8), 'knob'), M(hexBar(4, y1 - y0), 'steel', 0, y0, t / 2))
+}
+
+/** Lowest and highest y where the vertical line at `x` crosses the closed outline `pts`. */
+function spanAt(pts: Pt[], x: number): [number, number] {
+  let lo = Infinity
+  let hi = -Infinity
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    if ((a.x - x) * (b.x - x) > 0 || a.x === b.x) continue
+    const y = a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x)
+    lo = Math.min(lo, y)
+    hi = Math.max(hi, y)
+  }
+  return [lo, hi]
 }
 
 /**
  * A bar whose plan view is `pts` (a simple outline, x-monotone sections) and whose every cross-section
  * is an ellipse: as wide as the outline is at that x, `t` tall, lying on z = 0. So the long sides
- * come out fully round while the ends stay flat caps at the outline's end edges.
+ * come out fully round while the ends stay flat caps at the outline's end edges. `edges` may replace
+ * the outline's [lo, hi] at some x (a smooth run where the outline has a kink or a neck).
  */
-function roundedBar(pts: Pt[], t: number): THREE.BufferGeometry {
-  const n = pts.length
+function roundedBar(pts: Pt[], t: number, edges?: (x: number) => [number, number] | null, S = 28): THREE.BufferGeometry {
   const xmax = Math.max(...pts.map((p) => Math.abs(p.x))) - 0.03
-  const span = (x: number): [number, number] => {
-    let lo = Infinity
-    let hi = -Infinity
-    for (let i = 0; i < n; i++) {
-      const a = pts[i]
-      const b = pts[(i + 1) % n]
-      if ((a.x - x) * (b.x - x) > 0 || a.x === b.x) continue
-      const y = a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x)
-      lo = Math.min(lo, y)
-      hi = Math.max(hi, y)
-    }
-    return [lo, hi]
-  }
-  const S = 28
+  const span = (x: number): [number, number] => edges?.(x) ?? spanAt(pts, x)
   const steps = Math.ceil((2 * xmax) / 0.25)
   const pos: number[] = []
   const idx: number[] = []
@@ -552,11 +588,12 @@ function roundedBar(pts: Pt[], t: number): THREE.BufferGeometry {
 }
 
 /**
- * White print on the Shaper key's handle, as a flat decal on a strip that follows the bend: the
+ * White print on the Shaper key's handle, as a flat decal on a strip that follows the bend (`drop`: how
+ * far the handle's centreline falls at x): the
  * "SHΔPER" mark (the A is a bare triangle) centred over the bend, "4.0 MM" and "HEX 4.0" out on
  * either arm. Reads left to right with the shaft pointing down. A texture, so it's `deco`.
  */
-function keyPrint(yA: number, tan: number, z: number): THREE.Object3D | null {
+function keyPrint(yA: number, drop: (x: number) => number, z: number): THREE.Object3D | null {
   if (typeof document === 'undefined') return null
   const PX = 32
   const W = 56
@@ -598,7 +635,7 @@ function keyPrint(yA: number, tan: number, z: number): THREE.Object3D | null {
   tex.anisotropy = 8
   const geo = new THREE.PlaneGeometry(W, Hh, 56, 1)
   const p = geo.getAttribute('position')
-  for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) - Math.abs(p.getX(i)) * tan)
+  for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) - drop(p.getX(i)))
   geo.computeVertexNormals()
   const m = new THREE.Mesh(
     geo,
@@ -610,40 +647,170 @@ function keyPrint(yA: number, tan: number, z: number): THREE.Object3D | null {
 }
 
 /**
- * The Workstation's 4 mm T-handle hex key. Its outline is the one traced from the hub inserts
- * (LONG_HEX_HANDLE, LONG_HEX_SHAFT), unchanged; only the styling follows the Shaper shop photo
- * (workstation_wrench): the handle is that outline extruded 10 mm with fully rounded edges, a glossy
- * black sleeve takes the shaft where the outline narrows to its neck, the 4 mm hex ends in a ball,
- * and "SHΔPER" is printed on the handle. Lies flat with its axis at mid-handle height.
+ * A sleeve of radius `r` on an axis along y (at x = 0, z = `zc`), from `y0` (a small chamfered end) up
+ * into a handle, grown into it by a rolling fillet: in each half-plane through the axis a circle touches
+ * both the sleeve and the handle's underside, and the arc between the two is the fillet. Its radius is
+ * `fx` in plan (along x), easing to `fz` over the top and bottom, where the handle's flank is steep.
+ * `under(x, dz)` is the handle's lowest y at (x, z = zc + dz), or null where the handle doesn't reach.
+ * One smooth mesh, open at its top edge, which ends just inside the handle.
+ */
+function filletedSleeve(r: number, fx: number, fz: number, y0: number, zc: number, under: (x: number, dz: number) => number | null, seg = 64): THREE.BufferGeometry {
+  const ARC = 14
+  const rows: [number, number][][] = []
+  for (let i = 0; i < seg; i++) {
+    const th = (i / seg) * Math.PI * 2
+    const ux = Math.sin(th)
+    const uz = -Math.cos(th)
+    const f = fz + (fx - fz) * Math.abs(ux)
+    // The handle's underside in this half-plane, as (distance from the axis, y).
+    // Sampled finely in y too: where the half-plane grazes the handle's flank the curve runs steep.
+    const curve: [number, number][] = []
+    const at = (d: number) => under(d * ux, d * uz)
+    const fill = (d0: number, y0: number, d1: number, y1: number, depth: number) => {
+      if (depth > 0 && Math.abs(y1 - y0) > 0.01) {
+        const dm = (d0 + d1) / 2
+        const ym = at(dm)
+        if (ym != null) {
+          fill(d0, y0, dm, ym, depth - 1)
+          fill(dm, ym, d1, y1, depth - 1)
+          return
+        }
+      }
+      curve.push([d1, y1])
+    }
+    let prev: [number, number] | null = null
+    for (let d = r; d <= r + 2 * f + 0.5; d += 0.02) {
+      const y = at(d)
+      if (y == null) break
+      if (prev) fill(prev[0], prev[1], d, y, 14)
+      else curve.push([d, y])
+      prev = [d, y]
+    }
+    // Close in on where the handle ends in this half-plane (its flank turns vertical there).
+    if (prev) {
+      let a = prev[0]
+      let b = prev[0] + 0.02
+      for (let k = 0; k < 30; k++) {
+        const m = (a + b) / 2
+        if (at(m) == null) b = m
+        else a = m
+      }
+      const ya = at(a)
+      if (ya != null) fill(prev[0], prev[1], a, ya, 14)
+    }
+    const cr = r + f
+    let best: [number, number] = curve[0]
+    const nearest = (cy: number) => {
+      let m = Infinity
+      for (const p of curve) {
+        const q = Math.hypot(p[0] - cr, p[1] - cy)
+        if (q < m) {
+          m = q
+          best = p
+        }
+      }
+      return m
+    }
+    // Slide the circle's centre up the sleeve until it touches the handle.
+    let lo = Math.min(...curve.map((p) => p[1])) - 2 * f
+    let hi = Math.max(...curve.map((p) => p[1]))
+    for (let k = 0; k < 48; k++) {
+      const mid = (lo + hi) / 2
+      if (nearest(mid) > f) lo = mid
+      else hi = mid
+    }
+    const cy = lo
+    nearest(cy)
+    const [tx, ty] = best
+    const a1 = Math.atan2(ty - cy, tx - cr)
+    const row: [number, number][] = [[0, y0], [r - 1.4, y0], [r - 0.5, y0 + 0.35], [r, y0 + 1], [r, (y0 + 1 + cy) / 2]]
+    for (let k = 0; k <= ARC; k++) {
+      const a = Math.PI + ((a1 - Math.PI) * k) / ARC
+      row.push([cr + f * Math.cos(a), cy + f * Math.sin(a)])
+    }
+    // On past the touch point along the fillet's tangent, dipping just under the handle's surface,
+    // so no gap shows against its facets.
+    row.push([tx + 0.4 * Math.sin(a1) + 0.12 * Math.cos(a1), ty - 0.4 * Math.cos(a1) + 0.12 * Math.sin(a1)])
+    rows.push(row)
+  }
+  const pos: number[] = []
+  rows.forEach((row, i) => {
+    const th = (i / seg) * Math.PI * 2
+    for (const [d, y] of row) pos.push(d * Math.sin(th), y, zc - d * Math.cos(th))
+  })
+  const J = rows[0].length
+  const idx: number[] = []
+  for (let i = 0; i < seg; i++) {
+    const a = i * J
+    const b = ((i + 1) % seg) * J
+    for (let j = 0; j < J - 1; j++) idx.push(a + j, a + j + 1, b + j + 1, a + j, b + j + 1, b + j)
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setIndex(idx)
+  g.computeVertexNormals()
+  // The tucked-in end shades as the fillet's edge does, so it doesn't draw a line.
+  const nrm = g.getAttribute('normal') as THREE.BufferAttribute // computeVertexNormals makes a plain attribute
+  for (let i = 0; i < seg; i++) nrm.copyAt(i * J + J - 1, nrm, i * J + J - 2)
+  return g
+}
+
+/**
+ * The Workstation's 4 mm T-handle hex key, styled on the Shaper shop photo (workstation_wrench): a
+ * glossy black handle 10 mm thick with a round (elliptical) section, a glossy sleeve on the shaft that
+ * flows into the handle through a rounded fillet, the 4 mm hex ending in a loop-cut knob (`hexKnob`),
+ * and "SHΔPER" printed
+ * on the handle. The handle follows the traced outline (LONG_HEX_HANDLE) along its straight arms and
+ * ends; through the middle it bends smoothly instead of the outline's V, and the neck is the sleeve and
+ * its fillet (which land on the outline's own fillet). The traced outline itself is a hidden footprint,
+ * so the pocket is the SVG path unchanged. Lies flat with its axis at mid-handle height.
  */
 function shaperHexKey() {
   const t = 10
   const H = t / 2
   const tip = LONG_HEX_SHAFT.tip
-  // The handle without its neck (the sleeve is the neck): everything below the handle's own V-shaped
-  // underside is cut away, so the rounding has a clean edge to follow. The rest is the traced outline.
-  const neck: Contour = {
-    closed: true,
-    pts: [{ x: -9, y: 40 }, { x: 9, y: 40 }, { x: 9, y: 91.8 }, { x: 0, y: 93.1 }, { x: -9, y: 91.8 }],
+  const outline = profile(LONG_HEX_HANDLE, 0)
+  const pts = outline.reduce((m, c) => (c.pts.length > m.pts.length ? c : m)).pts
+  // The arms' straight edges, measured on the outline either side of the neck: both fall at slope k
+  // away from the middle. Through |x| < BEND the |x| of the V becomes a parabola, so the handle bends
+  // smoothly (no crease over the middle, no bump where the trace has one).
+  const [l14, h14] = spanAt(pts, 14)
+  const [l24, h24] = spanAt(pts, 24)
+  const [m14, n14] = spanAt(pts, -14)
+  const [m24, n24] = spanAt(pts, -24)
+  const k = (l14 - l24 + h14 - h24 + m14 - m24 + n14 - n24) / 40
+  const bot0 = (l14 + m14) / 2 + 14 * k
+  const top0 = (h14 + n14) / 2 + 14 * k
+  const BEND = 8
+  const sabs = (x: number) => (Math.abs(x) >= BEND ? Math.abs(x) : (x * x) / BEND / 2 + BEND / 2)
+  const STRAIGHT = 26
+  const edges = (x: number): [number, number] | null => (Math.abs(x) < STRAIGHT ? [bot0 - k * sabs(x), top0 - k * sabs(x)] : null)
+  const handle = roundedBar(pts, t, edges, 36)
+  // The handle's underside at (x, z = H + dz): its sections are ellipses, `hw` wide and H tall here.
+  const hw = (top0 - bot0) / 2
+  const under = (x: number, dz: number) => {
+    if (Math.abs(dz) >= H) return null
+    const yc = (top0 + bot0) / 2 - k * sabs(x)
+    return yc - hw * Math.sqrt(1 - (dz / H) ** 2)
   }
-  const outline = boolean('difference', profile(LONG_HEX_HANDLE, 0.4), [neck])
-  const handle = roundedBar(outline.reduce((m, c) => (c.pts.length > m.pts.length ? c : m)).pts, t)
-  const neckHalf = 3.72
-  const sleeveTop = 96
-  const sleeveLen = sleeveTop - 59.4
-  const sleeve = lathe(
-    [[0, 0], [neckHalf, 0], [neckHalf, sleeveLen - 1], [neckHalf - 0.5, sleeveLen - 0.35], [neckHalf - 1.4, sleeveLen], [0, sleeveLen]],
-    40,
-  )
-  // A hex's circumradius, so the ball keeps the shaft's full width right to the tip.
-  const ballR = 2 / Math.cos(Math.PI / 6)
+  // The traced neck is 8.2 wide; its fillet into the handle's underside ends near x = ±7.8.
+  const neckHalf = 4.1
+  const sleeve = filletedSleeve(neckHalf, 3.7, 2, 59.4, H, under)
+  // The shaft stays hex to the tip and ends in a knob cut from that hex: four loop cuts over one
+  // across-corners width, the end cap and the third loop scaled down on their own centres. The full
+  // rings keep the shaft's width right up to the groove.
+  const knobLen = 4 / Math.cos(Math.PI / 6)
+  const axisZ = 4 + knobLen / 2
   const parts: THREE.Object3D[] = [
     M(handle, 'gloss'),
-    M(sleeve, 'gloss', 0, sleeveTop, H, 90, 0, 0),
-    M(hexBar(4, LONG_HEX_SHAFT.top - (tip + ballR)), 'black', 0, tip + ballR, H),
-    M(new THREE.SphereGeometry(ballR, 24, 16), 'black', 0, tip + ballR, H),
+    M(sleeve, 'gloss'),
+    // The handle pocket is 8 mm deep; the shaft is its own 4 mm deep step.
+    M(hexBar(4, LONG_HEX_SHAFT.top - (tip + knobLen)), 'black', 0, tip + knobLen, axisZ),
+    M(hexKnob(4, knobLen), 'black', 0, tip, axisZ),
+    // The traced outline, so the pocket is the SVG path whatever the smoothing above does.
+    footprint(outline, 0, t),
   ]
-  const print = keyPrint(100.4, 0.1405, t + 0.05)
+  const print = keyPrint((top0 + bot0) / 2, (x) => k * sabs(x), t + 0.05)
   if (print) parts.push(print)
   return G(...parts)
 }
@@ -912,7 +1079,7 @@ export const ITEMS: ItemDef[] = [
     cats: ['workstation', 'origin'],
     note: `The Workstation’s 4 mm wrench: 217 mm long, 80 mm handle. ${HUB}`,
     poses: [
-      flat(),
+      flat('Flat', 8),
       { id: 'edge', label: 'On its edge', rot: [0, 90, 0] },
       { id: 'standing', label: 'Standing, shaft in', rot: [90, 0, 0], sink: () => 70 },
     ],

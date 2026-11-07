@@ -1,6 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import AccountPanel from '../account/AccountPanel'
-import { accountsEnabled, getSession, type Session } from '../account/api'
+import { useSession } from '../account/useSession'
+import { accountsEnabled } from '../account/api'
+import SyncStatus from '../account/SyncStatus'
+import { persistPendingNow, subscribeDesigns } from '../storage/designStore'
+import { copyLocalDesigns, countLocalDesignsToCopy } from '../storage/sync'
 import { exportSVG } from '../io/svgExport'
 import { autosave, listRecent, loadRecent, nextUntitledName, type RecentEntry } from '../io/projectFile'
 import { defaultUnits, newDoc } from '../state/store'
@@ -20,18 +24,21 @@ type Page = 'designs' | 'bits' | 'settings' | 'account'
 /** The home window: saved designs, the bit gallery, presets and the account. Opens designs in the studio window. */
 export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Page }) {
   const [page, setPage] = useState<Page>(initialPage)
-  const [session, setSession] = useState<Session | null>(() => getSession())
+  const session = useSession()
   const [designs, setDesigns] = useState<RecentEntry[]>(() => listRecent())
   const [error, setError] = useState('')
   const [units, setUnits] = useState<Units>(defaultUnits)
+  const [toCopy, setToCopy] = useState(0)
 
   useEffect(() => {
     document.title = 'Forma Studio'
-    // Designs may have changed in the studio window while this one was in the background.
-    const refresh = () => setDesigns(listRecent())
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
+    // Saved in another window (the studio), pulled from the account, or deleted.
+    return subscribeDesigns(() => setDesigns(listRecent()))
   }, [])
+
+  useEffect(() => {
+    void countLocalDesignsToCopy().then(setToCopy)
+  }, [designs])
 
   const openDesign = async (id: string) => {
     setError('')
@@ -44,9 +51,16 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
 
   const newDesign = () => {
     const doc = newDoc(nextUntitledName())
-    // Saved straight away so the new design shows up in the list and the studio can open it.
-    autosave(doc)
+    // Saved straight away, and journalled synchronously, so the studio opening next has it.
+    // (No await before window.open: browsers only allow popups straight after the click.)
+    void autosave(doc)
+    persistPendingNow()
     void openDesign(doc.id)
+  }
+
+  const copyToAccount = async () => {
+    await copyLocalDesigns()
+    setToCopy(await countLocalDesignsToCopy())
   }
 
   return (
@@ -100,13 +114,33 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
             <header className="home__head">
               <div>
                 <h1>Designs</h1>
-                <p className="ss-muted">Saved on this computer.</p>
+                {session && !session.needsSignIn ? (
+                  <p className="ss-muted">
+                    Saved on this device and in your account. <SyncStatus />
+                  </p>
+                ) : session ? (
+                  <p className="ss-muted">
+                    Saved on this device. <SyncStatus />
+                  </p>
+                ) : (
+                  <p className="ss-muted">Saved in this browser on this device{accountsEnabled() ? '. Sign in to sync them across devices.' : '.'}</p>
+                )}
               </div>
               <button className="ss-btn ss-btn--primary" onClick={newDesign}>
                 <Ic.IconNewFile size={16} /> New design
               </button>
             </header>
             {error && <p className="home__error" role="alert">{error}</p>}
+            {session && toCopy > 0 && (
+              <div className="home__notice">
+                <span>
+                  {toCopy} {toCopy === 1 ? 'design' : 'designs'} on this device {toCopy === 1 ? 'was' : 'were'} made without an account.
+                </span>
+                <button className="ss-btn ss-btn--sm" onClick={copyToAccount}>
+                  Copy to account
+                </button>
+              </div>
+            )}
             {designs.length ? (
               <ul className="home-grid">
                 {designs.map((d) => (
@@ -137,7 +171,7 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
           <section className="home-account">
             <h1>Account</h1>
             <div className="home-account__card">
-              <AccountPanel onChange={setSession} />
+              <AccountPanel />
             </div>
           </section>
         )}

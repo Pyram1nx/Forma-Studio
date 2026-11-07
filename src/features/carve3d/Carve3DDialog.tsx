@@ -8,7 +8,8 @@ import { fmtLen, fromUnits, toUnits } from '../../model/factory'
 import { IconClose, IconLink, IconUnlink, IconPause, IconPlay, IconRestart } from '../../ui/icons'
 import { NumField } from '../../editor/Panels'
 import { CarveCancelled, type TabSettings } from './carvePlan'
-import { MODEL_ACCEPT, defaultsFor, orientedSize, placeModel, readModelFile, type ModelUnit, type UpAxis, type Vec3 } from './loadModel'
+import { outerShell } from './solidify'
+import { MODEL_ACCEPT, UNIT_MM, defaultsFor, orientedSize, placeModel, readModelFile, type ModelUnit, type UpAxis, type Vec3 } from './loadModel'
 import { carvedSurface, type CarvedSurface } from './finishedSurface'
 import { Field } from './fields'
 import MultiSidePanel from './MultiSidePanel'
@@ -36,6 +37,8 @@ export default function Carve3DDialog({ units, onClose, onImport }: Carve3DDialo
   const [modelRev, setModelRev] = useState(0)
   const [raw, setRaw] = useState<Float32Array | null>(null)
   const [loading, setLoading] = useState(false)
+  /** The file was not watertight: the model in use is its outer shell, at this voxel size (file units). */
+  const [shellVoxel, setShellVoxel] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [modelUnit, setModelUnit] = useState<ModelUnit>('mm')
@@ -91,6 +94,12 @@ export default function Carve3DDialog({ units, onClose, onImport }: Carve3DDialo
 
   const natural = useMemo(() => (raw ? orientedSize(raw, modelUnit, up) : null), [raw, modelUnit, up])
   const placed = useMemo(() => (raw ? placeModel(raw, modelUnit, up, sizeMm) : null), [raw, modelUnit, up, sizeMm])
+  /** Outer-shell voxel size at the current placement, mm (null for watertight models). */
+  const shellVoxelMm = useMemo(() => {
+    if (shellVoxel === null || !placed || !natural) return null
+    const n = Math.max(natural.x, natural.y, natural.z)
+    return n > 0 ? (shellVoxel * UNIT_MM[modelUnit] * Math.max(placed.size.x, placed.size.y, placed.size.z)) / n : null
+  }, [shellVoxel, placed, natural, modelUnit])
 
   /** Set one extent. With the aspect lock on, the other two scale by the same factor. */
   function setDim(axis: keyof Vec3, v: number) {
@@ -378,10 +387,15 @@ export default function Carve3DDialog({ units, onClose, onImport }: Carve3DDialo
     setError(null)
     setLoading(true)
     try {
-      const positions = await readModelFile(f)
+      const read = await readModelFile(f)
+      if (seq !== loadSeq.current) return
+      // Open meshes (game/render exports: single-sided panels, interiors) cannot be sliced by
+      // winding; carve their outer shell instead.
+      const shell = await outerShell(read)
       if (seq !== loadSeq.current) return
       const d = defaultsFor(f.name)
-      setRaw(positions)
+      setRaw(shell.positions)
+      setShellVoxel(shell.solidified ? shell.voxel : null)
       setFile(f)
       setModelUnit(d.unit)
       setUp(d.up)
@@ -398,6 +412,7 @@ export default function Carve3DDialog({ units, onClose, onImport }: Carve3DDialo
   function resetModel() {
     loadSeq.current++
     setRaw(null)
+    setShellVoxel(null)
     setFile(null)
     setMsPlan(null)
     setParts(null)
@@ -697,6 +712,12 @@ export default function Carve3DDialog({ units, onClose, onImport }: Carve3DDialo
                   Other File
                 </button>
               </div>
+              {shellVoxelMm !== null && (
+                <span className="ss-muted c3d-note">
+                  This mesh is not watertight, so its outer shell is carved. Details finer than about {L(shellVoxelMm)} are
+                  smoothed.
+                </span>
+              )}
               {error && <span className="c3d-error">{error}</span>}
             </div>
           )}

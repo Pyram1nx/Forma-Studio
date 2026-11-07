@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState, type JSX } from 'react'
 import type { OriginPoint, OriginRef, Pt, Shape } from '../model/types'
 import { activeOrigin, useStore } from '../state/store'
 import { requestCut, subscribeCut, wbbox, world } from './geomCache'
@@ -1048,7 +1048,6 @@ export default function Canvas() {
 
   // selection overlay (screen space)
   // Custom anchor: a free marker that stays on the canvas until cleared (design mode only).
-  const customAnchor = doc.settings.customAnchor
   const activeOrig = activeOrigin(doc, selection) ?? 'mc'
   const customActive = typeof activeOrig !== 'string'
   // The free anchor is a fraction of the selection's bounds: the regular overlay draws it, and only while

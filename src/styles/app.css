@@ -437,6 +437,13 @@ kbd {
 .action-bar .hover-btn.is-active .ui-round {
   background: var(--blue-050);
 }
+/* The collapsible slots hold a 40px button, but `width: auto` cannot interpolate —
+   without an explicit width the slot snaps shut mid-collapse (see .is-collapsed)
+   instead of squeezing closed, jolting the whole bar. */
+.action-bar > .hover-btn {
+  width: 40px;
+  justify-content: center;
+}
 /* Bar children animate their slot too: a conditional action (Edit Text / ShapeShifter /
    Group) squeezes into and out of a 0-width slot instead of popping, so the bar grows
    smoothly and its neighbours slide apart. The slot opens right away; the rung delay only
@@ -448,21 +455,23 @@ kbd {
     width 0.26s cubic-bezier(0.34, 1.4, 0.64, 1),
     margin-left 0.26s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
-/* A conditional action with nothing to show: slot closed, button sunk below the bar edge
-   (the same off-state the whole bar uses) until its action applies again. */
+/* A conditional action with nothing to show. Strictly two-phase: the button retracts like
+   the bar's own exit (sink + fade, staggered by rung) and only once it is fully gone does
+   its slot close, letting the neighbours slide together — closing earlier would drag the
+   sinking buttons sideways into each other. No clipping: the button keeps its silhouette
+   while it drops away. */
 .hover-btn.is-collapsed {
   width: 0;
   min-width: 0;
   margin-left: 0;
-  overflow: hidden;
   opacity: 0;
   transform: translateY(72px);
   pointer-events: none;
   transition:
     transform 0.22s cubic-bezier(0.55, 0, 0.75, 0.2) calc(var(--i, 0) * 22ms),
-    opacity 0.18s ease-in calc(var(--i, 0) * 22ms),
-    width 0.26s cubic-bezier(0.34, 1.4, 0.64, 1),
-    margin-left 0.26s cubic-bezier(0.34, 1.4, 0.64, 1);
+    opacity 0.18s ease-in calc(var(--i, 0) * 22ms + 40ms),
+    width 0.26s cubic-bezier(0.34, 1.4, 0.64, 1) 300ms,
+    margin-left 0.26s cubic-bezier(0.34, 1.4, 0.64, 1) 300ms;
 }
 .hover-btn.is-collapsed .hover-btn__label {
   opacity: 0;

@@ -7,6 +7,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
 import { useStore } from 'zustand'
 import { BITS, finish, reachDepth, type Bit, type BitType } from '../carve3d/bits'
+import { onRemoteSetting, readScoped, SYNCED_SETTINGS, writeScoped } from '../../storage/space'
 
 /** One owned bit: how many the user has, and their own note ("dull", "in the shop"...). */
 export interface OwnedEntry {
@@ -93,7 +94,7 @@ export function customBitFromInput(input: CustomBitInput, id: string): Bit {
   }
 }
 
-const STORAGE_KEY = 'forma.bitLibrary.v1'
+const STORAGE_KEY = SYNCED_SETTINGS.bits
 
 function loadSaved(storage: Pick<Storage, 'getItem'> | undefined): { owned: Record<string, OwnedEntry>; custom: Bit[] } {
   const empty = { owned: {}, custom: [] as Bit[] }
@@ -338,8 +339,16 @@ export function suggestOwned(state: Pick<BitLibraryState, 'custom' | 'owned'>, r
 
 // ---- app-wide singleton --------------------------------------------------
 
-/** The gallery store for the running app, persisted to this browser's storage. */
-export const bitLibrary = createBitLibrary(typeof localStorage !== 'undefined' ? localStorage : undefined)
+/**
+ * The gallery store for the running app, persisted in this browser per storage space and
+ * synced to the account when signed in (src/storage/).
+ */
+export const bitLibrary = createBitLibrary(
+  typeof localStorage !== 'undefined' ? { getItem: (k) => readScoped(k), setItem: (k, v) => void writeScoped(k, v) } : undefined,
+)
+
+// The kit changed on another device.
+onRemoteSetting(STORAGE_KEY, (raw) => bitLibrary.setState(loadSaved({ getItem: () => raw })))
 
 /** React hook: `useBitLibrary((s) => s.owned)`. */
 export function useBitLibrary<T>(selector: (s: BitLibraryState) => T): T {

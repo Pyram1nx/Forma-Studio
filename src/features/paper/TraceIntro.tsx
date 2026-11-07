@@ -14,7 +14,7 @@
 // short burst of the same video) is straightened
 // with that lens and then goes through exactly the same path as an upload.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChangeEvent, ClipboardEvent, DragEvent, JSX } from 'react'
+import type { ChangeEvent, DragEvent, JSX } from 'react'
 import type { Pt } from '../../model/types'
 import * as Ic from '../../ui/icons'
 import { Detector } from './detectClient'
@@ -432,7 +432,7 @@ export default function TraceIntro({ sheet, onSheet, onFile, onCapture, onClose 
   // Ctrl/Cmd+V on the media screen pastes a clipboard image straight in, like choosing Paste.
   useEffect(() => {
     if (stage !== 'media') return
-    const onPaste = (e: ClipboardEvent) => {
+    const onPaste = (e: globalThis.ClipboardEvent) => {
       const f = Array.from(e.clipboardData?.items ?? [])
         .filter((i) => i.kind === 'file' && i.type.startsWith('image/'))
         .map((i) => i.getAsFile())

@@ -1,7 +1,9 @@
 // Account-wide presets: what a new design and a new shape start with, so the user does not
 // set units, grid, snapping and cut settings again on every design. Set on the account
-// page's Settings tab. Local-first like the bit gallery: saved in localStorage on this device.
+// page's Settings tab. Local-first like the bit gallery: saved on this device, per storage
+// space, and synced to the account when signed in (src/storage/).
 import { create } from 'zustand'
+import { onRemoteSetting, readScoped, scopedKey, SYNCED_SETTINGS, writeScoped } from '../storage/space'
 import { DEFAULT_CUT, SNAP_KINDS, type CutSettings, type CutType, type DocSettings, type SnapKind, type Units } from '../model/types'
 
 export interface Prefs {
@@ -45,7 +47,7 @@ export const DEFAULT_PREFS: Prefs = {
   mouseNav: 'zoom',
 }
 
-const KEY = 'forma.prefs.v1'
+const KEY = SYNCED_SETTINGS.prefs
 const CUT_TYPES: CutType[] = ['online', 'guide', 'inside', 'pocket', 'outside']
 
 const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
@@ -81,7 +83,7 @@ export function parsePrefs(raw: string | null): Prefs {
 
 function load(): Prefs {
   try {
-    return parsePrefs(localStorage.getItem(KEY))
+    return parsePrefs(readScoped(KEY))
   } catch {
     return DEFAULT_PREFS
   }
@@ -98,19 +100,28 @@ export const usePrefs = create<PrefsState>()((set) => ({
   reset: () => set({ ...DEFAULT_PREFS, units: undefined, gridSize: undefined }),
 }))
 
+let lastSaved: string | null = null
 usePrefs.subscribe((s) => {
   const { set: _set, reset: _reset, ...prefs } = s
-  try {
-    localStorage.setItem(KEY, JSON.stringify(prefs))
-  } catch {
-    /* no storage */
-  }
+  const next = JSON.stringify(prefs)
+  if (next === lastSaved) return
+  lastSaved = next
+  writeScoped(KEY, next)
+})
+
+// Presets that arrived from another device (account sync).
+onRemoteSetting(KEY, (raw) => {
+  lastSaved = raw
+  usePrefs.setState(parsePrefs(raw))
 })
 
 // Another window (home vs studio in the desktop app, or another tab) changed the presets.
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
-    if (e.key === KEY) usePrefs.setState(parsePrefs(e.newValue))
+    if (e.key === scopedKey(KEY)) {
+      lastSaved = e.newValue
+      usePrefs.setState(parsePrefs(e.newValue))
+    }
   })
 }
 

@@ -8,6 +8,8 @@ import { parsePen } from '../geometry/pen'
 import { useStore } from '../state/store'
 import { isDesktop } from '../desktop/runtime'
 import { desktopPickOpen, desktopPickSave, desktopRead, desktopWrite, type DesktopFileHandle } from '../desktop/files'
+import { deleteDesign, getDesignData, listDesigns, saveDesign, setDesignWriteErrorHandler, type DesignSummary } from '../storage/designStore'
+import { scopedKey } from '../storage/space'
 
 export const FILE_EXT = '.forma'
 /** Extensions of designs saved under earlier names. Still opened, never written. */
@@ -230,52 +232,31 @@ export function downloadBlob(blob: Blob, filename: string) {
 }
 
 // ---------- Local autosave (browser storage) ----------
+// Designs are kept per storage space (no account, or each account) in IndexedDB; see
+// src/storage/. These wrappers keep the editor's synchronous view of them.
 
-const KEY_RECENT = 'formastudio:recent'
-const KEY_DOC = (id: string) => 'formastudio:doc:' + id
+/** The design the studio opens on start-up, per space and per device (not synced). */
 const KEY_LAST = 'formastudio:last'
 
-export interface RecentEntry {
-  id: string
-  name: string
-  updatedAt: string
-  shapes: number
-}
+export type RecentEntry = DesignSummary
 
-export function listRecent(): RecentEntry[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(KEY_RECENT) || '[]')
-    return Array.isArray(v) ? v : []
-  } catch {
-    return []
-  }
-}
+/** Saved designs in this space, newest first. */
+export const listRecent = (): RecentEntry[] => listDesigns()
 
-const MAX_RECENT = 20
 let warnedStorage = false
+setDesignWriteErrorHandler((e) => {
+  console.warn('Autosave failed', e)
+  if (warnedStorage) return
+  warnedStorage = true
+  useStore.getState().showToast("Couldn't autosave — browser storage is full. Save to your computer.")
+})
 
 /**
- * Save the design to browser storage. Returns false when storage refused the
- * write (quota). The user is told at most once per session.
+ * Save the design in this browser. The returned promise settles once it is on disk
+ * (await it before another page has to read the design).
  */
-export function autosave(doc: StudioDoc): boolean {
-  try {
-    localStorage.setItem(KEY_DOC(doc.id), serialize(doc))
-    localStorage.setItem(KEY_LAST, doc.id)
-    const entry: RecentEntry = { id: doc.id, name: doc.name, updatedAt: doc.updatedAt, shapes: doc.shapes.length }
-    const all = [entry, ...listRecent().filter((r) => r.id !== doc.id)]
-    // Evicted entries must not leave their payloads behind.
-    for (const r of all.slice(MAX_RECENT)) localStorage.removeItem(KEY_DOC(r.id))
-    localStorage.setItem(KEY_RECENT, JSON.stringify(all.slice(0, MAX_RECENT)))
-    return true
-  } catch (e) {
-    console.warn('Autosave failed', e)
-    if (!warnedStorage) {
-      warnedStorage = true
-      useStore.getState().showToast("Couldn't autosave — storage is full. Save to your computer.")
-    }
-    return false
-  }
+export function autosave(doc: StudioDoc): Promise<unknown> {
+  return saveDesign({ id: doc.id, name: doc.name, updatedAt: doc.updatedAt, shapes: doc.shapes.length, data: serialize(doc) })
 }
 
 /**
@@ -302,13 +283,15 @@ export function createAutosaver(getDoc: () => StudioDoc, save: (doc: StudioDoc) 
       clearTimeout(timer)
       timer = undefined
     },
+    /** A change is waiting for the debounce. */
+    isPending: () => timer !== undefined,
   }
 }
 
 export function loadRecent(id: string): StudioDoc | null {
   try {
-    const t = localStorage.getItem(KEY_DOC(id))
-    return t ? parseDoc(t) : null
+    const t = getDesignData(id)
+    return t ? { ...parseDoc(t), id } : null
   } catch {
     return null
   }
@@ -317,28 +300,26 @@ export function loadRecent(id: string): StudioDoc | null {
 /** Make a saved design the one the studio opens on start-up. */
 export function setLastDesign(id: string) {
   try {
-    localStorage.setItem(KEY_LAST, id)
+    localStorage.setItem(scopedKey(KEY_LAST), id)
   } catch {
     /* storage unavailable: the studio starts on its last design */
   }
 }
 
+/** The design to open on start-up: the last one opened here, else the newest (e.g. on a new device). */
 export function loadLast(): StudioDoc | null {
+  let id: string | null = null
   try {
-    const id = localStorage.getItem(KEY_LAST)
-    return id ? loadRecent(id) : null
+    id = localStorage.getItem(scopedKey(KEY_LAST))
   } catch {
-    return null
+    /* storage blocked */
   }
+  const newest = listRecent()[0]?.id
+  return (id ? loadRecent(id) : null) ?? (newest ? loadRecent(newest) : null)
 }
 
 export function removeRecent(id: string) {
-  try {
-    localStorage.removeItem(KEY_DOC(id))
-    localStorage.setItem(KEY_RECENT, JSON.stringify(listRecent().filter((r) => r.id !== id)))
-  } catch {
-    /* storage unavailable: nothing to remove */
-  }
+  void deleteDesign(id)
 }
 
 export function nextUntitledName(): string {

@@ -44,6 +44,10 @@
   color: var(--error-text);
   font-size: 12px;
 }
+.c3d-note {
+  font-size: 12px;
+  line-height: 1.4;
+}
 .c3d-warn {
   color: var(--warn-text);
   font-size: 12px;

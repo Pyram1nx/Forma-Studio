@@ -3,7 +3,8 @@
 // Sam's Workstation Accessories Kit), Dr.BuckyLab's "Systainer Inlay variation", Bob21's "Trace
 // Systainer Insert", John259's "My Systainer" and LeoTurlock's "Custom insert for SYS 1 & 3" (the clamps). Converted from points to mm; x right, y up
 // (the hub drawing's top view), each tool centred on its own bounds. The pocket outlines include
-// their designers' clearance, so the models shrink them a little (catalog.ts).
+// their designers' clearance. The Standard fit uses these paths unchanged; the catalogue's Roomy
+// and Loose fits add clearance only when requested.
 import type { Pt } from '../../model/types'
 
 function pairs(v: number[]): Pt[] {

@@ -14,7 +14,9 @@ import AccountDialog from './account/AccountDialog'
 import UpdatePrompt from './desktop/UpdatePrompt'
 import { onOpenDesignRequest } from './desktop/windows'
 import { isDesktop } from './desktop/runtime'
-import { autosave, createAutosaver, loadLast, nextUntitledName } from './io/projectFile'
+import { autosave, createAutosaver, loadLast, loadRecent, nextUntitledName, serialize } from './io/projectFile'
+import { onRemoteDesignChange, saveDesign } from './storage/designStore'
+import { uid } from './model/ids'
 import { exportSvg, openFromComputer, openRecent, saveToComputer } from './editor/fileActions'
 import { nudgeSelection } from './editor/ops'
 import { MM_PER_IN } from './model/types'
@@ -178,6 +180,24 @@ function useAutosave() {
     if (last) useStore.getState().setDoc(last)
     const saver = createAutosaver(() => useStore.getState().doc, autosave)
     const unsub = useStore.subscribe((s, prev) => saver.onChange(s.doc, prev.doc))
+    // Account sync brought a newer version of the open design from another device.
+    const unRemote = onRemoteDesignChange((id) => {
+      const st = useStore.getState()
+      if (st.doc.id !== id) return
+      const remote = loadRecent(id)
+      if (!remote || serialize(remote) === serialize(st.doc)) return
+      if (saver.isPending() || st.shifter || st.penEditId) {
+        // Edits here are about to save over it: keep the other device's version as a copy.
+        const copyId = uid()
+        const name = `${remote.name} (from another device)`
+        void saveDesign({ id: copyId, name, updatedAt: remote.updatedAt, shapes: remote.shapes.length, data: serialize({ ...remote, id: copyId, name }) })
+        st.showToast(`“${remote.name}” was also changed on another device. That version is saved as a copy.`)
+        return
+      }
+      // Swap the content in place: mode, tool and view stay as they are.
+      useStore.setState({ doc: remote, past: [], future: [], selection: [] })
+      st.showToast('Updated with changes from another device')
+    })
     const beforeUnload = (e: BeforeUnloadEvent) => {
       saver.cancel()
       autosave(useStore.getState().doc)
@@ -190,6 +210,7 @@ function useAutosave() {
     window.addEventListener('beforeunload', beforeUnload)
     return () => {
       unsub()
+      unRemote()
       saver.cancel()
       window.removeEventListener('beforeunload', beforeUnload)
     }

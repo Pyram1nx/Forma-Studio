@@ -844,7 +844,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           v.ghost.add(obj)
         }
         const p = posed(def, 0, itemParams(def))
-        const sink = def.notch ? 10 : Math.min(live.current.ev.maxDepth, Math.max(1, (def.poses[0].sink ? def.poses[0].sink(p.height) : p.height) + live.current.ev.depthShift))
+        const sink = def.notch ? 10 : Math.min(live.current.ev.maxDepth, Math.max(1, def.poses[0].sink ? def.poses[0].sink(p.height) : p.height))
         v.ghost.children[0].position.set(g.x, g.y, live.current.ev.foamTop - sink + 0.5)
       },
     }),

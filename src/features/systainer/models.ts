@@ -228,10 +228,7 @@ export function shapesOf(contours: Contour[]): THREE.Shape[] {
   })
 }
 
-/**
- * A traced pocket outline as the tool's own outline: shrunk by `inset` (the clearance the insert's
- * designer left round it), and optionally kept to one side of a vertical line.
- */
+/** A traced SVG outline, optionally inset and/or kept to one side of a vertical line. */
 export function profile(pts: Pt[], inset = 0.5, clip?: { minX?: number; maxX?: number }): Contour[] {
   let cs = offsetContours([{ closed: true, pts }], -inset)
   if (clip) {

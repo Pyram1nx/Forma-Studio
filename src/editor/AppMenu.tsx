@@ -44,7 +44,8 @@ export default function AppMenu() {
     close()
     fn()
   }
-  const recent = recentOpen ? listRecent() : []
+  // The home window lists every design; the menu keeps to the latest few.
+  const recent = recentOpen ? listRecent().slice(0, 30) : []
   const mod = navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'
   const visible = doc.shapes.filter((s) => !s.hidden)
   const selected = visible.filter((s) => selection.includes(s.id))
@@ -114,7 +115,7 @@ export default function AppMenu() {
               <button className="recent__back" onClick={() => setRecentOpen(false)}>
                 <Ic.IconChevronLeft size={18} /> Open Recent
               </button>
-              {!recent.length && <div className="ss-muted recent__empty">No recent designs in this browser yet.</div>}
+              {!recent.length && <div className="ss-muted recent__empty">No designs saved here yet.</div>}
               {recent.map((r) => (
                 <div key={r.id} className={'recent__row' + (r.id === doc.id ? ' is-current' : '')}>
                   <button
@@ -165,7 +166,7 @@ export default function AppMenu() {
           />
           <Item icon={<Ic.IconKeyboard />} label="Keyboard Shortcuts" onClick={run(() => st().openDialog('shortcuts'))} />
           {accountsEnabled() && (
-            <Item icon={<Ic.IconUser />} label="Account" onClick={run(() => st().openDialog('account'))} right={<span className="ss-muted">{getSession()?.email ?? 'Sign in'}</span>} />
+            <Item icon={<Ic.IconUser />} label="Account" onClick={run(() => st().openDialog('account'))} right={<span className="ss-muted">{getSession()?.needsSignIn ? 'Sign in again' : (getSession()?.email ?? 'Sign in')}</span>} />
           )}
           {isDesktop() && (
             <Item icon={<Ic.IconDownload />} label="Check for Updates" onClick={run(() => window.dispatchEvent(new Event(CHECK_UPDATES_EVENT)))} />
