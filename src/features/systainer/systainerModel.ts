@@ -21,11 +21,11 @@ export interface SysSpec {
 }
 
 export const SYS_SIZES: SysSpec[] = [
-  { size: 1, name: 'SYS 1', height: 105, stretch: 0 },
-  { size: 2, name: 'SYS 2', height: 157.5, stretch: 52.5 },
-  { size: 3, name: 'SYS 3', height: 210, stretch: 105 },
-  { size: 4, name: 'SYS 4', height: 315, stretch: 210 },
-  { size: 5, name: 'SYS 5', height: 420, stretch: 315 },
+  { size: 1, name: 'Type 105', height: 105, stretch: 0 },
+  { size: 2, name: 'Type 157.5', height: 157.5, stretch: 52.5 },
+  { size: 3, name: 'Type 210', height: 210, stretch: 105 },
+  { size: 4, name: 'Type 315', height: 315, stretch: 210 },
+  { size: 5, name: 'Type 420', height: 420, stretch: 315 },
 ]
 export const sysSpec = (s: SysSize) => SYS_SIZES.find((x) => x.size === s) ?? SYS_SIZES[0]
 

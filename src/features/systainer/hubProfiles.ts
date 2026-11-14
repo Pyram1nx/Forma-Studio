@@ -1,7 +1,7 @@
 // Outlines traced from community Systainer inserts on ShaperHub, so the catalogue's Shaper gear
 // matches what people actually cut: DatEi's "Modified Shaper Workstation Accessories Kit" (after
 // Sam's Workstation Accessories Kit), Dr.BuckyLab's "Systainer Inlay variation", Bob21's "Trace
-// Systainer Insert", John259's "My Systainer" and LeoTurlock's "Custom insert for SYS 1 & 3" (the clamps). Converted from points to mm; x right, y up
+// Systainer Insert", John259's "My Systainer" and the Hub's "Custom insert for SYS 1 & 3" (the clamps). Converted from points to mm; x right, y up
 // (the hub drawing's top view), each tool centred on its own bounds. The pocket outlines include
 // their designers' clearance. The Standard fit uses these paths unchanged; the catalogue's Roomy
 // and Loose fits add clearance only when requested.
@@ -16,11 +16,22 @@ function pairs(v: number[]): Pt[] {
 /** Foam insert outline for the T-Loc base, 387.5 × 284.0 mm, in the Systainer frame. */
 export const INSERT_OUTLINE = pairs([-132.59,-140.09,-133.28,-139.82,-133.60,-139.25,-133.61,-132.75,-133.80,-131.64,-134.21,-130.78,-134.70,-130.17,-135.31,-129.67,-136.01,-129.30,-137.29,-129.05,-176.74,-129.04,-177.15,-128.88,-177.45,-128.58,-178.33,-126.58,-179.68,-124.51,-180.78,-123.29,-182.44,-121.88,-184.32,-120.77,-186.10,-120.05,-188.25,-119.54,-190.55,-119.40,-190.55,-72.17,-190.85,-70.81,-191.44,-69.74,-192.15,-68.96,-193.54,-68.12,-193.74,-67.80,-193.74,-17.04,-193.65,-16.62,-193.39,-16.27,-191.99,-15.52,-191.03,-14.55,-190.47,-13.47,-190.24,-12.25,-190.23,75.47,-189.97,76.07,-189.39,76.39,-182.83,76.40,-181.72,76.62,-180.88,77.05,-180.18,77.67,-179.65,78.45,-179.36,79.19,-179.24,80.16,-179.23,116.21,-178.93,116.79,-177.96,117.39,-177.50,117.83,-176.82,119.06,-176.69,119.97,-176.69,124.50,-176.58,124.89,-176.09,125.23,-174.33,125.25,-173.79,125.37,-173.17,125.80,-172.75,126.55,-172.69,142.65,-172.61,143.10,-172.33,143.54,-171.89,143.82,-171.45,143.90,-86.82,143.90,-86.38,143.80,-86.08,143.58,-85.24,141.97,-84.28,141.00,-83.05,140.39,-81.81,140.20,81.78,140.20,83.04,140.38,84.27,141.00,85.24,141.96,86.08,143.58,86.38,143.80,86.82,143.90,171.44,143.90,171.89,143.82,172.33,143.54,172.61,143.10,172.69,142.65,172.75,126.55,173.10,125.88,173.69,125.42,174.33,125.25,175.93,125.21,176.30,125.03,176.57,124.72,176.69,124.32,176.69,119.96,176.82,119.05,177.50,117.82,177.96,117.39,178.93,116.78,179.23,116.21,179.24,80.05,179.35,79.23,179.69,78.36,180.25,77.60,180.88,77.05,181.71,76.62,182.75,76.40,189.40,76.38,189.97,76.07,190.24,75.47,190.24,-12.25,190.47,-13.48,191.03,-14.56,191.99,-15.52,193.39,-16.28,193.65,-16.62,193.74,-17.05,193.74,-67.84,193.55,-68.11,192.15,-68.96,191.44,-69.74,190.80,-70.95,190.55,-72.16,190.55,-119.40,188.34,-119.54,186.47,-119.95,184.46,-120.73,182.60,-121.82,180.94,-123.18,179.68,-124.58,178.36,-126.64,177.50,-128.62,177.26,-128.88,176.79,-129.08,137.41,-129.09,136.12,-129.31,135.28,-129.74,134.68,-130.25,134.12,-131.01,133.80,-131.74,133.63,-132.70,133.61,-139.26,133.30,-139.83,132.70,-140.09,84.62,-140.10,78.61,-136.56,71.77,-131.88,69.77,-131.10,67.64,-130.80,-67.95,-130.81,-69.91,-131.14,-71.75,-131.89,-78.81,-136.70,-84.60,-140.10])
 
-/** Workstation Support Arm lying on its side: post on the left, arm to the right. 13 mm thick. */
+/** Workstation Support Arm lying on its side: post on the left, arm to the right. Sam's kit cuts this outline 13 mm deep. The catalogue now cuts the arm's pockets from the owner's model (catalog.ts `armPose`); this trace is the frame that model is placed in, and the home page's drawing. */
 export const SUPPORT_ARM = pairs([-89.95,19.04,-83.69,19.03,-83.10,18.74,-82.76,18.17,-82.74,-20.88,-82.82,-21.07,-83.04,-21.15,-89.17,-21.20,-89.92,-21.42,-90.46,-21.71,-91.35,-22.53,-91.81,-23.32,-92.08,-24.38,-92.06,-32.79,-91.81,-33.69,-91.35,-34.48,-90.71,-35.12,-90.06,-35.52,-89.33,-35.78,-88.70,-35.86,-82.95,-35.87,-82.74,-36.10,-82.67,-37.36,-82.45,-37.69,-81.98,-37.94,-65.71,-37.96,-64.64,-37.74,-63.70,-37.22,-63.16,-36.70,-62.73,-36.07,-62.45,-35.35,-62.33,-34.73,-62.30,-22.97,-61.84,-22.08,-61.79,-21.59,-61.61,-21.20,-61.25,-20.87,-60.77,-20.72,92.06,-20.71,92.54,-20.57,92.80,-20.34,92.99,-19.83,93.50,-0.30,-61.61,-0.30,-62.80,-0.24,-63.74,-0.04,-64.58,0.37,-65.21,0.99,-65.64,1.82,-65.89,3.02,-66.76,33.86,-67.06,35.24,-67.29,35.78,-67.79,36.54,-68.73,37.32,-70.11,37.81,-71.93,37.96,-81.79,37.96,-82.29,37.82,-82.55,37.57,-82.73,37.03,-82.74,29.00,-82.82,28.67,-83.04,28.32,-83.37,28.07,-83.78,27.96,-89.94,27.96,-90.74,27.87,-91.47,27.62,-92.23,27.12,-92.76,26.57,-93.22,25.78,-93.48,24.73,-93.50,22.60,-93.41,21.81,-93.16,21.07,-92.67,20.31,-91.87,19.61,-90.89,19.17])
 
 /**
- * Hold Down Clamp lever on its side, from the clamp pockets in LeoTurlock's "Custom insert for SYS 1 & 3"
+ * The Support Arm standing, post down, from Dr.BuckyLab's "Systainer Inlay variation" (hub.shapertools.com,
+ * share 5fd5fe199d0142001086f4ef), measured on its 4000 px thumbnail at 10.25 px/mm (both arms agree to
+ * 0.05 mm). Two pockets: the bar seen from above (its width is the arm's thickness), 10 mm deep, and a
+ * square-cornered rectangle over the post end, centred on the bar and starting 0.35 mm past its end, 50 mm deep.
+ */
+export const SUPPORT_ARM_STANDING = {
+  bar: { len: 187.4, w: 20.8, r: 4.9, depth: 10 },
+  post: { len: 35.2, w: 22.6, overhang: 0.35, depth: 50 },
+}
+
+/**
+ * Hold Down Clamp lever on its side, from the clamp pockets in the Hub's "Custom insert for SYS 1 & 3"
  * (hub.shapertools.com, share 64f452091011bb772ef10fb6): the curved bar with its two end pads, 147.2 × 33.8
  * mm, traced from the SVG and centred on its own bounds. The clamp's three outlines share this frame.
  * 20 mm deep pocket.

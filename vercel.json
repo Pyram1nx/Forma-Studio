@@ -22,6 +22,18 @@
     {
       "source": "/bits",
       "destination": "/index.html"
+    },
+    {
+      "source": "/3d-carve",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/joinery",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/systainer",
+      "destination": "/index.html"
     }
   ],
   "headers": [

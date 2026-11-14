@@ -8,7 +8,7 @@ import { getPrefs, newDocSettings } from './prefs'
 import { readScoped, SYNCED_SETTINGS, writeScoped } from '../storage/space'
 
 export type Tool = 'select' | 'pen' | 'draw'
-export type Dialog = null | 'text' | 'carve3d' | 'trace' | 'offset' | 'radius' | 'shortcuts' | 'account' | 'reference' | 'bits' | 'dovetail' | 'systainer'
+export type Dialog = null | 'text' | 'trace' | 'offset' | 'radius' | 'shortcuts' | 'account' | 'reference' | 'bits'
 export type Popover = null | 'shapes' | 'settings'
 
 export interface View {

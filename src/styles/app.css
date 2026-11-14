@@ -1225,14 +1225,16 @@ kbd {
   gap: 8px;
 }
 .shape-creator__basic {
-  display: flex;
+  /* Rigid 40px tracks: the container can never compress or distort the buttons. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 40px);
   gap: 16px;
   margin: 8px 0 24px;
 }
 .basic-shape-btn {
   width: 40px;
   height: 40px;
-  border-radius: 20px;
+  border-radius: 50%;
   border: none;
   background: var(--gray-100);
   color: var(--gray-900);
@@ -1344,8 +1346,12 @@ kbd {
   stroke-dasharray: 1 2;
   cursor: pointer;
 }
-.modeview__frag:hover {
-  fill: var(--gray-200);
+/* Hover fill only where hover exists: on touch the tap would otherwise stick a grey fill on the
+   fragment until something else is tapped (picked blue below outranks hover where both apply). */
+@media (hover: hover) {
+  .modeview__frag:hover {
+    fill: var(--gray-200);
+  }
 }
 .modeview__frag.is-picked {
   fill: var(--blue-050);

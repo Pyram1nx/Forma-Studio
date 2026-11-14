@@ -55,6 +55,8 @@ export function NumInput({
         inputMode="decimal"
         autoComplete="off"
         aria-label={ariaLabel}
+        data-pad-unit={suffix === 'mm' || suffix === 'in' ? suffix : ''}
+        data-pad-int={decimals === 0 ? '' : undefined}
         disabled={disabled}
         value={text}
         onChange={(e) => {

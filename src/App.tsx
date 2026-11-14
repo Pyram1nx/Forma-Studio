@@ -20,6 +20,7 @@ import { uid } from './model/ids'
 import { exportSvg, openFromComputer, openRecent, saveToComputer } from './editor/fileActions'
 import { nudgeSelection } from './editor/ops'
 import { MM_PER_IN } from './model/types'
+import { leavingForTool, takeHandoff } from './features/toolRoutes'
 import './styles/app.css'
 import './styles/canvas.css'
 import './styles/mobile-topbar.css'
@@ -31,10 +32,7 @@ import './styles/text-tool.css'
 import './styles/no-select.css'
 
 // Heavy feature dialogs are code-split so the core editor stays light.
-const Carve3DDialog = lazy(() => import('./features/carve3d/Carve3DDialog'))
 const TraceMode = lazy(() => import('./features/paper/TraceMode'))
-const DovetailDialog = lazy(() => import('./features/dovetail/DovetailDialog'))
-const SystainerDialog = lazy(() => import('./features/systainer/SystainerDialog'))
 const BitLibraryDialog = lazy(() => import('./features/bitlibrary/BitLibrary').then((m) => ({ default: m.BitLibraryDialog })))
 
 /**
@@ -178,6 +176,11 @@ function useAutosave() {
   useEffect(() => {
     const last = loadLast()
     if (last) useStore.getState().setDoc(last)
+    // Back from a tool page (/3d-carve, /joinery, /systainer): keep the unsaved-changes
+    // flag the studio left with, and import what the tool made as an undoable step.
+    const back = takeHandoff()
+    if (back.dirty && back.docId === useStore.getState().doc.id) useStore.setState({ dirty: true })
+    if (back.payload) useStore.getState().importPayload(back.payload)
     const saver = createAutosaver(() => useStore.getState().doc, autosave)
     const unsub = useStore.subscribe((s, prev) => saver.onChange(s.doc, prev.doc))
     // Account sync brought a newer version of the open design from another device.
@@ -201,8 +204,9 @@ function useAutosave() {
     const beforeUnload = (e: BeforeUnloadEvent) => {
       saver.cancel()
       autosave(useStore.getState().doc)
-      // Any unsaved change prompts, whether or not a file handle exists.
-      if (useStore.getState().dirty) {
+      // Any unsaved change prompts, whether or not a file handle exists. Going to a tool
+      // page doesn't: the design is autosaved and the flag comes back with the studio.
+      if (useStore.getState().dirty && !leavingForTool()) {
         e.preventDefault()
         e.returnValue = ''
       }
@@ -299,11 +303,8 @@ export default function App() {
         <AccountDialog />
         <UpdatePrompt checkOnLaunch={false} />
         <Suspense fallback={<LoadingDomino withOverlay />}>
-          {dialog === 'carve3d' && <Carve3DDialog units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
           {dialog === 'trace' && <TraceMode units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
           {dialog === 'bits' && <BitLibraryDialog units={units} onClose={closeDialog} />}
-          {dialog === 'dovetail' && <DovetailDialog units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
-          {dialog === 'systainer' && <SystainerDialog units={units} onClose={closeDialog} onImport={(p) => st().importPayload(p)} />}
         </Suspense>
         <Toast />
       </div>

@@ -1,0 +1,382 @@
+/* Account home: the Systainers page (src/home/SystainersPage.tsx). Built on home.css's head,
+   grid and cards; the drawings take the Designs tiles' look (blue on a pale tile) from tokens,
+   so they follow the light and dark appearance. */
+.home-sys {
+  /* Drawing palette. Mixed from tokens so dark mode gets dark foam and deep-blue pockets. */
+  --home-sys-tile: var(--gray-50);
+  --home-sys-foam: var(--gray-100);
+  --home-sys-foam-edge: var(--gray-300);
+  --home-sys-pocket: color-mix(in srgb, var(--blue-050) 14%, var(--white));
+  --home-sys-deep: color-mix(in srgb, var(--blue-050) 32%, var(--white));
+  --home-sys-edge: var(--blue-050);
+  --home-sys-ghost: color-mix(in srgb, var(--blue-050) 6%, transparent);
+  max-width: 1200px;
+}
+
+.home-sys h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+/* ---- Drawing layers (see Drawing in the component): a wide edge pass under a fill pass ---- */
+
+.home-sys-l path {
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.home-sys-l__edge {
+  fill: none;
+  stroke: var(--home-sys-edge);
+  stroke-width: 2.4px;
+}
+.home-sys-l__fill {
+  stroke: none;
+}
+.home-sys-l--pocket .home-sys-l__fill {
+  fill: var(--home-sys-pocket);
+}
+.home-sys-l--deep .home-sys-l__fill {
+  fill: var(--home-sys-deep);
+}
+.home-sys-l--ghost .home-sys-l__edge {
+  stroke-dasharray: 5 4;
+  stroke-width: 2px;
+}
+.home-sys-l--ghost .home-sys-l__fill {
+  fill: var(--home-sys-ghost);
+}
+.home-sys-l--island .home-sys-l__fill {
+  fill: var(--home-sys-tile);
+}
+.home-sys-l--foam .home-sys-l__edge {
+  stroke: var(--home-sys-foam-edge);
+  stroke-width: 3px;
+}
+.home-sys-l--foam .home-sys-l__fill {
+  fill: var(--home-sys-foam);
+}
+.home-sys-l--line path {
+  fill: none;
+  stroke: var(--home-sys-edge);
+  stroke-width: 1px;
+  opacity: 0.6;
+}
+/* On foam, an island is foam too. */
+.home-sys-hero .home-sys-l--island .home-sys-l__fill {
+  fill: var(--home-sys-foam);
+}
+
+/* ---- Insert in progress ---- */
+
+.home-sys-resume {
+  margin-bottom: 24px;
+}
+
+/* ---- Hero: a sample insert and what the tool does ---- */
+
+.home-sys-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 1fr);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  background: var(--white);
+  overflow: hidden;
+  margin-bottom: 36px;
+}
+.home-sys-hero__art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 260px;
+  padding: 24px;
+  border: 0;
+  border-right: 1px solid var(--gray-200);
+  background: var(--home-sys-tile);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.home-sys-hero__art:hover .home-sys-hero__svg {
+  transform: scale(1.015);
+}
+.home-sys-hero__art:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.home-sys-hero__svg {
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  max-height: 360px;
+  transition: transform 0.2s ease;
+}
+.home-sys-hero__tag {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  color: var(--gray-600);
+  font-size: 11px;
+  font-weight: 500;
+}
+.home-sys-hero__text {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  min-width: 0;
+}
+.home-sys-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--gray-600);
+}
+.home-sys-points li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.home-sys-points svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--blue-050);
+}
+.home-sys-points strong {
+  color: var(--gray-900);
+  font-weight: 500;
+}
+.home-sys-stats {
+  margin: auto 0 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.home-sys-stats > div {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+}
+.home-sys-stats dt {
+  font-size: 11px;
+  color: var(--gray-500);
+}
+.home-sys-stats dd {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--gray-900);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Sections ---- */
+
+.home-sys-section {
+  margin-bottom: 36px;
+}
+.home-sys-section__head {
+  margin-bottom: 16px;
+}
+.home-sys-section__head p {
+  margin: 4px 0 0;
+}
+.home-sys-section__head--row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ---- Sizes: one row, every size drawn on the same scale ---- */
+
+.home-sys-sizes {
+  list-style: none;
+  margin: 0;
+  padding: 16px 12px 14px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  background: var(--white);
+}
+.home-sys-size {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.home-sys-size .home-card__name,
+.home-sys-size .home-card__meta {
+  padding: 0 4px;
+}
+.home-sys-size__art {
+  width: 100%;
+  height: auto;
+  margin-bottom: 6px;
+  border-radius: var(--radius);
+  background: var(--home-sys-tile);
+}
+.home-sys-size__ghost {
+  fill: none;
+  stroke: var(--gray-300);
+  stroke-width: 1px;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+.home-sys-size__base,
+.home-sys-size__lid {
+  fill: var(--gray-200);
+  stroke: var(--gray-400);
+  stroke-width: 1.2px;
+  vector-effect: non-scaling-stroke;
+}
+.home-sys-size__lid {
+  fill: var(--gray-300);
+}
+.home-sys-size__foam {
+  fill: var(--home-sys-pocket);
+  stroke: var(--home-sys-edge);
+  stroke-width: 1.2px;
+  vector-effect: non-scaling-stroke;
+}
+.home-sys-size__latch {
+  fill: var(--gray-600);
+}
+.home-sys-size__feet {
+  fill: var(--gray-500);
+}
+
+/* ---- Catalogue ---- */
+
+.home-sys-filter {
+  flex-wrap: wrap;
+}
+.home-sys-grid {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+/* Catalogue cards are information, not links: no hover lift or pointer. */
+.home-sys-item {
+  height: 100%;
+  cursor: default;
+}
+.home-sys-item:hover {
+  border-color: var(--gray-200);
+  box-shadow: none;
+}
+.home-sys-item__thumb {
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  box-sizing: border-box;
+  background: var(--home-sys-tile);
+}
+.home-sys-item__svg {
+  width: 100%;
+  height: 100%;
+}
+.home-sys-item__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 14px;
+  margin-top: auto;
+}
+.home-sys-item__tags:empty {
+  display: none;
+}
+.home-sys-badge {
+  font-weight: 500;
+}
+.home-sys-badge--plain {
+  background: var(--gray-100);
+  color: var(--gray-600);
+}
+.home-sys-approx {
+  color: var(--warn-text);
+  font-weight: 600;
+}
+
+/* ---- Tablets ---- */
+
+@media (max-width: 900px) {
+  .home-sys-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-sys-hero__art {
+    border-right: 0;
+    border-bottom: 1px solid var(--gray-200);
+  }
+  .home-sys-grid {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+}
+
+/* ---- Phones (home.css's breakpoint): stacked hero, sizes three across, scrolling filter ---- */
+
+@media (max-width: 700px) {
+  .home-sys-hero {
+    margin-bottom: 28px;
+  }
+  .home-sys-hero__art {
+    min-height: 0;
+    padding: 16px 12px 36px;
+  }
+  .home-sys-hero__text {
+    padding: 16px;
+    gap: 14px;
+  }
+  .home-sys-stats dd {
+    font-size: 18px;
+  }
+  .home-sys-section {
+    margin-bottom: 28px;
+  }
+  .home-sys-sizes {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 12px 10px;
+    gap: 14px 10px;
+  }
+  .home-sys-size .home-card__meta {
+    white-space: normal;
+  }
+  /* The category chips scroll sideways in one row rather than wrapping into a block. */
+  .home-sys-section__head--row {
+    align-items: stretch;
+    gap: 12px;
+  }
+  .home-sys-filter {
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .home-sys-filter::-webkit-scrollbar {
+    display: none;
+  }
+  .home-sys-filter button {
+    flex: none;
+    height: 32px;
+  }
+  .home-sys-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .home-sys-item__thumb {
+    padding: 10px;
+  }
+  .home-sys-item__tags {
+    padding: 0 12px;
+  }
+}

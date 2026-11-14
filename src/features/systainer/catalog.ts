@@ -3,14 +3,14 @@
 // stored in. Pockets are derived from the models (see layout.ts), so a model only has to be the
 // right size and shape.
 //
-// Sizes: the Workstation parts, collets, wrenches, ShaperTape, the Gen 1 USB stick and the Trace
-// frame are traced from community inserts on ShaperHub (hubProfiles.ts), whose depths also set the
-// default orientations here. Bits come from the bit catalogue. Anything still estimated is flagged
+// Sizes: the Workstation parts, collets, wrenches, ShaperTape and the Gen 1 USB stick are traced
+// from community inserts on ShaperHub (hubProfiles.ts), whose depths also set the default
+// orientations here; the Trace frame is Shaper's own spec and photos (traceFrame.ts). Bits come from the bit catalogue. Anything still estimated is flagged
 // `approx`, so the panel can say so.
 import * as THREE from 'three'
 import type { Contour, Pt } from '../../model/types'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { boolean, splitRegions } from '../../geometry/offset'
+import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { boolean, offsetContours, unionNonZero } from '../../geometry/offset'
 import { BITS, type Bit } from '../carve3d/bits'
 import {
   ANGLE_FENCE,
@@ -22,8 +22,13 @@ import {
   OPEN_WRENCH,
   SHORT_HEX_HANDLE,
   SHORT_HEX_SHAFT,
-  SUPPORT_ARM,
+  SUPPORT_ARM_STANDING,
 } from './hubProfiles'
+import { connectedCaliper } from './caliper'
+import { shaperWordmark, whenFormaLoads } from './shaperBrand'
+import { shaperTraceFrame } from './traceFrame'
+import { silhouette } from './silhouette'
+import { SUPPORT_ARM_CLS, SUPPORT_ARM_IDX, SUPPORT_ARM_PART, SUPPORT_ARM_POS } from './supportArmMesh'
 import { boundsOf, box, cyl, extrude, extrudeOutline, faceted, fluted, G, knurled, lathe, M, mat, profile, roundRect, stadium } from './models'
 
 export type CategoryId = 'origin' | 'bits' | 'workstation' | 'trace' | 'shop' | 'basics'
@@ -44,6 +49,22 @@ export interface Pose {
   rot: [number, number, number]
   /** How deep it sits by default, from its height in this pose. Absent: its top sits flush. */
   sink?: (height: number) => number
+  /** The most it should stand above the foam to stay held; standing higher is flagged as a problem. */
+  maxAbove?: number
+  /** Its pocket may go right through the insert (it rests on the Systainer floor), not stop above the minimum floor. */
+  throughCut?: boolean
+  /**
+   * The pocket exactly as a ShaperHub insert cuts it, used instead of the model's silhouette: each
+   * shape is in the posed frame (centred like `posed()`), with its floor as a height above the item's
+   * lowest point (negative: below it). Depth = sink − level, so it follows the sink.
+   */
+  pockets?: PoseStep[]
+}
+
+/** One traced pocket shape of a pose (see `Pose.pockets`). */
+export interface PoseStep {
+  contours: Contour[]
+  level: number
 }
 
 export interface ParamDef {
@@ -71,6 +92,12 @@ export interface ItemDef {
    * so prints don't repeat. Display only: the pocket is the unspun model's (see `spinRolls`).
    */
   randomSpin?: boolean
+  /**
+   * Close slits narrower than twice this (mm) in its pocket outlines: for an imported mesh whose
+   * parts touch without merging in plan (the caliper's jaws, slider and housing), which would
+   * otherwise leave hairline slivers of foam.
+   */
+  closeGaps?: number
   /** A finger cutout rather than an object: it takes the depth of the pockets it overlaps. */
   notch?: boolean
   /** A shaped cutout (bit slots): drawn as a ghost, and other items may sit in it. */
@@ -141,21 +168,153 @@ function hexKnob(af: number, len: number): THREE.BufferGeometry {
 // ---------- Origin ----------
 
 /**
- * Origin collet with its nut: a Ø20 × 8 mm nut over an Ø11 × 11 mm nose, 19 mm in all (the hub
- * inserts cut a Ø21 ring 8 mm deep round a Ø12 hole 19 mm deep for it). One model for every bore
- * size: the outsides are the same, and the bore doesn't shape the pocket.
+ * Origin collet, styled on Shaper's collet-kit shop photos and its 1/8" technical drawing
+ * (shapertools.com, store/product/collet-kit). Ratios come from the drawing's SVG paths, scaled so the
+ * cap is as wide as the hex across flats, which makes its bore exactly 1/8":
+ * - a black-oxide round cap, Ø17.2 × 7.6, with a machined chamfer round its top and a recess showing
+ *   the steel jaw face with the bore and four slits;
+ * - a black-oxide hex below it, 17.2 across flats (19.9 across corners) × 6.6, its top turned into a
+ *   steep cone so every flat carries the tall arch of the photos;
+ * - a steel nose, Ø9.8 under the hex tapering to Ø8.9, 11 long, with the collet's eight slits: four
+ *   open at the tip running up into the hex, four from the hex stopping 4.5 mm short of the tip.
+ *
+ * The pockets stay the ShaperHub ones (a Ø21 ring 8 mm deep round a Ø12 hole 19 mm deep): an
+ * invisible footprint keeps the old Ø11 nose / Ø20 head envelope, its head run up the real head, and
+ * every visible part sits inside it as `deco`. The standing poses sink 19 mm, so the head (or nose)
+ * stands about 6 mm proud of the foam, as in Shaper's own Micro-Systainer.
  */
+const COLLET_NOSE = 11
+const COLLET_HEX_H = 6.6
+const COLLET_CAP_H = 7.6
+const COLLET_H = COLLET_NOSE + COLLET_HEX_H + COLLET_CAP_H
+const COLLET_SINK = 19
+
+/** Hex across flats `2 rf` from z0 to z1, its top a cone that meets radius `rTop` at z1 (slope `k` mm out per mm down). */
+function colletHex(z0: number, z1: number, rf: number, rTop: number, k: number, rIn: number) {
+  const S = 16
+  const N = 6 * S
+  const ROWS = 10
+  // Columns from a flat middle (30°; corners on 0°, 60°, …), so every corner and flat middle is a column.
+  const cols = Array.from({ length: N }, (_, j) => {
+    const a = Math.PI / 6 + (j / S) * (Math.PI / 3)
+    const off = ((a % (Math.PI / 3)) + Math.PI / 3) % (Math.PI / 3)
+    const r = rf / Math.cos(off - Math.PI / 6)
+    return { a, r, zc: Math.min(z1, z1 - (r - rTop) / k) }
+  })
+  const flat: number[] = []
+  const tri = (out: number[], ...p: number[][]) => p.forEach((q) => out.push(...q))
+  const at = (a: number, r: number, z: number) => [r * Math.cos(a), r * Math.sin(a), z]
+  for (let j = 0; j < N; j++) {
+    const c = cols[j]
+    const d = cols[(j + 1) % N]
+    // Flat wall up to where the cone cuts it.
+    tri(flat, at(c.a, c.r, z0), at(d.a, d.r, z0), at(d.a, d.r, d.zc))
+    tri(flat, at(c.a, c.r, z0), at(d.a, d.r, d.zc), at(c.a, c.r, c.zc))
+    // Underside, an annulus down to the nose (facing -z).
+    tri(flat, at(c.a, c.r, z0), at(c.a, rIn, z0), at(d.a, d.r, z0))
+    tri(flat, at(c.a, rIn, z0), at(d.a, rIn, z0), at(d.a, d.r, z0))
+  }
+  const flatGeo = faceted(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(flat, 3)))
+  // The cone, from the arch of each flat up to the cap; normals straight off the cone.
+  const pos: number[] = []
+  const nrm: number[] = []
+  const idx: number[] = []
+  const len = Math.hypot(1, k)
+  for (const c of cols)
+    for (let i = 0; i <= ROWS; i++) {
+      const z = c.zc + ((z1 - c.zc) * i) / ROWS
+      pos.push(...at(c.a, rTop + (z1 - z) * k, z))
+      nrm.push(Math.cos(c.a) / len, Math.sin(c.a) / len, k / len)
+    }
+  const v = (j: number, i: number) => (j % N) * (ROWS + 1) + i
+  for (let j = 0; j < N; j++)
+    for (let i = 0; i < ROWS; i++) idx.push(v(j, i), v(j + 1, i), v(j + 1, i + 1), v(j, i), v(j + 1, i + 1), v(j, i + 1))
+  const coneGeo = new THREE.BufferGeometry()
+    .setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    .setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3))
+    .setIndex(idx)
+  return { flatGeo, coneGeo }
+}
+
+/**
+ * Thin dark strips standing a hair off a surface of revolution: one per angle, along the (r, z)
+ * polyline `path`, `w` wide. Collet slits.
+ */
+function slitStrips(angles: number[], path: [number, number][], w: number, lift = 0.03): THREE.BufferGeometry {
+  const pos: number[] = []
+  for (const a of angles) {
+    const c = Math.cos(a)
+    const s = Math.sin(a)
+    for (let i = 0; i + 1 < path.length; i++) {
+      const [r0, z0] = path[i]
+      const [r1, z1] = path[i + 1]
+      // Outward normal of this segment in the (r, z) plane, so the strip floats off the surface.
+      const dr = r1 - r0
+      const dz = z1 - z0
+      const l = Math.hypot(dr, dz) || 1
+      const nr = dz / l
+      const nz = -dr / l
+      const p = (r: number, z: number, t: number) => [(r + nr * lift) * c - t * s, (r + nr * lift) * s + t * c, z + nz * lift]
+      const a0 = p(r0, z0, -w / 2)
+      const b0 = p(r0, z0, w / 2)
+      const a1 = p(r1, z1, -w / 2)
+      const b1 = p(r1, z1, w / 2)
+      pos.push(...a0, ...b0, ...b1, ...a0, ...b1, ...a1)
+    }
+  }
+  const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.computeVertexNormals()
+  return g
+}
+
 function collet() {
-  const rb = 4.2
+  const rb = 3.175 / 2
+  const rf = 8.6
+  const rc = rf
+  const zHex = COLLET_NOSE
+  const zCap = COLLET_NOSE + COLLET_HEX_H
+  const H = COLLET_H
+  const cham = 0.7
+  const rRec = 4.33
+  const zJaw = H - 0.7
+  const zBore = H - 1.45
+  // Nose: tip chamfer, then a straight taper up into the hex.
+  const noseR = (z: number) => 4.45 + ((4.9 - 4.45) * (z - 0.4)) / (COLLET_NOSE - 0.4)
+  const noseTop = zHex + 0.3
+  const nosePath: [number, number][] = [[4.05, 0], [4.45, 0.4], [noseR(noseTop), noseTop]]
+  // The hex's cone: corners drop 3.4 mm below the cap, so the corner edges stand 3.2 mm.
+  const k = (rf / Math.cos(Math.PI / 6) - rc) / 3.4
+  const { flatGeo, coneGeo } = colletHex(zHex, zCap, rf, rc, k, noseR(zHex) - 0.05)
+  const q = Math.PI / 4
+  const visible = [
+    M(lathe([[rb, 0], ...nosePath, [rb, noseTop]], 64), 'steel'),
+    M(flatGeo, 'anodized'),
+    M(coneGeo, 'graphite'),
+    // Cap: wall, machined top chamfer, top face, then the steel jaw face dished down to the bore.
+    M(lathe([[rc, zCap - 0.3], [rc, H - cham]], 96), 'anodized'),
+    M(lathe([[rc, H - cham], [rc - cham, H]], 96), 'graphite'),
+    M(lathe([[rc - cham, H], [rRec, H], [rRec, zJaw]], 96), 'anodized'),
+    M(lathe([[rRec, zJaw], [rb + 0.3, H - 1.2], [rb, zBore]], 64), 'steel'),
+    M(lathe([[rb, zBore], [rb, 0]], 32), 'domino'),
+    // Slits: four open at the tip (across the tip face too) up into the hex, four down from the hex.
+    M(slitStrips([0, 2, 4, 6].map((i) => i * q), [[rb, 0], ...nosePath], 0.5), 'domino'),
+    M(slitStrips([1, 3, 5, 7].map((i) => i * q), [[noseR(6.5), 6.5], [noseR(zHex), zHex]], 0.5), 'domino'),
+    M(slitStrips([1, 3, 5, 7].map((i) => i * q), [[rRec, zJaw], [rb + 0.3, H - 1.2], [rb, zBore]], 0.45), 'domino'),
+  ]
+  for (const m of visible) m.userData.deco = true
+  // The pocket: the hub-cut envelope (Ø11 nose, Ø20 head), the head run up the real cap.
+  const rp = 4.2
   return G(
-    M(lathe([[rb, 0], [5.1, 0], [5.5, 0.5], [5.5, 11], [rb, 11], [rb, 0]], 40), 'steel'),
-    M(lathe([[rb, 11], [9.4, 11], [10, 11.6], [10, 18.4], [9.4, 19], [rb, 19], [rb, 11]], 48), 'steel'),
+    ...visible,
+    M(lathe([[rp, 0], [5.1, 0], [5.5, 0.5], [5.5, 11], [rp, 11], [rp, 0]], 40), 'hidden'),
+    M(lathe([[rp, 11], [9.4, 11], [10, 11.6], [10, H - 0.6], [9.4, H], [rp, H], [rp, 11]], 48), 'hidden'),
   )
 }
 
+const colletSink = () => COLLET_SINK
 const COLLET_POSES: Pose[] = [
-  { id: 'nose-down', label: 'Standing, nose down', rot: [0, 0, 0] },
-  { id: 'nose-up', label: 'Standing, nut down', rot: [180, 0, 0] },
+  { id: 'nose-down', label: 'Standing, nose down', rot: [0, 0, 0], sink: colletSink },
+  { id: 'nose-up', label: 'Standing, nut down', rot: [180, 0, 0], sink: colletSink },
   { id: 'lying', label: 'Lying', rot: [90, 0, 0] },
 ]
 
@@ -168,6 +327,12 @@ const COLLET_POSES: Pose[] = [
  */
 const TAPE_W = 19.05
 const TAPE_R = 39.3
+/**
+ * A roll standing on edge sinks its diameter less this, so 10 mm stands above the foam to grab.
+ * Its slot may cut right through the insert: in Shaper's 2 in stock foam it then sits 2 in deep.
+ */
+const TAPE_STAND_UP = 10
+const tapeEdge = (): Pose => ({ id: 'edge', label: 'Standing on edge', rot: [90, 0, 0], sink: (h) => h - TAPE_STAND_UP, maxAbove: TAPE_STAND_UP, throughCut: true })
 // Domino geometry from the open-source Shaper domino generator (augiev/Shaper-Dominos): a 43 × 12.7
 // mm black rectangle with 2.5 mm corner radius, 2 rows × 8 columns of 2.5 mm dots on a 5.08 mm
 // pitch, 10 of the 16 dots filled (the four corners always), never symmetric under a half turn,
@@ -284,13 +449,77 @@ export const uidSeed = (uid: string): number => {
 }
 
 /**
- * The Gen 1 USB stick from LeoTurlock's SYS 3 insert: a 42 × 12 × 4.5 mm stick with a fully
- * rounded body end and a square connector end. The 4.5 mm source label is its pocket depth.
+ * The Gen 1 USB stick, traced from a ShaperHub SYS 3 insert (ShaperHub): a flat black metal plate
+ * 42.8 × 12.3 × 4.5 mm (the 4.5 mm source label is its pocket depth). The plug end (-x) is square and
+ * the key-ring end (+x) has two R3.6 corners with a vertical pill-shaped hole whose end arcs are
+ * concentric with those corners (a constant 2 mm wall). SHAPER is printed in white, in the Forma face,
+ * between the plug and the hole. The Hub's finger notch beside the stick isn't part of it.
  */
+const USB1 = { l: 42.8, w: 12.3, t: 4.5, r: 3.6, wall: 2, textW: 17.5, textX: 3.3 }
+
+function usbGen1Shape(): THREE.Shape {
+  const { l, w, r, wall } = USB1
+  const x0 = -l / 2
+  const x1 = l / 2
+  const y0 = -w / 2
+  const y1 = w / 2
+  const c = 0.25 // the plug end's corners are only just broken
+  const s = new THREE.Shape()
+  s.moveTo(x0 + c, y0)
+  s.lineTo(x1 - r, y0)
+  s.absarc(x1 - r, y0 + r, r, -Math.PI / 2, 0, false)
+  s.lineTo(x1, y1 - r)
+  s.absarc(x1 - r, y1 - r, r, 0, Math.PI / 2, false)
+  s.lineTo(x0 + c, y1)
+  s.absarc(x0 + c, y1 - c, c, Math.PI / 2, Math.PI, false)
+  s.lineTo(x0, y0 + c)
+  s.absarc(x0 + c, y0 + c, c, Math.PI, Math.PI * 1.5, false)
+  // The pill: same centres as the two rounded corners, radius `r - wall`.
+  const hr = r - wall
+  const cx = x1 - r
+  const h = new THREE.Path()
+  h.absarc(cx, y1 - r, hr, 0, Math.PI, false)
+  h.lineTo(cx - hr, y0 + r)
+  h.absarc(cx, y0 + r, hr, Math.PI, Math.PI * 2, false)
+  h.lineTo(cx + hr, y1 - r)
+  s.holes.push(h)
+  return s
+}
+
+/** The white SHAPER print: a decal just above the stick's top face. */
+function usbGen1Print(): THREE.Object3D | null {
+  if (typeof document === 'undefined') return null
+  const PX = 64
+  const W = 24
+  const H = 6
+  const c = document.createElement('canvas')
+  c.width = W * PX
+  c.height = H * PX
+  const g = c.getContext('2d')
+  if (!g) return null
+  g.fillStyle = '#ffffff'
+  const draw = () => {
+    g.clearRect(0, 0, c.width, c.height)
+    shaperWordmark(g, (W / 2) * PX, (H / 2) * PX, USB1.textW * PX)
+  }
+  draw()
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 8
+  whenFormaLoads(draw, tex)
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(W, H),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 }),
+  )
+  m.position.set(USB1.textX, 0, USB1.t + 0.03)
+  m.userData.deco = true
+  return m
+}
+
 function usbGen1() {
-  const body = M(extrude(roundRect(30, 12, 6), 4.5, 0.6), 'grey', -6)
-  const connector = M(box(12, 12, 4.5), 'steel', 15)
-  return G(body, connector)
+  const body = M(extrude(usbGen1Shape(), USB1.t, 0.4), 'black')
+  const print = usbGen1Print()
+  return G(...(print ? [body, print] : [body]))
 }
 
 /** A USB stick: body plus plug, lying along x. */
@@ -309,40 +538,207 @@ function colletWrench() {
 
 // ---------- Workstation ----------
 
+/** A rectangle outline with corners of radius `r` (0: square), counter-clockwise. */
+function rectContour(x0: number, x1: number, y0: number, y1: number, r = 0, n = 8): Contour {
+  if (r <= 0) return { closed: true, pts: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }] }
+  const pts: Pt[] = []
+  const corners: [number, number, number][] = [[x1 - r, y0 + r, -90], [x1 - r, y1 - r, 0], [x0 + r, y1 - r, 90], [x0 + r, y0 + r, 180]]
+  for (const [cx, cy, a0] of corners)
+    for (let i = 0; i <= n; i++) {
+      const a = ((a0 + (90 * i) / n) * Math.PI) / 180
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) })
+    }
+  return { closed: true, pts }
+}
+
 /**
- * Support Arm, from its traced lying outline (unchanged): a matte black anodised bar, with the two
- * steel pegs that hook onto the Body, styled on the shop photo (workstation_support_arms). The larger
- * lobe of the outline is the socket-cap screw (flanged head, hex socket), the smaller a plain dowel.
- * Pegs run along −x from the post's face and keep their lobe's width, so the footprint is the outline.
+ * The long hex key lying flat, as the Hub cuts it: the traced handle outline at the pose's depth and the
+ * shaft as a plain 4 mm wide rectangle running to the very tip, 4 mm deep (the sink minus 4 above the
+ * handle's floor). The knob on the tip adds no shape of its own. Traced, so changing the depth never
+ * re-derives a silhouette from the 26 000-triangle model.
+ */
+const HEX_FLAT_SINK = 8
+const HEX_SHAFT_DEPTH = 4
+const HEX_FLAT_POCKETS: PoseStep[] = [
+  // The traced neck stub below the shaft's top would show as a wide deep square where the hex meets the
+  // handle, so the handle pocket starts there and the 4 mm shaft channel runs straight into it.
+  { contours: boolean('intersection', profile(LONG_HEX_HANDLE, 0), [rectContour(-60, 60, LONG_HEX_SHAFT.top, 200)]), level: 0 },
+  { contours: [rectContour(-2, 2, LONG_HEX_SHAFT.tip, LONG_HEX_SHAFT.top + 0.5)], level: HEX_FLAT_SINK - HEX_SHAFT_DEPTH },
+]
+
+type ArmMesh = { pos: Float32Array; idx: Uint16Array; cls: Uint8Array }
+let armMesh: ArmMesh | null = null
+
+/** The owner's model (supportArmMesh.ts), decoded once. */
+function decodeArmMesh(): ArmMesh {
+  if (armMesh) return armMesh
+  const bytes = (s: string) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0))
+  const pb = bytes(SUPPORT_ARM_POS)
+  const q = new Int16Array(pb.buffer, pb.byteOffset, pb.byteLength / 2)
+  const pos = new Float32Array(q.length)
+  for (let i = 0; i < q.length; i++) pos[i] = q[i] / 100
+  const ib = bytes(SUPPORT_ARM_IDX)
+  armMesh = { pos, idx: new Uint16Array(ib.buffer, ib.byteOffset, ib.byteLength / 2), cls: bytes(SUPPORT_ARM_CLS) }
+  return armMesh
+}
+
+/** One part class of the owner's model, with creased normals. */
+function armPart(part: number): THREE.BufferGeometry {
+  const { pos, idx, cls } = decodeArmMesh()
+  const out: number[] = []
+  for (let t = 0; t < cls.length; t++) {
+    if (cls[t] !== part) continue
+    for (let k = 0; k < 3; k++) {
+      const i = idx[t * 3 + k] * 3
+      out.push(pos[i], pos[i + 1], pos[i + 2])
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3))
+  return toCreasedNormals(g, Math.PI / 6)
+}
+
+/**
+ * Support Arm: the owner's Blender model (SupportArm.blend, exported by
+ * scripts/export-support-arm-blend.py into the traced lying outline's frame). Its pockets are cut
+ * from the model itself (`armPose`), so they fit its taper (21.4 mm thick at the bar's top edge,
+ * 24.2 mm at the post end); the pins and the knob get loose rounded boxes.
  */
 function supportArm() {
-  const t = 12.5
-  const all = profile(SUPPORT_ARM, 0)
-  const pegX = boundsOf(all).x0 + 10.3
-  const parts: THREE.Object3D[] = [M(extrudeOutline(profile(SUPPORT_ARM, 0, { minX: pegX }), t, 0.8), 'anodized')]
-  const lobes = splitRegions(profile(SUPPORT_ARM, 0, { maxX: pegX + 0.01 }))
-    .map(boundsOf)
-    .filter((b) => b.w >= 1 && b.h >= 1)
-    .sort((p, q) => q.h - p.h)
-  lobes.forEach((b, i) => {
-    const r = Math.min(b.h / 2, t / 2)
-    const len = b.w + 1
-    const x0 = pegX + 1
-    if (i === 0) {
-      // Socket-cap screw: flange at the post, a fine groove, then the head with its hex socket.
-      const screw = lathe(
-        [[0, 0], [r, 0], [r, 3], [r * 0.9, 3], [r * 0.9, 3.6], [r, 3.6], [r, len - 0.7], [r - 0.7, len], [0, len]],
-        40,
-      )
-      parts.push(M(screw, 'steel', x0, b.cy, t / 2, 0, -90))
-      parts.push(M(hexBar(Math.min(5, r * 0.8), 2.4), 'black', x0 - len - 0.03, b.cy, t / 2, 0, 0, -90))
-    } else {
-      // Plain dowel with a chamfered end.
-      const dowel = lathe([[0, 0], [r, 0], [r, len - 0.8], [r - 0.8, len], [0, len]], 40)
-      parts.push(M(dowel, 'steel', x0, b.cy, t / 2, 0, -90))
+  return G(M(armPart(SUPPORT_ARM_PART.body), 'anodized'), M(armPart(SUPPORT_ARM_PART.knob), 'steel'), M(armPart(SUPPORT_ARM_PART.pin), 'steel'))
+}
+
+/** Room around the body in its pockets, mm a side: about what the Hub's traced outline leaves round it. */
+const ARM_FIT = 0.2
+/** Concave corners and notches tighter than this radius are filled, as no cutter reaches them. */
+const ARM_CLOSE = 1.5
+/** The pins and the knob get loose rounded boxes, not their turned shapes: this much room a side, ... */
+const ARM_HW_ROOM = 0.8
+/** ... with corners of this radius. */
+const ARM_HW_R = 2
+/** Any x past this is along the bar, clear of the post (the outline frame). */
+const ARM_BAR_X = -50
+
+/**
+ * The model turned by `rot` and placed as `posed` (layout.ts) places it (centred in plan, resting on
+ * z = 0): the body's triangles, and a map from the outline frame into that pose.
+ */
+function armPosed(rot: [number, number, number]) {
+  const { pos, idx, cls } = decodeArmMesh()
+  const m = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler((rot[0] * Math.PI) / 180, (rot[1] * Math.PI) / 180, (rot[2] * Math.PI) / 180))
+  const v = new THREE.Vector3()
+  const box = new THREE.Box3()
+  for (let i = 0; i < pos.length; i += 3) box.expandByPoint(v.fromArray(pos, i).applyMatrix4(m))
+  const d = new THREE.Vector3(-(box.min.x + box.max.x) / 2, -(box.min.y + box.max.y) / 2, -box.min.z)
+  const place = (p: THREE.Vector3) => p.applyMatrix4(m).add(d)
+  const body: number[] = []
+  for (let t = 0; t < cls.length; t++) {
+    if (cls[t] !== SUPPORT_ARM_PART.body) continue
+    for (let k = 0; k < 3; k++) body.push(...place(v.fromArray(pos, idx[t * 3 + k] * 3)).toArray())
+  }
+  return { body: new Float32Array(body), place }
+}
+
+/**
+ * The boxes (outline frame, room included) the hardware's pockets fill: one round each pin, and
+ * one round the knob reaching up level with the post's top and down to the bar's top edge, so the
+ * notches either side of the knob are cut out too.
+ */
+let armHw: THREE.Box3[] | null = null
+function armHardware(): THREE.Box3[] {
+  if (armHw) return armHw
+  const { pos, idx, cls } = decodeArmMesh()
+  const body = new THREE.Box3()
+  const knob = new THREE.Box3()
+  const pins = [new THREE.Box3(), new THREE.Box3()]
+  let barTop = Infinity
+  const v = new THREE.Vector3()
+  for (let t = 0; t < cls.length; t++) {
+    const tri = [0, 1, 2].map((k) => idx[t * 3 + k] * 3)
+    // The pins are apart along y: the mushroom pin (and the plate behind it) by the knob, the dowel at the post's end.
+    const lower = tri.reduce((a, i) => a + pos[i + 1], 0) > 0
+    for (const i of tri) {
+      v.fromArray(pos, i)
+      if (cls[t] === SUPPORT_ARM_PART.body) {
+        body.expandByPoint(v)
+        if (v.x > ARM_BAR_X) barTop = Math.min(barTop, v.y)
+      } else if (cls[t] === SUPPORT_ARM_PART.knob) knob.expandByPoint(v)
+      else pins[lower ? 1 : 0].expandByPoint(v)
     }
-  })
-  return G(...parts)
+  }
+  const r = ARM_HW_ROOM
+  const room = new THREE.Vector3(r, r, r)
+  armHw = [
+    new THREE.Box3(new THREE.Vector3(knob.min.x - ARM_HW_R, body.min.y - ARM_FIT, knob.min.z - r), new THREE.Vector3(knob.max.x + r, barTop - ARM_FIT, knob.max.z + r)),
+    ...pins.map((b) => {
+      const e = b.clone().expandByVector(room)
+      e.max.x += ARM_HW_R // into the post, so the box joins it
+      return e
+    }),
+  ]
+  return armHw
+}
+
+/**
+ * The footprint below height `below` in a pose: the body's silhouette plus the fit room, the
+ * hardware's rounded boxes (those reaching below that height), concave corners and notches closed.
+ */
+function armFootprint(posedArm: ReturnType<typeof armPosed>, below: number): Contour[] {
+  const parts = offsetContours(silhouette(posedArm.body, below), ARM_FIT)
+  for (const b of armHardware()) {
+    const pb = new THREE.Box3()
+    for (let c = 0; c < 8; c++)
+      pb.expandByPoint(posedArm.place(new THREE.Vector3(c & 1 ? b.max.x : b.min.x, c & 2 ? b.max.y : b.min.y, c & 4 ? b.max.z : b.min.z)))
+    if (pb.min.z < below) parts.push(rectContour(pb.min.x, pb.max.x, pb.min.y, pb.max.y, ARM_HW_R))
+  }
+  return offsetContours(offsetContours(unionNonZero(parts), ARM_CLOSE), -ARM_CLOSE)
+}
+
+/**
+ * Standing post down: heights above the post's end of the bar's underside (`bar`) and of the foam
+ * surface at the default sink (`sink`), which puts the bar the Hub's 10 mm into the foam.
+ */
+let armStand: { bar: number; sink: number } | null = null
+function armStanding() {
+  if (armStand) return armStand
+  const { pos } = decodeArmMesh()
+  let yEnd = -Infinity
+  let yBar = -Infinity
+  for (let i = 0; i < pos.length; i += 3) {
+    yEnd = Math.max(yEnd, pos[i + 1])
+    if (pos[i] > ARM_BAR_X) yBar = Math.max(yBar, pos[i + 1])
+  }
+  const bar = yEnd - yBar
+  armStand = { bar, sink: bar + SUPPORT_ARM_STANDING.bar.depth }
+  return armStand
+}
+
+/**
+ * A support arm pose with its pockets cut from the model, worked out on first use. Lying: the
+ * model's whole outline (`armFootprint`), cut flush. Standing post down: the Hub's two pockets, sized to the model —
+ * everything below the bar's underside (the post and its lower pin) 50 mm deep, and the bar's
+ * footprint 10 mm deep.
+ */
+function armPose(id: string, label: string, rot: [number, number, number], standing = false): Pose {
+  let steps: PoseStep[] | null = null
+  const build = (): PoseStep[] => {
+    const tris = armPosed(rot)
+    if (!standing) return [{ contours: armFootprint(tris, Infinity), level: 0 }]
+    const { bar, sink } = armStanding()
+    return [
+      { contours: armFootprint(tris, bar - 0.05), level: sink - SUPPORT_ARM_STANDING.post.depth },
+      { contours: armFootprint(tris, sink), level: bar },
+    ]
+  }
+  return {
+    id,
+    label,
+    rot,
+    ...(standing ? { sink: () => armStanding().sink } : {}),
+    get pockets() {
+      return (steps ??= build())
+    },
+  }
 }
 
 /** A closed circle outline. */
@@ -412,7 +808,9 @@ function angleFence() {
     notchContour(-34.8, -24.7, -14.8, -4.01, 2.2, 1.2),
   ]
   // White faces, very dark brown-black sides and bevel (extrude groups: 0 = faces, 1 = sides + bevel).
-  const plate = new THREE.Mesh(extrudeOutline(boolean('difference', outline, visualCuts), 9.5, 0.8), [mat('white'), mat('edgeblack')])
+  // Auto-smoothed like the support arm: creased normals at 20°, under the bevel's 22.5° steps, so flat walls never
+  // blend into the bevel (no bulging); only the gently curving outline shades round.
+  const plate = new THREE.Mesh(toCreasedNormals(extrudeOutline(boolean('difference', outline, visualCuts), 9.5, 0.8), (20 * Math.PI) / 180), [mat('white'), mat('edgeblack')])
   // The small black dot printed on the bulge, just under where the knob sits (decoration: not in the pocket).
   const dot = M(cyl(0.65, 0.65, 0.06, 20), 'edgeblack', 16.4, 15.3, 9.47)
   dot.userData.deco = true
@@ -420,21 +818,20 @@ function angleFence() {
   return G(plate, dot, footprint(outline, 0, 9.5))
 }
 
-/** The Angle Fence's Lock Screw: knurled Ø18 × 13 head on a Ø7 × 15 screw (the hub's 13 / 28 mm pockets). */
+/**
+ * The Angle Fence's Lock Screw: knurled Ø18 × 13 head on a Ø7 × 15 screw (the hub's 13 / 28 mm pockets).
+ * The pocket is the Hub's: Sam's Kit A traces it as a Ø19 circle (13 mm) round a Ø8 one (28 mm), measured
+ * on the thumbnail at 4.609 px/mm. The model keeps its own look and is `deco`; hidden footprints stand
+ * for the pocket.
+ */
 function lockScrew() {
-  return G(M(cyl(3.5, 3.5, 15.2, 24), 'steel'), M(faceted(knurled(9, 13)), 'knob', 0, 0, 15))
+  const screw = M(cyl(3.5, 3.5, 15.2, 24), 'steel')
+  const head = M(faceted(knurled(9, 13)), 'knob', 0, 0, 15)
+  screw.userData.deco = true
+  head.userData.deco = true
+  return G(screw, head, footprint([circleContour(0, 0, 4, 48)], 0, 15.2), footprint([circleContour(0, 0, 9.5, 48)], 15, 28))
 }
 
-/** A big polygon covering one side of the line through `p` along `dir`, for clipping a part off a profile. */
-function halfPlane(p: Pt, dir: Pt, side: Pt): Contour {
-  const L = 400
-  const dl = Math.hypot(dir.x, dir.y)
-  const sl = Math.hypot(side.x, side.y)
-  const d = { x: dir.x / dl, y: dir.y / dl }
-  const n = { x: side.x / sl, y: side.y / sl }
-  const at = (a: number, b: number): Pt => ({ x: p.x + d.x * a + n.x * b, y: p.y + d.y * a + n.y * b })
-  return { closed: true, pts: [at(-L, 0), at(L, 0), at(L, L), at(-L, L)] }
-}
 
 /**
  * An invisible solid that still counts towards the pocket: the part of the Hub outline that holds no
@@ -459,26 +856,170 @@ function footprint(cs: Contour[], z0: number, z1: number): THREE.Mesh {
 const CLAMP_AXIS = 23.65
 const CLAMP_SINK = 28
 
+/** One cross-section of a swept solid: centre (x, y) in plan, sweep direction (ax, ay), half-sizes, superellipse power. */
+type SweepRing = { x: number; y: number; ax: number; ay: number; hw: number; hz: number; n: number }
+
+/**
+ * A smooth solid through `rings` on the z = `zc` axis: each ring is a superellipse (n = 2 is an
+ * ellipse, higher is squarer) `2 hw` wide across the sweep and `2 hz` tall, both ends closed by fans.
+ * With `faceBand` set, the top and bottom faces (|sin| above it) go in group 0 and the sides in group 1.
+ */
+function sweepRings(rings: SweepRing[], zc: number, S = 48, faceBand = 0): THREE.BufferGeometry {
+  const pos: number[] = []
+  const faces: number[] = []
+  const sides: number[] = []
+  const pw = (v: number, e: number) => Math.sign(v) * Math.abs(v) ** e
+  for (const r of rings) {
+    const l = Math.hypot(r.ax, r.ay)
+    const px = -r.ay / l
+    const py = r.ax / l
+    for (let i = 0; i < S; i++) {
+      const a = (i / S) * Math.PI * 2
+      const c = pw(Math.cos(a), 2 / r.n) * r.hw
+      const sn = pw(Math.sin(a), 2 / r.n) * r.hz
+      pos.push(r.x + px * c, r.y + py * c, zc + sn)
+    }
+  }
+  for (let j = 1; j < rings.length; j++) {
+    const a = (j - 1) * S
+    const b = j * S
+    for (let i = 0; i < S; i++) {
+      const i2 = (i + 1) % S
+      const out = faceBand > 0 && Math.abs(Math.sin(((i + 0.5) / S) * Math.PI * 2)) > faceBand ? faces : sides
+      out.push(a + i, a + i2, b + i, a + i2, b + i2, b + i)
+    }
+  }
+  for (const [k, j] of [0, rings.length - 1].entries()) {
+    const c = pos.length / 3
+    pos.push(rings[j].x, rings[j].y, zc)
+    const o = j * S
+    for (let i = 0; i < S; i++) {
+      const i2 = (i + 1) % S
+      if (k === 0) sides.push(c, o + i2, o + i)
+      else sides.push(c, o + i, o + i2)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setIndex([...faces, ...sides])
+  if (faceBand > 0) {
+    g.addGroup(0, faces.length, 0)
+    g.addGroup(faces.length, sides.length, 1)
+  }
+  g.computeVertexNormals()
+  return g
+}
+
+/** A moving average over `k` samples either side (clamped at the ends): irons out a trace's stair steps. */
+function smoothed(v: number[], k: number): number[] {
+  return v.map((_, i) => {
+    let sum = 0
+    let w = 0
+    for (let j = Math.max(0, i - k); j <= Math.min(v.length - 1, i + k); j++) {
+      const wt = 1 - Math.abs(j - i) / (k + 1)
+      sum += v[j] * wt
+      w += wt
+    }
+    return sum / w
+  })
+}
+
+const smoothstep = (e0: number, e1: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
+  return t * t * (3 - 2 * t)
+}
+
 function holdDownClamp() {
-  const t = 18
   const R = CLAMP_AXIS
   // The source SVG has a 28 mm knob cutout and 20 mm bolt / lever cutouts.
   // Their physical solids are decorative; these z levels make the SVG outlines authoritative for
   // the pockets and their boolean in the foam.
   const z0 = 8
+  // The rubber pads stand from the pocket floor up past the bolt, centred on its axis (z 8 to 39.3),
+  // so they rise well clear of the foam and the flipped pose is identical. The steel strap between
+  // them is thinner, also centred on the bolt that runs through it.
+  const padHalf = R - z0
+  const barHalf = 10
   const lever = profile(CLAMP_LEVER, 0)
-  // The pads are the rubber caps over the lever's two ends; cut where the outline steps down to the bar.
-  const leftCut = halfPlane({ x: -44.45, y: 5.6 }, { x: 0.28, y: 1 }, { x: -1, y: 0.28 })
-  const rightCut = halfPlane({ x: 44.55, y: -1.4 }, { x: -0.33, y: 1 }, { x: 1, y: 0.33 })
-  const bar = boolean('difference', lever, [leftCut, rightCut])
-  const padL = boolean('intersection', lever, [leftCut])
-  const padR = boolean('intersection', lever, [rightCut])
+  const pts = CLAMP_LEVER
+  const STEP = 0.25
+
+  // The strap: a smooth sweep along the traced bar's centreline, the trace's ±0.3 mm stair steps
+  // averaged out, a rounded-rectangle section 0.4 mm inside the outline. Its ends run on into the
+  // pads (extrapolated along the bar), so the rubber sleeves over steel.
+  const clean: [number, number] = [-43.5, 43.8]
+  const xs: number[] = []
+  for (let x = -52; x <= 52.5 + 1e-6; x += STEP) xs.push(x)
+  const raw = xs.map((x) => {
+    const [lo, hi] = spanAt(pts, Math.min(clean[1], Math.max(clean[0], x)))
+    return { c: (lo + hi) / 2, hw: (hi - lo) / 2 }
+  })
+  // Straight-line fits over the last 10 mm of clean bar carry the centreline into the pads.
+  const fit = (x0: number, x1: number) => {
+    const sel = xs.map((x, i) => [x, raw[i].c]).filter(([x]) => x >= x0 && x <= x1)
+    const mx = sel.reduce((a, [x]) => a + x, 0) / sel.length
+    const my = sel.reduce((a, [, y]) => a + y, 0) / sel.length
+    const m = sel.reduce((a, [x, y]) => a + (x - mx) * (y - my), 0) / sel.reduce((a, [x]) => a + (x - mx) ** 2, 0)
+    return (x: number) => my + m * (x - mx)
+  }
+  const fitL = fit(clean[0], clean[0] + 10)
+  const fitR = fit(clean[1] - 10, clean[1])
+  const centre = smoothed(
+    xs.map((x, i) => (x < clean[0] ? fitL(x) : x > clean[1] ? fitR(x) : raw[i].c)),
+    32,
+  )
+  const vhw = smoothed(raw.map((r) => r.hw), 48)
+  const barRings: SweepRing[] = xs.map((x, i) => {
+    const i0 = Math.max(0, i - 1)
+    const i1 = Math.min(xs.length - 1, i + 1)
+    const ax = xs[i1] - xs[i0]
+    const ay = centre[i1] - centre[i0]
+    // The trace's span is vertical; the strap's own width is across its run.
+    return { x, y: centre[i], ax, ay, hw: (vhw[i] * ax) / Math.hypot(ax, ay) - 0.4, hz: barHalf, n: 5 }
+  })
+  const barHw = (barRings[0].hw + barRings[barRings.length - 1].hw) / 2
+  // Faces black, edges steel.
+  const strap = new THREE.Mesh(sweepRings(barRings, R, 48, 0.85), [mat('anodized'), mat('steel')])
+
+  // A rubber pad: swept out from the cut line along `side` to the traced tip, oval in section and the
+  // full pad height, domed at the tip, tapering at its mouth to a sleeve that hugs the strap.
+  const pad = (p: Pt, side: Pt) => {
+    const l = Math.hypot(side.x, side.y)
+    const n = { x: side.x / l, y: side.y / l }
+    const d = { x: -n.y, y: n.x }
+    const local = pts.map((q) => ({ x: (q.x - p.x) * n.x + (q.y - p.y) * n.y, y: (q.x - p.x) * d.x + (q.y - p.y) * d.y }))
+    const uMax = Math.max(...local.map((q) => q.x)) - 0.02
+    const u0 = -1.5
+    const us: number[] = []
+    for (let u = u0; u < uMax; u += STEP) us.push(u)
+    us.push(uMax)
+    const spans = us.map((u) => spanAt(local, u))
+    const vc = smoothed(spans.map(([lo, hi]) => (lo + hi) / 2), 12)
+    const hw = smoothed(spans.map(([lo, hi]) => (hi - lo) / 2), 12)
+    const dome = 10
+    const rings = us.map((u, i) => {
+      const grow = smoothstep(u0, 8, u)
+      const tip = Math.min(1, Math.max(0, (u - (uMax - dome)) / dome))
+      return {
+        x: p.x + n.x * u + d.x * vc[i],
+        y: p.y + n.y * u + d.y * vc[i],
+        ax: n.x,
+        ay: n.y,
+        hw: Math.max(barHw + 0.4, hw[i]),
+        hz: (barHalf + 0.4 + (padHalf - barHalf - 0.4) * grow) * Math.sqrt(1 - tip * tip),
+        n: 5 - 2.6 * grow,
+      }
+    })
+    return M(sweepRings(rings, R, 48), 'knob')
+  }
+  const padL = pad({ x: -44.45, y: 5.6 }, { x: -1, y: 0.28 })
+  const padR = pad({ x: 44.55, y: -1.4 }, { x: 1, y: 0.33 })
+  // Smoothed, so a hair off the trace in places: the lever footprint below carries the pockets.
+  for (const m of [strap, padL, padR]) m.userData.deco = true
+
   const bolt = boundsOf(profile(CLAMP_BOLT, 0))
   const knob = boundsOf(profile(CLAMP_KNOB, 0))
   const bx = bolt.cx
-  // Faces black, edges steel (extrude groups 0 and 1).
-  const barMesh = new THREE.Mesh(extrudeOutline(bar, t, 0.8), [mat('anodized'), mat('steel')])
-  barMesh.position.z = z0
   // Along the bolt, away from the lever: thread, sleeve, cap, screw (y decreasing).
   const headY = bolt.y1 - 2.5
   const sleeveTop = knob.y1 - 0.2
@@ -494,9 +1035,9 @@ function holdDownClamp() {
     else cap.lineTo(r * Math.cos(a), r * Math.sin(a))
   }
   return G(
-    barMesh,
-    M(extrudeOutline(padL, t, 2.2), 'knob', 0, 0, z0),
-    M(extrudeOutline(padR, t, 2.2), 'knob', 0, 0, z0),
+    strap,
+    padL,
+    padR,
     // Bolt: shaft from the T-head right into the sleeve.
     M(cyl(4, 4, headY - shaftEnd, 32), 'steel', bx, shaftEnd, R, -90),
     M(box(22, 5, 12), 'steel', bx, headY, R - 6),
@@ -505,7 +1046,7 @@ function holdDownClamp() {
     M(extrude(cap, capLen, 3, 4), 'knob', bx, capEnd, R, -90),
     M(cyl(4.5, 4.5, 1.2, 24), 'steel', bx, capEnd - 1.2, R, -90),
     // Symmetric about the bolt's axis, so the flipped pose gets the same pockets.
-    footprint(lever, 8, 26),
+    footprint(lever, z0, 2 * R - z0),
     footprint(profile(CLAMP_BOLT, 0), 8, 2 * R - 8),
     footprint(profile(CLAMP_KNOB, 0), 0, 2 * R),
   )
@@ -590,7 +1131,7 @@ function roundedBar(pts: Pt[], t: number, edges?: (x: number) => [number, number
 /**
  * White print on the Shaper key's handle, as a flat decal on a strip that follows the bend (`drop`: how
  * far the handle's centreline falls at x): the
- * "SHΔPER" mark (the A is a bare triangle) centred over the bend, "4.0 MM" and "HEX 4.0" out on
+ * SHAPER mark (in the Forma face, whose A is Shaper's triangle) centred over the bend, "4.0 MM" and "HEX 4.0" out on
  * either arm. Reads left to right with the shaft pointing down. A texture, so it's `deco`.
  */
 function keyPrint(yA: number, drop: (x: number) => number, z: number): THREE.Object3D | null {
@@ -604,38 +1145,57 @@ function keyPrint(yA: number, drop: (x: number) => number, z: number): THREE.Obj
   const g = c.getContext('2d')
   if (!g) return null
   g.fillStyle = '#e9e8e3'
-  g.strokeStyle = '#e9e8e3'
   g.textAlign = 'center'
   g.textBaseline = 'alphabetic'
   const cx = (x: number) => (W / 2 + x) * PX
   const base = (Hh / 2) * PX
   const glyphs = (txt: string, x0: number, adv: number, cap: number, weight: number) => {
     g.font = `${weight} ${cap * PX * 1.4}px "Helvetica Neue", Helvetica, Arial, sans-serif`
-    g.lineWidth = Math.max(1.5, cap * PX * 0.09)
     const n = txt.length
-    for (let i = 0; i < n; i++) {
-      const x = cx(x0 + (i - (n - 1) / 2) * adv)
-      const ch = txt[i]
-      if (ch === 'Δ') {
-        const w = cap * PX * 0.78
-        g.beginPath()
-        g.moveTo(x - w / 2, base + (cap * PX) / 2)
-        g.lineTo(x, base - (cap * PX) / 2)
-        g.lineTo(x + w / 2, base + (cap * PX) / 2)
-        g.closePath()
-        g.stroke()
-      } else g.fillText(ch, x, base + (cap * PX) / 2)
-    }
+    for (let i = 0; i < n; i++) g.fillText(txt[i], cx(x0 + (i - (n - 1) / 2) * adv), base + (cap * PX) / 2)
   }
-  glyphs('SHΔPER', 0, 4.7, 3.4, 300)
+  // SHAPER in the Forma face across the bend, as wide as the old spaced capitals.
+  const mark = () => shaperWordmark(g, cx(0), base, 25.6 * PX)
+  mark()
   glyphs('4.0 MM', -20.5, 1.75, 1.5, 400)
   glyphs('HEX 4.0', 20.5, 1.75, 1.5, 400)
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
   tex.anisotropy = 8
-  const geo = new THREE.PlaneGeometry(W, Hh, 56, 1)
+  whenFormaLoads(() => {
+    g.clearRect(cx(-14), 0, 28 * PX, c.height)
+    mark()
+  }, tex)
+  // Bent onto the handle, not sheared: the print's x is arc length along the handle's centreline
+  // (y = -drop(x)) and its y runs along the centreline's normal, so every letter stays square to the
+  // handle on the angled arms as well as over the bend.
+  const slope = (x: number) => (drop(x + 0.01) - drop(x - 0.01)) / 0.02
+  const STEP = 0.05
+  const xs = [0]
+  const arc = [0]
+  while (arc[arc.length - 1] < W / 2 + 1) {
+    const x = xs[xs.length - 1]
+    const m = slope(x + STEP / 2)
+    xs.push(x + STEP)
+    arc.push(arc[arc.length - 1] + STEP * Math.sqrt(1 + m * m))
+  }
+  /** The centreline's x at arc length `u` from the middle (drop is symmetric). */
+  const xAt = (u: number) => {
+    const a = Math.abs(u)
+    let i = 1
+    while (arc[i] < a) i++
+    const x = xs[i - 1] + ((a - arc[i - 1]) / (arc[i] - arc[i - 1])) * STEP
+    return Math.sign(u) * x
+  }
+  const geo = new THREE.PlaneGeometry(W, Hh, 140, 2)
   const p = geo.getAttribute('position')
-  for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) - drop(p.getX(i)))
+  for (let i = 0; i < p.count; i++) {
+    const x = xAt(p.getX(i))
+    const v = p.getY(i)
+    const m = -slope(x)
+    const l = Math.sqrt(1 + m * m)
+    p.setXY(i, x - (v * m) / l, -drop(x) + v / l)
+  }
   geo.computeVertexNormals()
   const m = new THREE.Mesh(
     geo,
@@ -759,7 +1319,7 @@ function filletedSleeve(r: number, fx: number, fz: number, y0: number, zc: numbe
  * The Workstation's 4 mm T-handle hex key, styled on the Shaper shop photo (workstation_wrench): a
  * glossy black handle 10 mm thick with a round (elliptical) section, a glossy sleeve on the shaft that
  * flows into the handle through a rounded fillet, the 4 mm hex ending in a loop-cut knob (`hexKnob`),
- * and "SHΔPER" printed
+ * and "SHAPER" printed
  * on the handle. The handle follows the traced outline (LONG_HEX_HANDLE) along its straight arms and
  * ends; through the middle it bends smoothly instead of the outline's V, and the neck is the sleeve and
  * its fillet (which land on the outline's own fillet). The traced outline itself is a hidden footprint,
@@ -817,24 +1377,7 @@ function shaperHexKey() {
 
 // ---------- Trace ----------
 
-/** Shaper Trace frame: 339.6 × 247.7 mm outside, 271.8 × 181 mm inside (Bob21's Trace insert). */
-function traceFrame() {
-  const s = roundRect(338.6, 246.7, 5)
-  s.holes.push(new THREE.Path(roundRect(272.8, 182, 5).getPoints(6)))
-  const t = 8.5
-  const parts: THREE.Object3D[] = [M(extrude(s, t, 0.6), 'black')]
-  // Domino markers round the frame, as on ShaperTape.
-  const mark = box(10, 4.5, 0.3)
-  for (let i = 0; i < 9; i++) {
-    const x = -132 + i * 33
-    parts.push(M(mark, 'white', x, 107, t), M(mark, 'white', x, -107, t))
-  }
-  for (let i = 0; i < 5; i++) {
-    const y = -72 + i * 36
-    parts.push(M(mark, 'white', 152, y, t, 0, 0, 90), M(mark, 'white', -152, y, t, 0, 0, 90))
-  }
-  return G(...parts)
-}
+// The Trace frame itself is modelled in traceFrame.ts.
 
 function phone() {
   return G(M(extrude(roundRect(77, 160, 11), 8.5, 1.5), 'black'), M(extrude(roundRect(73, 156, 9), 0.4, 0.1), 'screen', 0, 0, 8.4))
@@ -946,7 +1489,7 @@ export const ITEMS: ItemDef[] = [
     name: 'Collet',
     short: 'Collet',
     cats: ['origin'],
-    note: `Origin collet with its nut: Ø20 nut over an Ø11 nose, 19 mm tall. ${HUB}`,
+    note: `Origin collet: Ø17.2 cap over a 19.9 mm hex and a Ø9.8 nose, 25.2 mm tall; stands 19 mm deep, the head 6 mm proud. ${HUB}`,
     poses: COLLET_POSES,
     build: collet,
   },
@@ -956,7 +1499,7 @@ export const ITEMS: ItemDef[] = [
     short: 'Collet wrench',
     cats: ['origin', 'workstation'],
     note: `Origin’s open-end wrench, 169 × 43 × 6.5 mm (profile type A; shipped wrenches vary). ${HUB}`,
-    // Standard depths from the Hub inserts: 7 mm flat (Sam's kit), 20 mm on edge (LeoTurlock, Dr.BuckyLab).
+    // Standard depths from the Hub inserts: 7 mm flat (Sam's kit), 20 mm on edge (Dr.BuckyLab and another Hub insert).
     poses: [
       flat('Flat', 7),
       { id: 'flipped', label: 'Flat, flipped', rot: [180, 0, 0], sink: () => 7 },
@@ -972,7 +1515,7 @@ export const ITEMS: ItemDef[] = [
     cats: ['origin', 'trace'],
     note: `0.75 in (19 mm) wide, about 79 mm across on a 1 in core. Flat, it sits in a plain round pocket (no foam post in the core). ${HUB}`,
     randomSpin: true,
-    poses: [flat(), { id: 'edge', label: 'Standing on edge', rot: [90, 0, 0], sink: () => 30 }],
+    poses: [flat(), tapeEdge()],
     build: () => G(...tapeRollParts()),
   },
   {
@@ -983,7 +1526,7 @@ export const ITEMS: ItemDef[] = [
     note: `Two rolls side by side, standing on edge in one slot, as the hub inserts keep them. Flat, stacked, they sit in a plain round pocket. ${HUB}`,
     randomSpin: true,
     poses: [
-      { id: 'edge', label: 'Standing on edge', rot: [90, 0, 0], sink: () => 30 },
+      tapeEdge(),
       { id: 'flat', label: 'Flat, stacked', rot: [0, 0, 0] },
     ],
     build: () => G(...tapeRollParts(0), ...tapeRollParts(TAPE_W, 31)),
@@ -993,11 +1536,11 @@ export const ITEMS: ItemDef[] = [
     name: 'Shaper USB stick (Gen 1)',
     short: 'USB Gen 1',
     cats: ['origin'],
-    note: `A slim 42 × 12 × 4.5 mm metal stick. ${HUB}`,
+    note: `A slim 42.8 × 12.3 × 4.5 mm black metal stick: flat plug end, rounded key-ring end with a pill-shaped hole. ${HUB}`,
     poses: [
       flat('Lying'),
       { id: 'edge', label: 'On its edge', rot: [90, 0, 0] },
-      { id: 'stand', label: 'Standing, plug down', rot: [0, 90, 0], sink: () => 20 },
+      { id: 'stand', label: 'Standing, plug down', rot: [0, -90, 0], sink: () => 20 },
     ],
     build: usbGen1,
   },
@@ -1027,12 +1570,13 @@ export const ITEMS: ItemDef[] = [
     name: 'Workstation Support Arm',
     short: 'Support arm',
     cats: ['workstation'],
-    note: `187 × 76 × 12.5 mm. Flip it to store a left or a right arm; standing, the post goes down into the foam. ${HUB}`,
-    // Standard depths from the Hub inserts: 13 mm lying (Sam's kit), 50 mm standing (LeoTurlock, Dr.BuckyLab).
+    note: `185 × 76 × 24 mm. Flip it to store a left or a right arm; standing, the post goes down into the foam. ${HUB}`,
+    // Pockets from the owner's model (armPose). Lying sits flush; standing keeps Dr.BuckyLab's two
+    // pockets and depths, the bar 10 mm in and the post 50 mm down.
     poses: [
-      { id: 'lying', label: 'Lying', rot: [0, 0, 0], sink: () => 13 },
-      { id: 'lying-b', label: 'Lying, flipped', rot: [180, 0, 0], sink: () => 13 },
-      { id: 'standing', label: 'Standing, post down', rot: [-90, 0, 0], sink: () => 50 },
+      armPose('lying', 'Lying', [0, 0, 0]),
+      armPose('lying-b', 'Lying, flipped', [180, 0, 0]),
+      armPose('standing', 'Standing, post down', [-90, 0, 0], true),
     ],
     build: supportArm,
   },
@@ -1042,7 +1586,7 @@ export const ITEMS: ItemDef[] = [
     short: 'Angle fence',
     cats: ['workstation'],
     note: `160 × 48 × 9.5 mm. Its Lock Screw (the knob) is a separate item. ${HUB}`,
-    // Standard depths from the Hub inserts: 10 mm flat (Sam's kit), 20 mm on edge (LeoTurlock, Dr.BuckyLab).
+    // Standard depths from the Hub inserts: 10 mm flat (Sam's kit), 20 mm on edge (Dr.BuckyLab and another Hub insert).
     poses: [
       flat('Flat', 10),
       { id: 'flipped', label: 'Flat, flipped', rot: [180, 0, 0], sink: () => 10 },
@@ -1065,7 +1609,7 @@ export const ITEMS: ItemDef[] = [
     name: 'Workstation Hold Down Clamp',
     short: 'Hold-down clamp',
     cats: ['workstation'],
-    note: `Lever on its side (147 × 34 × 18 mm) with the T-bolt through it and the Ø47 knob screwed on, lying down on the bolt's axis, as the ShaperHub clamp pockets store it. The lever pocket is 20 mm deep; the knob stands about 14 mm above the foam. ${HUB}`,
+    note: `Lever on its side (147 × 34 mm: a 20 mm steel strap with 31 mm rubber end pads, centred on the bolt) with the T-bolt through it and the Ø47 knob screwed on, lying down on the bolt's axis, as the ShaperHub clamp pockets store it. The lever pocket is 20 mm deep; the knob stands about 14 mm above the foam. ${HUB}`,
     poses: [
       { id: 'lying', label: 'Lying', rot: [0, 0, 0], sink: () => CLAMP_SINK },
       { id: 'lying-b', label: 'Lying, flipped', rot: [180, 0, 0], sink: () => CLAMP_SINK },
@@ -1079,7 +1623,7 @@ export const ITEMS: ItemDef[] = [
     cats: ['workstation', 'origin'],
     note: `The Workstation’s 4 mm wrench: 217 mm long, 80 mm handle. ${HUB}`,
     poses: [
-      flat('Flat', 8),
+      { ...flat('Flat', HEX_FLAT_SINK), pockets: HEX_FLAT_POCKETS },
       { id: 'edge', label: 'On its edge', rot: [0, 90, 0] },
       { id: 'standing', label: 'Standing, shaft in', rot: [90, 0, 0], sink: () => 70 },
     ],
@@ -1100,14 +1644,28 @@ export const ITEMS: ItemDef[] = [
     build: tHexKey(SHORT_HEX_HANDLE, 7.5, SHORT_HEX_SHAFT.base, SHORT_HEX_SHAFT.tip),
   },
   {
+    id: 'connected-caliper',
+    name: 'Shaper Connected Caliper',
+    short: 'Caliper',
+    cats: ['origin', 'shop'],
+    note: 'The 200 mm Connected Caliper (SY1-CC1), jaws closed: 286.5 mm long, 88 mm across the jaws. Modelled in Blender; finishes from Shaper’s product photos.',
+    // Both flat poses default to a 6.5 mm (0.256 in) pocket.
+    poses: [
+      { id: 'display-up', label: 'Flat, display up', rot: [0, 0, 0], sink: () => 6.5 },
+      { id: 'display-down', label: 'Flat, display down', rot: [180, 0, 0], sink: () => 6.5 },
+    ],
+    closeGaps: 1,
+    build: connectedCaliper,
+  },
+  {
     id: 'trace-frame',
     name: 'Shaper Trace frame',
     short: 'Trace frame',
     cats: ['trace'],
-    note: `About 339 × 247 mm outside, 272 × 181 mm inside. The window keeps a foam island. ${HUB} Thickness estimated.`,
+    note: '338 × 248 mm outside (Shaper’s spec), 273 × 183 mm window; dots and finish from Shaper’s product photos. The window keeps a foam island. Thickness (6 mm) estimated.',
     islands: true,
     poses: [flat(), { id: 'edge', label: 'On edge', rot: [90, 0, 0], sink: () => 40 }],
-    build: traceFrame,
+    build: shaperTraceFrame,
   },
   {
     id: 'phone',

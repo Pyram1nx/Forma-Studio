@@ -240,11 +240,12 @@ export function profile(pts: Pt[], inset = 0.5, clip?: { minX?: number; maxX?: n
   return cs
 }
 
-/** Outlines extruded along z from 0 to h. */
-export function extrudeOutline(contours: Contour[], h: number, bevel = 0.6): THREE.BufferGeometry {
+/** Outlines extruded along z from 0 to h; `steps` slices the walls along z (for warping them afterwards). */
+export function extrudeOutline(contours: Contour[], h: number, bevel = 0.6, steps = 1): THREE.BufferGeometry {
   const b = Math.min(bevel, h / 4)
   const g = new THREE.ExtrudeGeometry(shapesOf(contours), {
     depth: h - 2 * b,
+    steps,
     bevelEnabled: b > 0,
     bevelThickness: b,
     bevelSize: b,

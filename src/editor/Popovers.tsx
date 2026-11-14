@@ -132,9 +132,7 @@ export function ShapesPopover() {
       )}
       {templates.length > 0 && (
         <>
-          <div className="shape-creator__label">
-            templates <span className="ss-badge ss-badge--new">new</span>
-          </div>
+          <div className="shape-creator__label">templates</div>
           <div className="shape-creator__templates">
             {templates.map((t) => (
               <button key={t.id} className="template-btn" title={t.name} aria-label={t.name} onClick={() => placeTemplate(t.id)}>

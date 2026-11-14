@@ -1,0 +1,144 @@
+/* Account home: Joints page (src/home/JointsPage.tsx). Header, grid and cards come from home.css. */
+
+.home-joints .home__head p {
+  max-width: 560px;
+}
+
+/* Six layouts: three across, or two across (never an orphan). Room for a two-line
+   description, all cards in a row the same height. */
+.home-joints-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 1180px) {
+  .home-joints-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.home-joints-grid > li {
+  display: flex;
+}
+.home-joints-card {
+  height: 100%;
+}
+.home-joints-card__thumb {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  background: var(--gray-50);
+  color: var(--blue-060);
+  overflow: hidden;
+}
+.home-joints-card .home-joints-card__desc {
+  white-space: normal;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* The joint drawing: blue lines on a pale tile, like the design previews. */
+.home-joints-sketch {
+  width: 100%;
+  height: 100%;
+  max-width: 320px;
+  transition: transform 0.2s ease;
+}
+.home-joints-card:hover .home-joints-sketch {
+  transform: scale(1.04);
+}
+.home-joints-sketch__tail {
+  fill: var(--blue-lighter);
+}
+.home-joints-sketch__pin {
+  fill: var(--blue-tint);
+}
+.home-joints-sketch__grain,
+.home-joints-sketch__rings {
+  fill: none;
+  stroke: var(--blue-soft);
+  stroke-width: 0.8;
+  stroke-opacity: 0.45;
+}
+.home-joints-sketch__edge {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+/* How a joint is cut: three short steps under the gallery. */
+.home-joints-steps {
+  list-style: none;
+  margin: 32px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.home-joints-steps__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  background: var(--white);
+}
+.home-joints-steps__num {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--blue-light);
+  color: var(--blue-070);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+.home-joints-steps__title {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.home-joints-steps__text {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-joints-sketch {
+    transition: none;
+  }
+  .home-joints-card:hover .home-joints-sketch {
+    transform: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .home-joints-steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+
+/* Phones (home.css's breakpoint): two-up cards, smaller tiles, steps stacked. */
+@media (max-width: 700px) {
+  .home-joints-card__thumb {
+    padding: 8px 10px;
+  }
+  .home-joints-card .home-joints-card__desc {
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+  .home-joints-steps {
+    margin-top: 24px;
+  }
+  .home-joints-steps__item {
+    padding: 12px;
+  }
+}

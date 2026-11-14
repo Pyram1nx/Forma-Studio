@@ -32,6 +32,12 @@ export interface SystainerViewerProps {
   view: ViewMode
   /** Lid open (the default) or shut over the insert. */
   lidOpen: boolean
+  /** X-ray: ghost the shell and foam walls so the pockets read from the side. */
+  xray: boolean
+  /** The placed gear shown; hide it to see only the foam and its cutouts. */
+  showItems: boolean
+  /** The selection ring shows only while the toolbar's Rotate button is toggled on. */
+  ringOn: boolean
   onSelect: (uid: string | null) => void
   /** done = the drag ended (one undo step per drag). */
   onMove: (uid: string, x: number, y: number, done: boolean) => void
@@ -84,7 +90,7 @@ interface Scene3 {
   /** Resize chevrons at the selection's footprint corners (in the ring group, so in its turned frame). */
   handles: THREE.Group
   ghost: THREE.Group
-  mats: { foam: THREE.MeshStandardMaterial; foamWall: THREE.MeshStandardMaterial; sys: THREE.MeshStandardMaterial; latch: THREE.MeshStandardMaterial; letters: THREE.MeshStandardMaterial; lidFoam: THREE.MeshStandardMaterial }
+  mats: { foam: THREE.MeshStandardMaterial; foamWall: THREE.MeshStandardMaterial; sys: THREE.MeshStandardMaterial; lidSys: THREE.MeshStandardMaterial; latch: THREE.MeshStandardMaterial; letters: THREE.MeshStandardMaterial; lidFoam: THREE.MeshStandardMaterial }
   nodes: Map<string, ItemNode>
 }
 
@@ -158,7 +164,26 @@ const LINE = {
   outline: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }),
 }
 
-export default function SystainerViewer({ layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate, onResize, toolbarRef, ref }: SystainerViewerProps) {
+/** X-ray: the opacity the shell and the foam fade to — see-through, so the pockets and gear read
+ * from the side; with the lid shut it goes ghost with them. */
+const XRAY_OPACITY = 0.3
+
+/** Slide a material to its X-ray ghost (t 0→1): blended over what's behind and no longer writing
+ * depth, so the inside shows cleanly; back to solid at t 0. */
+function xrayFade(m: THREE.MeshStandardMaterial, t: number) {
+  m.opacity = 1 - t * (1 - XRAY_OPACITY)
+  m.transparent = m.opacity < 1
+  m.depthWrite = !m.transparent
+}
+
+/** Exp-eased step towards a target that snaps to it at the ends: a finished fade leaves the
+ * material exactly solid again, not stuck at opacity 0.999 in the transparent pass. */
+function fade(now: number, target: number, dt: number): number {
+  const next = now + (target - now) * (1 - Math.exp(-dt * 8))
+  return Math.abs(next - target) < 0.01 ? target : next
+}
+
+export default function SystainerViewer({ layout, ev, selected, view, lidOpen, xray, showItems, ringOn, onSelect, onMove, onRotate, onResize, toolbarRef, ref }: SystainerViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const s3 = useRef<Scene3 | null>(null)
   /** Size the camera was last framed for; a new scene (remount) frames again. */
@@ -167,8 +192,8 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
   const userOrbited = useRef(false)
   const dark = useIsDark()
   // Latest props for the event handlers, which are bound once.
-  const live = useRef({ layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate, onResize })
-  live.current = { layout, ev, selected, view, lidOpen, onSelect, onMove, onRotate, onResize }
+  const live = useRef({ layout, ev, selected, view, lidOpen, xray, showItems, onSelect, onMove, onRotate, onResize })
+  live.current = { layout, ev, selected, view, lidOpen, xray, showItems, onSelect, onMove, onRotate, onResize }
 
   useEffect(() => {
     const host = hostRef.current
@@ -211,10 +236,14 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     grid.position.z = -0.5
     scene.add(grid)
 
+    // The shell plastic, twice: base and lid ghost separately in X-ray (the lid only when shut),
+    // so they can't share one material.
+    const plastic = { color: SYS_PLASTIC, roughness: 0.62, metalness: 0.05 }
     const mats = {
       foam: new THREE.MeshStandardMaterial({ color: FOAM, roughness: 0.97, metalness: 0 }),
       foamWall: new THREE.MeshStandardMaterial({ color: FOAM_WALL, roughness: 1, metalness: 0 }),
-      sys: new THREE.MeshStandardMaterial({ color: SYS_PLASTIC, roughness: 0.62, metalness: 0.05 }),
+      sys: new THREE.MeshStandardMaterial(plastic),
+      lidSys: new THREE.MeshStandardMaterial(plastic),
       latch: new THREE.MeshStandardMaterial({ color: LATCH, roughness: 0.5, metalness: 0.05 }),
       letters: new THREE.MeshStandardMaterial({ color: LETTERING, roughness: 0.55, metalness: 0.05 }),
       // The egg-crate pad inside the lid (lidFoam.ts), speckled foam.
@@ -231,6 +260,10 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     scene.add(lidPivot)
     const lidAngle = { now: -LID_OPEN_DEG, target: -LID_OPEN_DEG }
     const knobAngle = { now: KNOB_TURN_DEG, target: KNOB_TURN_DEG }
+    // X-ray fades, solid 0 → ghost 1: shell and foam walls whenever X-ray is on, the lid assembly
+    // only while the lid is shut over the insert.
+    let xrayShell = 0
+    let xrayLid = 0
 
     // Rotation ring: a flat band with a grip, laid on the foam round the selected item.
     const ringMat = new THREE.MeshBasicMaterial({ color: hexNum(COLORS.blue050), transparent: true, opacity: 0.85, depthTest: false })
@@ -280,6 +313,21 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
     const uidOf = (o: THREE.Object3D | null): string | null => {
       for (let p = o; p; p = p.parent) if (p.userData.uid) return p.userData.uid as string
       return null
+    }
+    /** The placed item under the ray (set by setRay), if the ray meets it before the foam: from a
+     * low angle a press on the foam top would otherwise grab gear sunk in a pocket behind it.
+     * X-ray ghosts the foam, so there the gear seen through it stays grabbable. */
+    const itemUnderRay = (): string | null => {
+      // The raycaster hits invisible meshes too, so hidden gear is kept ungrabbable.
+      if (!live.current.showItems) return null
+      const hit = ray.intersectObjects(groups.items.children, true)[0]
+      if (!hit) return null
+      if (!(live.current.xray && live.current.view === '3d')) {
+        const foam = ray.intersectObjects(groups.foam.children, false)[0]
+        // A little slack: gear sits flush on pocket floors and walls.
+        if (foam && foam.distance < hit.distance - 0.5) return null
+      }
+      return uidOf(hit.object)
     }
 
     // The resize chevron under a client point, picked in screen space (a finger gets a wider
@@ -376,8 +424,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           return
         }
       }
-      const hit = ray.intersectObjects(groups.items.children, true)[0]
-      const uid = hit ? uidOf(hit.object) : null
+      const uid = itemUnderRay()
       if (uid) {
         const p = L.items.find((i) => i.uid === uid)
         const f = onFoam(e.clientX, e.clientY)
@@ -403,7 +450,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
         }
         setRay(e.clientX, e.clientY)
         const overRing = groups.ring.visible && band.visible && ray.intersectObjects([band, grip], false).length > 0
-        const overItem = !overRing && ray.intersectObjects(groups.items.children, true).length > 0
+        const overItem = !overRing && itemUnderRay() != null
         renderer.domElement.style.cursor = overRing ? 'ew-resize' : overItem ? 'grab' : ''
         return
       }
@@ -523,7 +570,26 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       lidPivot.rotation.x = (lidAngle.now * Math.PI) / 180
       knobAngle.now += (knobAngle.target - knobAngle.now) * (1 - Math.exp(-dt * 9))
       turn.rotation.y = (knobAngle.now * Math.PI) / 180
-      // From straight above the lid is only in the way.
+      // The X-ray fades trail the flags like the lid swing does. The whole foam ghosts — caps
+      // too, not just the walls: a solid cap would still write depth and eat the walls and
+      // pockets behind it, which is exactly the mess X-ray is here to clear. Same for the base
+      // shell. In 2D (straight above) X-ray stands down. The lid assembly — shell, T-Loc latch,
+      // egg-crate pad — joins only once the lid is shut over the insert.
+      const x3d = v.xray && v.view === '3d'
+      xrayShell = fade(xrayShell, x3d ? 1 : 0, dt)
+      xrayLid = fade(xrayLid, x3d && !v.lidOpen ? 1 : 0, dt)
+      xrayFade(mats.sys, xrayShell)
+      xrayFade(mats.foam, xrayShell)
+      xrayFade(mats.foamWall, xrayShell)
+      xrayFade(mats.lidSys, xrayLid)
+      xrayFade(mats.latch, xrayLid)
+      xrayFade(mats.lidFoam, xrayLid)
+      // The FORMA lettering rides with the lid: kept solid it would show through the ghosted
+      // shell a second time, mirrored, from underneath.
+      xrayFade(mats.letters, xrayLid)
+      // Gear hidden, the cutouts stand alone in the foam. From straight above the lid is only in
+      // the way.
+      groups.items.visible = v.showItems
       lidPivot.visible = v.view === '3d'
       ;(v.view === '2d' ? pan : orbit).update()
       // Keep the ring a constant thickness on screen.
@@ -555,7 +621,9 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       const tb = toolbarRef.current
       const node = v.selected ? s3.current?.nodes.get(v.selected) : undefined
       if (tb) {
-        if (node && groups.ring.visible) {
+        // Anchored to where the ring sits (its position and radius stay fresh for any selection),
+        // whether or not the ring itself is showing.
+        if (node) {
           // Just in front of the ring (below it on screen).
           tmp.set(groups.ring.position.x, groups.ring.position.y - (groups.ring.userData.radius as number), v.ev.foamTop)
           tmp.project(cam)
@@ -635,7 +703,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           // on the hinge pivot — except `latchTurn`, the whole T-Loc lock block, which turns on
           // the latch's own axis.
           const sysPart = name.startsWith('base') || name === 'hingePin'
-          const m = new THREE.Mesh(geometry, sysPart || name === 'lid' ? v.mats.sys : v.mats.latch)
+          const m = new THREE.Mesh(geometry, name === 'lid' ? v.mats.lidSys : sysPart ? v.mats.sys : v.mats.latch)
           m.castShadow = sysPart || name === 'lid'
           m.receiveShadow = true
           if (name === 'latchTurn') v.turn.add(m)
@@ -644,11 +712,14 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           // The egg-crate foam pad glued under the lid's ceiling swings with it.
           if (name === 'lid') v.lid.add(lidFoamMesh(geometry, v.mats.lidFoam))
         }
-        // The lid turns about its hinge: pivot on the axis, the lid's parts offset back into place.
+        // The lid turns about its hinge. The pivot sits on the hinge axis raised by the size's
+        // stretch; the lid's parts offset back by the modelled hinge only, so the lid hangs
+        // raised and its own hinge lands on the pivot axis — it revolves in place at every size.
+        // The lettering and the T-Loc block are children of the lid: they ride the raise with it.
         v.lidPivot.position.set(0, LID_HINGE.y, LID_HINGE.z + dz)
-        v.lid.position.set(0, -LID_HINGE.y, -(LID_HINGE.z + dz))
-        v.letters.position.z = dz
-        v.turn.position.set(KNOB_AXIS.x, 0, KNOB_AXIS.z + dz)
+        v.lid.position.set(0, -LID_HINGE.y, -LID_HINGE.z)
+        v.letters.position.z = 0
+        v.turn.position.set(KNOB_AXIS.x, 0, KNOB_AXIS.z)
       })
       .catch(() => {
         // Without the model the insert still works; the walls just aren't drawn.
@@ -810,9 +881,9 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
       band.visible = grip.visible = dot.visible = !(axes && 'round' in axes)
       v.handles.visible = !!axes
       v.handles.userData = { w: se.posed.w, d: se.posed.d }
-      v.ring.visible = true
+      v.ring.visible = ringOn && showItems
     } else v.ring.visible = false
-  }, [layout, ev, selected])
+  }, [layout, ev, selected, ringOn, showItems])
 
   useImperativeHandle(
     ref,
@@ -844,7 +915,7 @@ export default function SystainerViewer({ layout, ev, selected, view, lidOpen, o
           v.ghost.add(obj)
         }
         const p = posed(def, 0, itemParams(def))
-        const sink = def.notch ? 10 : Math.min(live.current.ev.maxDepth, Math.max(1, def.poses[0].sink ? def.poses[0].sink(p.height) : p.height))
+        const sink = def.notch ? 10 : Math.min(def.poses[0].throughCut ? live.current.ev.thickness : live.current.ev.maxDepth, Math.max(1, def.poses[0].sink ? def.poses[0].sink(p.height) : p.height))
         v.ghost.children[0].position.set(g.x, g.y, live.current.ev.foamTop - sink + 0.5)
       },
     }),

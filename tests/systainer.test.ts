@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getItem, ITEMS, itemParams } from '../src/features/systainer/catalog'
-import { defaultLayout, evaluate, FIT_CLEARANCE, insertShapes, insertThickness, posed, SHAPER_FOAM, type Layout, type Placed } from '../src/features/systainer/layout'
+import { defaultLayout, evaluate, FIT_CLEARANCE, insertShapes, insertThickness, posed, SHAPER_FOAM, silhouette, type Layout, type Placed } from '../src/features/systainer/layout'
 import { baseDepth, insertOutline, lidZ, SYS_FLOOR } from '../src/features/systainer/systainerModel'
 import { boolean, signedArea, unionNonZero } from '../src/geometry/offset'
 
@@ -61,6 +61,26 @@ describe('systainer insert', () => {
     expect(area(boolean('xor', a, b))).toBeGreaterThan(area(a) * 0.2)
   })
 
+  it('cuts the support arm pockets to fit its model, lying and standing', () => {
+    const def = getItem('ws-support-arm')!
+    def.poses.forEach((pose, i) => {
+      const ev = evaluate(layout([place('ws-support-arm', 0, 0, { pose: i })], { fit: 'standard' }))
+      const e = ev.items[0]
+      const cut = unionNonZero(e.pockets.flatMap((pk) => pk.contours))
+      // Everything of the model below the foam surface is inside a pocket ...
+      const model = silhouette(e.posed.tris, e.sink)
+      expect(area(boolean('difference', model, cut)), pose.id).toBeLessThan(0.5)
+      // ... with only the fit room (0.2 mm a side) and the closed notches to spare. Holes in the
+      // model seen from above (standing, the T-slot channel under the bar) are cut solid.
+      const outer = e.pockets.at(-1)!.contours
+      const below = silhouette(e.posed.tris, i === 2 ? e.sink : Infinity).filter((c) => signedArea(c.pts) > 0)
+      expect(area(boolean('difference', outer, below)) / area(below), pose.id).toBeLessThan(0.05)
+    })
+    // Standing, the post pocket is as wide as the post's 24.2 mm base plus the room.
+    const st = evaluate(layout([place('ws-support-arm', 0, 0, { pose: 2 })], { fit: 'standard' })).items[0]
+    expect(bbox(st.pockets[0].contours).h).toBeCloseTo(24.64, 1)
+  })
+
   it('steps the pocket where an item rests on two levels, at the hub inserts’ depths', () => {
     // Collet, nose down: Ø12 hole 19 mm deep inside a Ø21 ring 8 mm deep.
     const c = evaluate(layout([place('collet', 0, 0)], { fit: 'standard' })).items[0]
@@ -79,14 +99,16 @@ describe('systainer insert', () => {
       const p = posed(def, pose, itemParams(def))
       return [+p.w.toFixed(0), +p.d.toFixed(0), +p.height.toFixed(1)]
     }
-    expect(size('ws-support-arm')).toEqual([187, 76, 12.5])
+    // The owner's Blender model: tapered, 24.2 mm thick at the post end.
+    expect(size('ws-support-arm')).toEqual([185, 76, 24.2])
     expect(size('ws-angle-fence')).toEqual([160, 49, 9.5])
     expect(size('collet-wrench')).toEqual([169, 43, 6.5])
     expect(size('shapertape')).toEqual([79, 79, 19])
-    expect(size('usb-gen1')).toEqual([42, 12, 4.5])
-    // Standing, the support arm requests 50 mm; stock foam preserves the minimum floor instead.
+    expect(size('usb-gen1')).toEqual([43, 12, 4.5])
+    // Standing, the support arm's post pocket requests 50 mm; stock foam preserves the minimum floor
+    // instead, so the deepest pocket (the post's, below the bar's sink) stops at the floor.
     const ev = evaluate(layout([place('ws-support-arm', 0, 0, { pose: 2 })]))
-    expect(ev.items[0].sink).toBeCloseTo(ev.maxDepth, 6)
+    expect(Math.max(...ev.items[0].pockets.map((p) => p.depth))).toBeCloseTo(ev.maxDepth, 6)
   })
 
   it('uses the requested stepped default depths from the foam surface', () => {
@@ -102,8 +124,9 @@ describe('systainer insert', () => {
     const items = [place('ws-support-arm', 0, 0), place('custom-box', 50, 0, { params: { w: 20, d: 20, h: 10 }, depth: 6 })]
     const thin = evaluate(layout(items, { thickness: 40 }))
     const thick = evaluate(layout(items, { thickness: 60 }))
-    expect(thin.items.map((e) => e.sink)).toEqual([13, 6])
-    expect(thick.items.map((e) => e.sink)).toEqual([13, 6])
+    // The arm lies flush: its pocket is its full 24.2 mm thickness.
+    expect(thin.items.map((e) => +e.sink.toFixed(1))).toEqual([24.2, 6])
+    expect(thick.items.map((e) => +e.sink.toFixed(1))).toEqual([24.2, 6])
     expect(thick.foamTop - thin.foamTop).toBeCloseTo(20, 6)
   })
 

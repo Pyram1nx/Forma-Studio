@@ -29,11 +29,30 @@
 .sys-badge-warn {
   color: var(--error-text);
 }
-.sys-lid {
+.sys-lid,
+.sys-gear,
+.sys-xray {
   pointer-events: auto;
   height: 32px;
   padding: 0 12px;
   font-size: 13px;
+}
+/* The gear toggle sits beside X-ray in the overlay's top right corner: its auto margin pulls
+   them both to the edge, and keeps it there in 2D, where X-ray stands down. */
+.sys-gear,
+.sys-xray {
+  gap: 6px;
+}
+.sys-gear {
+  margin-left: auto;
+}
+.sys-gear[aria-pressed='true'],
+.sys-gear[aria-pressed='true']:hover,
+.sys-xray[aria-pressed='true'],
+.sys-xray[aria-pressed='true']:hover {
+  background: var(--blue-050);
+  border-color: var(--blue-050);
+  color: var(--on-accent);
 }
 .sys-undo {
   display: flex;
@@ -68,6 +87,12 @@
 .sys-tb-btn:disabled {
   color: var(--gray-300);
   cursor: default;
+}
+/* Toggled-on toolbar buttons: Rotate (the ring) and Depth (the slider). */
+.sys-tb-btn[aria-pressed='true'],
+.sys-tb-btn[aria-pressed='true']:hover {
+  background: var(--blue-050);
+  color: var(--on-accent);
 }
 
 /* Floating toolbar under the selected item; the viewer moves it every frame. */

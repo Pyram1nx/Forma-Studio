@@ -1,9 +1,13 @@
-/* The wipe shown when a field receives a caliper reading (src/ui/caliperInput.ts).
-   Same green as Plan mode's selection controls: #1be09e border over a 30% fill. A skewed green
-   panel slides across the whole field — animated as a transform, so it stays on the compositor
-   and holds 60 fps even while the canvas is busy — its diagonal leading edge revealing the fill
-   like a clipping mask. The ring and the glyph fade in as the edge reaches them; the glyph sits
-   where the unit text was, and the text comes back as the overlay fades. */
+/* The reveal shown when a field receives a caliper reading (src/ui/caliperInput.ts).
+   Same green as Plan mode's selection controls (#1be09e). The old reading never blinks out: it
+   stays on a cover — a lifeless copy of the field — while a bright green line, a caliper jaw,
+   sweeps left to right, dragging the cover's edge with it, so the new reading is written over the
+   old one behind the line through a soft feathered edge, with a green glow trailing the line. The
+   sweep is one transform (driven by the Web Animations API with px from the field's size), and the
+   copy inside the cover counter-moves so it stays put; both stay on the compositor and hold 60 fps
+   even while the canvas is busy. The caliper glyph pops in where the unit text was the moment the
+   line crosses it; ring, tint and glyph hold, then fade out together over the last 450 ms of the
+   3 s, and the unit text fades back in where it always sits. */
 .caliper-host {
   position: relative;
 }
@@ -13,79 +17,157 @@
   border-radius: inherit;
   overflow: hidden;
   pointer-events: none;
-  animation: caliper-wipe-out 3s linear forwards;
+  /* The overlay is the field's first child (its unit text is placed by :last-child rules), so it
+     needs a z-index to paint over the input and the unit text. */
+  z-index: 2;
+  isolation: isolate;
+  animation: caliper-out 3s linear forwards;
 }
-/* The green frame: fades in while the sweep crosses, out with the overlay at the end. */
+/* Ring: snaps on with a soft green bloom that tightens to a crisp 2px outline. */
 .caliper-wipe::before {
   content: '';
   position: absolute;
   inset: 0;
+  z-index: 3;
   border-radius: inherit;
-  border: 1px solid #1be09e;
-  box-shadow: 0 0 0 1px #1be09e;
-  opacity: 0;
-  animation: caliper-wipe-ring 3s linear forwards;
+  box-shadow:
+    inset 0 0 0 1.5px #1be09e,
+    inset 0 0 14px rgba(27, 224, 158, 0.55);
+  animation: caliper-ring 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
-/* The sliding panel. Oversized so no edge of it shows inside the field mid-flight; the static
-   clip-path gives it the diagonal leading edge that rides along with the transform. */
+/* Tint over the revealed text, under the cover so it only shows behind the line. */
+.caliper-wipe::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(27, 224, 158, 0.13);
+}
+/* The moving assembly. Its left edge is the line; it starts just off the field's left edge
+   (translated in JS) and ends past its right edge. */
 .caliper-wipe__sweep {
   position: absolute;
-  top: -30%;
-  bottom: -30%;
-  left: -70%;
-  width: 220%;
-  background-color: rgba(27, 224, 158, 0.3);
-  clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
-  transform: translateX(-100%);
-  animation: caliper-wipe-sweep 3s linear forwards;
+  inset: 0;
+  z-index: 1;
+  transform: translateX(calc(-1 * var(--caliper-feather, 28px)));
   will-change: transform;
 }
-/* 750 ms (25% of the 3 s the overlay is up), eased in and out. */
-@keyframes caliper-wipe-sweep {
-  0% {
-    transform: translateX(-100%);
-    animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
-  }
-  25% {
-    transform: translateX(0);
-  }
+/* Holds the old reading ahead of the line; fades out over the feather so the new text emerges
+   softly through it. */
+.caliper-wipe__cover {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(100% + var(--caliper-feather, 28px));
+  overflow: hidden;
+  background: var(--caliper-bg);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--caliper-feather, 28px));
+  mask-image: linear-gradient(90deg, transparent, #000 var(--caliper-feather, 28px));
 }
-@keyframes caliper-wipe-ring {
-  0%,
-  8% {
-    opacity: 0;
-  }
-  25% {
-    opacity: 1;
-  }
+/* The copy of the field with the old reading, held still against the cover's motion in JS. */
+.caliper-wipe__ghost {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
 }
-/* The glyph appears as the edge reaches the unit-text spot near the right. */
+/* Glow dragged behind the line, brightest at the line. */
+.caliper-wipe__trail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: 72px;
+  background: linear-gradient(90deg, rgba(27, 224, 158, 0), rgba(27, 224, 158, 0.42));
+}
+/* The jaw: a crisp bright line with a halo. */
+.caliper-wipe__edge {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: -1px;
+  width: 2px;
+  background: #b8ffe6;
+  box-shadow:
+    0 0 4px 1px #1be09e,
+    0 0 12px 2px rgba(27, 224, 158, 0.7);
+}
+/* The glyph takes the unit text's spot; its pop delay is set in JS to when the line reaches it. */
 .caliper-wipe svg {
   position: absolute;
   right: 9px;
   top: 50%;
+  z-index: 2;
   width: 16px;
   height: 16px;
-  transform: translateY(-50%);
+  color: #1be09e;
+  transform: translate(-50%, -50%) scale(0.3);
   opacity: 0;
-  animation: caliper-wipe-icon 3s linear forwards;
+  animation: caliper-glyph 420ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  filter: drop-shadow(0 0 3px rgba(27, 224, 158, 0.6));
 }
-@keyframes caliper-wipe-icon {
+/* Without a unit text to pin to, the glyph keeps its right-edge spot. */
+.caliper-wipe svg:not([style*='left']) {
+  transform: translate(0, -50%) scale(0.3);
+  animation-name: caliper-glyph-right;
+}
+/* The unit text: gone while the glyph stands in for it, back as the overlay fades. */
+.caliper-adorn-out {
+  animation: caliper-adorn 3s linear forwards;
+}
+
+@keyframes caliper-ring {
+  0% {
+    box-shadow:
+      inset 0 0 0 1.5px #1be09e,
+      inset 0 0 18px rgba(27, 224, 158, 0.75),
+      0 0 0 4px rgba(27, 224, 158, 0.35);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 0 1.5px #1be09e,
+      inset 0 0 0 rgba(27, 224, 158, 0),
+      0 0 0 0 rgba(27, 224, 158, 0);
+  }
+}
+@keyframes caliper-glyph {
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes caliper-glyph-right {
+  to {
+    opacity: 1;
+    transform: translate(0, -50%) scale(1);
+  }
+}
+@keyframes caliper-adorn {
   0%,
-  15% {
+  85% {
     opacity: 0;
   }
-  22% {
+  100% {
     opacity: 1;
   }
 }
-/* The whole overlay — fill, ring, glyph — fades out over the last 300 ms. */
-@keyframes caliper-wipe-out {
+/* The whole overlay — ring, tint, glyph — fades out over the last 450 ms. */
+@keyframes caliper-out {
   0%,
-  90% {
+  85% {
     opacity: 1;
   }
   100% {
     opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caliper-wipe::before {
+    animation: none;
+  }
+  .caliper-wipe svg {
+    animation-duration: 1ms;
+    animation-delay: 0ms !important;
   }
 }

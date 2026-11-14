@@ -4,6 +4,22 @@ Each `## <version>` section becomes the release notes shown in the app's update 
 
 ## Unreleased
 
+- **Joinery** now makes three joints, each previewed in 3D with labelled boards: dovetails with a
+  dovetail bit, **fine-pin dovetails** cut with straight bits only (pins as fine as your smallest bit,
+  any slope), and **Knapp (pin-and-cove) joints** for drawers, with coves or a straight end, round or
+  slot dowels, and an option to hide the joint behind a skin. Every number has an automatic value you
+  can override; the fit (glue gap, proud, round or chiselled corners) is tucked under Fine-tune, and a
+  cut card lists which board, bit and depth to cut in order. Click a layout to enlarge it.
+
+- **On phones and tablets**, taps in ShapeShifter (and the other full-screen modes) now register even
+  when the finger drifts a little, so fragments pick up in the same blue as on the desktop; a tap no
+  longer sticks the grey hover fill on a fragment.
+
+- **3D Carve, Joinery and Systainer Insert** now have pages of their own at `/3d-carve`,
+  `/joinery` and `/systainer`, so they can be bookmarked and linked to. The studio's tool rail and
+  menu go there; **Add to Design** brings the shapes back into the design you had open (still one
+  undo step), and closing a tool returns to the studio.
+
 - **Saving** is now local-first and keeps everything: designs are stored in the browser's own database
   (no more 20-design limit) and survive closing the browser, along with presets, your bit kit and the
   Systainer layout. Designs made without an account and each account's designs are kept apart on the

@@ -1,7 +1,9 @@
 import { newDoc, selectedShapes, useStore } from '../state/store'
-import { downloadBlob, loadRecent, nextUntitledName, openDocFromComputer, saveDoc, supportsFileSystemAccess } from '../io/projectFile'
+import { autosave, downloadBlob, loadRecent, nextUntitledName, openDocFromComputer, saveDoc, supportsFileSystemAccess } from '../io/projectFile'
 import { exportSVG } from '../io/svgExport'
 import { uid } from '../model/ids'
+import { persistPendingNow } from '../storage/designStore'
+import { goToTool, type ToolId } from '../features/toolRoutes'
 
 const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError'
 
@@ -81,3 +83,15 @@ export function duplicateDesign() {
 }
 
 export const saveLabel = () => (supportsFileSystemAccess() ? 'Save to Computer' : 'Download Design File')
+
+/**
+ * Leave the studio for a tool page (3D Carve, Joinery, Systainer Insert). The design is
+ * saved first; the tool's Import brings its shapes back into it.
+ */
+export function openTool(tool: ToolId) {
+  const st = useStore.getState()
+  goToTool(tool, { docId: st.doc.id, dirty: st.dirty }, () => {
+    void autosave(st.doc)
+    persistPendingNow()
+  })
+}

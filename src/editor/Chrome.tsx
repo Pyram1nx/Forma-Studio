@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { confirmDiscard } from './fileActions'
+import { confirmDiscard, openTool } from './fileActions'
 import { groupAction, selectionHasReference, useStore } from '../state/store'
 import * as Ic from '../ui/icons'
 import { MM_PER_IN, SNAP_KINDS, type DocSettings, type Mode, type SnapKind, type Units } from '../model/types'
@@ -153,8 +153,8 @@ export function LeftRail() {
         { label: 'Add Text', icon: <Ic.IconText />, onClick: () => (st().setEditingText(null), st().openDialog('text')) },
         { label: 'File Import', icon: <Ic.IconImportFile />, onClick: importFile },
         { label: 'Trace', icon: <Ic.IconTrace />, onClick: () => st().openDialog('trace') },
-        { label: 'Dovetails', icon: <Ic.IconDovetail />, onClick: () => st().openDialog('dovetail') },
-        { label: 'Systainer Insert', icon: <Ic.IconSystainer />, onClick: () => st().openDialog('systainer') },
+        { label: 'Joinery', icon: <Ic.IconDovetail />, onClick: () => openTool('joinery') },
+        { label: 'Systainer Insert', icon: <Ic.IconSystainer />, onClick: () => openTool('systainer') },
       ]}
     />
     {/* While something is selected the rail ladders off to the left, one tool at a time (see .ladder). */}
@@ -178,16 +178,16 @@ export function LeftRail() {
         <Ic.IconImportFile />
       </HoverButton>
       <div className="canvas-action-menu__divider" style={rung(6)} role="separator" />
-      <HoverButton style={rung(7)} label="3D Carve" className="rail-btn rail-btn--new" onClick={() => st().openDialog('carve3d')}>
+      <HoverButton style={rung(7)} label="3D Carve" className="rail-btn rail-btn--new" onClick={() => openTool('carve3d')}>
         <Ic.IconCube />
       </HoverButton>
       <HoverButton style={rung(8)} label="Trace" className="rail-btn rail-btn--new" onClick={() => st().openDialog('trace')}>
         <Ic.IconTrace />
       </HoverButton>
-      <HoverButton style={rung(9)} label="Dovetails" className="rail-btn rail-btn--new" onClick={() => st().openDialog('dovetail')}>
+      <HoverButton style={rung(9)} label="Joinery" className="rail-btn rail-btn--new" onClick={() => openTool('joinery')}>
         <Ic.IconDovetail />
       </HoverButton>
-      <HoverButton style={rung(10)} label="Systainer Insert" className="rail-btn rail-btn--new" onClick={() => st().openDialog('systainer')}>
+      <HoverButton style={rung(10)} label="Systainer Insert" className="rail-btn rail-btn--new" onClick={() => openTool('systainer')}>
         <Ic.IconSystainer />
       </HoverButton>
     </nav>
@@ -378,7 +378,9 @@ function GridSizeInput() {
   const commit = () => {
     editing.current = false
     const v = parseFloat(text.replace(',', '.'))
-    if (Number.isFinite(v) && v > 0) useStore.getState().setGridSize(units === 'in' ? v * MM_PER_IN : v)
+    const mm = units === 'in' ? v * MM_PER_IN : v
+    // Same size back (e.g. the number pad's Cancel) must not add an undo step.
+    if (Number.isFinite(v) && v > 0 && mm !== size) useStore.getState().setGridSize(mm)
     else setText(fmt(size))
   }
   return (
@@ -386,6 +388,7 @@ function GridSizeInput() {
       <input
         aria-label="Grid size"
         inputMode="decimal"
+        data-pad-unit={units}
         value={text}
         onFocus={(e) => e.target.select()}
         onChange={(e) => {

@@ -31,7 +31,9 @@ export default function ModeCanvas({
 }) {
   const [view, setView] = useState<View>({ zoom: 1, panX: 0, panY: 0 })
   const areaRef = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null)
+  // `slop` is the drift a press may have and still count as a tap: fingers wobble far more than a
+  // mouse, so touch gets the platform-standard ~10px while pointer and pen stay precise at 4px.
+  const drag = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean; slop: number } | null>(null)
 
   const fit = (b: BBox) => {
     const r = areaRef.current?.getBoundingClientRect()
@@ -66,14 +68,14 @@ export default function ModeCanvas({
       ref={areaRef}
       className="modeview__canvas"
       onPointerDown={(e) => {
-        drag.current = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY, moved: false }
+        drag.current = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY, moved: false, slop: e.pointerType === 'touch' ? 10 : 4 }
       }}
       onPointerMove={(e) => {
         const d = drag.current
         if (!d || !(e.buttons & 1)) return
         const dx = e.clientX - d.x
         const dy = e.clientY - d.y
-        if (!d.moved && Math.hypot(dx, dy) < 4) return
+        if (!d.moved && Math.hypot(dx, dy) < d.slop) return
         d.moved = true
         setView((v) => ({ ...v, panX: d.panX + dx, panY: d.panY + dy }))
       }}

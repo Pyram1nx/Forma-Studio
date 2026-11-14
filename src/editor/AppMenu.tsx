@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { confirmDiscard } from './fileActions'
+import { confirmDiscard, openTool } from './fileActions'
 import { useStore } from '../state/store'
 import { THEME_LABELS, THEME_PREFS, useTheme } from '../state/theme'
 import * as Ic from '../ui/icons'
@@ -200,10 +200,10 @@ export default function AppMenu() {
         <div className="app-menu__dashboard" hidden={recentOpen}>
           <div className="app-menu__goto">Go To</div>
           <Item icon={<Ic.IconFolderOpen />} label="Designs" onClick={run(() => void openHome())} />
-          <Item icon={<Ic.IconCube />} label="3D Carve" onClick={run(() => st().openDialog('carve3d'))} right={<span className="ss-badge ss-badge--new">new</span>} />
+          <Item icon={<Ic.IconCube />} label="3D Carve" onClick={run(() => openTool('carve3d'))} right={<span className="ss-badge ss-badge--new">new</span>} />
           <Item icon={<Ic.IconTrace />} label="Trace" onClick={run(() => st().openDialog('trace'))} right={<span className="ss-badge ss-badge--new">new</span>} />
-          <Item icon={<Ic.IconDovetail />} label="Dovetails" onClick={run(() => st().openDialog('dovetail'))} right={<span className="ss-badge ss-badge--new">new</span>} />
-          <Item icon={<Ic.IconSystainer />} label="Systainer Insert" onClick={run(() => st().openDialog('systainer'))} right={<span className="ss-badge ss-badge--new">new</span>} />
+          <Item icon={<Ic.IconDovetail />} label="Joinery" onClick={run(() => openTool('joinery'))} right={<span className="ss-badge ss-badge--new">new</span>} />
+          <Item icon={<Ic.IconSystainer />} label="Systainer Insert" onClick={run(() => openTool('systainer'))} right={<span className="ss-badge ss-badge--new">new</span>} />
           <Item icon={<Ic.IconBitLibrary />} label="Bit Gallery" onClick={run(() => st().openDialog('bits'))} />
           <Item
             icon={<Ic.IconMoon />}

@@ -1431,9 +1431,9 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
 
   const sizeInputs = sizeDraft && (
     <div className="trace-row">
-      <input className="ss-select" type="number" min={0} step="any" value={sizeDraft.w} onChange={(e) => onSizeInput('w', e.target.value)} aria-label="Width" />
+      <input className="ss-select" type="number" min={0} step="any" data-pad-unit={units} value={sizeDraft.w} onChange={(e) => onSizeInput('w', e.target.value)} aria-label="Width" />
       <span className="modeview__label">×</span>
-      <input className="ss-select" type="number" min={0} step="any" value={sizeDraft.h} onChange={(e) => onSizeInput('h', e.target.value)} aria-label="Height" />
+      <input className="ss-select" type="number" min={0} step="any" data-pad-unit={units} value={sizeDraft.h} onChange={(e) => onSizeInput('h', e.target.value)} aria-label="Height" />
       <span className="modeview__label">{units}</span>
     </div>
   )
@@ -1560,6 +1560,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
         type="number"
         min={0}
         step="any"
+        data-pad-unit={units}
         value={customW}
         onChange={(e) => setCustomW(Number(e.target.value) || 0)}
         aria-label="Custom width"
@@ -1569,6 +1570,7 @@ export default function TraceMode({ units, onClose, onImport }: TraceModeProps):
         type="number"
         min={0}
         step="any"
+        data-pad-unit={units}
         value={customH}
         onChange={(e) => setCustomH(Number(e.target.value) || 0)}
         aria-label="Custom height"

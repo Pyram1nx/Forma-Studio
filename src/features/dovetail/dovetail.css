@@ -1,4 +1,4 @@
-/* Dovetails dialog. Layout and controls come from components.css and carve3d.css. */
+/* Joinery dialog. Layout and controls come from components.css and carve3d.css. */
 
 .dt-bitrow {
   display: flex;
@@ -134,4 +134,281 @@ svg.dt-photo__img {
   .dt-card__head .ss-muted {
     display: none;
   }
+}
+
+/* ---- Joint picker, steps and cut card ---- */
+
+.jt-side {
+  gap: 18px;
+}
+.jt-kinds {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.jt-kind {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 6px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  background: var(--white);
+  color: var(--gray-800);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+.jt-kind:hover {
+  border-color: var(--gray-300);
+  background: var(--gray-50);
+}
+.jt-kind[aria-checked='true'] {
+  border-color: var(--blue-050);
+  box-shadow: 0 0 0 1px var(--blue-050) inset;
+  background: rgba(var(--blue-050-rgb), 0.06);
+}
+.jt-kind__glyph {
+  width: 48px;
+  height: 32px;
+}
+.jt-g-tail {
+  fill: #e7c99c;
+  stroke: var(--gray-500);
+  stroke-width: 0.6;
+}
+.jt-g-pin {
+  fill: #b98550;
+  stroke: var(--gray-600);
+  stroke-width: 0.6;
+}
+.jt-kind[aria-checked='true'] .jt-kind__name {
+  color: var(--blue-050);
+}
+.jt-blurb {
+  margin: -8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--gray-600);
+}
+
+.jt-step {
+  gap: 10px;
+}
+.jt-step__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jt-step__num {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--gray-800);
+  color: var(--white);
+  font: 600 11px var(--font-ui);
+}
+.jt-step__title {
+  font: 600 13px var(--font-ui);
+  color: var(--gray-900);
+}
+
+.jt-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.jt-auto {
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  background: var(--gray-100);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+.jt-reset {
+  border: none;
+  background: none;
+  padding: 0;
+  font: 500 11px var(--font-ui);
+  color: var(--blue-050);
+  cursor: pointer;
+}
+.jt-reset:hover {
+  text-decoration: underline;
+}
+.jt-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.jt-row > .ss-input,
+.jt-row > label {
+  flex: 1;
+  min-width: 0;
+}
+.jt-seg {
+  flex: none;
+}
+
+.jt-more {
+  border-top: 1px solid var(--gray-200);
+  padding-top: 8px;
+}
+.jt-more > summary {
+  cursor: pointer;
+  list-style: none;
+  font: 500 12px var(--font-ui);
+  color: var(--blue-050);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.jt-more > summary::-webkit-details-marker {
+  display: none;
+}
+.jt-more > summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.jt-more[open] > summary::before {
+  transform: rotate(45deg);
+}
+.jt-more__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.jt-card {
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+}
+.jt-cutsteps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: cut;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.jt-cutstep {
+  counter-increment: cut;
+  position: relative;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.jt-cutstep::before {
+  content: counter(cut);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font: 600 10px var(--font-ui);
+  color: var(--white);
+  background: var(--gray-500);
+}
+.jt-cutstep--tail::before {
+  background: #c79a5e;
+}
+.jt-cutstep--pin::before {
+  background: #8a5a2b;
+}
+.jt-cutstep__title {
+  font-weight: 600;
+  color: var(--gray-900);
+}
+.jt-cutstep__bit {
+  color: var(--blue-050);
+  font-size: 11px;
+}
+.jt-cutstep__text {
+  color: var(--gray-600);
+}
+
+.jt-summary {
+  background: color-mix(in srgb, var(--white) 75%, transparent);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+/* Board labels, positioned over the 3D view each frame. */
+.jv-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.2px;
+  color: var(--gray-900);
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 999px;
+  padding: 2px 9px;
+  box-shadow: 0 1px 3px rgba(10, 10, 11, 0.12);
+  transition: opacity 0.15s ease;
+}
+.jv-label::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: -0.5px;
+}
+.jv-label--tail::before {
+  background: #e3c08f;
+}
+.jv-label--pin::before {
+  background: #c89a62;
+}
+
+/* Layout cards are buttons: click to enlarge one over the 3D view. */
+button.dt-card {
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
+  color: inherit;
+}
+.dt-cards--big {
+  top: 64px;
+}
+.dt-card--big {
+  flex: 1 1 auto;
+  max-width: 900px;
+  cursor: zoom-out;
+}
+.dt-card--big .dt-card__svg {
+  height: 100%;
+  min-height: 0;
+  flex: 1;
 }

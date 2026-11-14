@@ -39,9 +39,28 @@
 .home__nav {
   display: flex;
   flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+.home__nav-group {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
 }
+/* Small caps heading over each group (Studio, Library, You). */
+.home__nav-label {
+  padding: 0 10px 6px;
+  color: var(--gray-500);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .home__nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -55,15 +74,60 @@
   font-size: 14px;
   text-align: left;
   cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.home__nav-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: -4px;
+  border-radius: var(--radius-sm);
+  color: var(--gray-500);
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.home__nav-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The phone tab bar's shorter label; the full label shows everywhere else. */
+.home__nav-short {
+  display: none;
 }
 .home__nav-item:hover {
   background: var(--gray-200);
+  color: var(--gray-900);
+}
+.home__nav-item:hover .home__nav-icon {
+  color: var(--gray-700);
+}
+.home__nav-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 .home__nav-item[aria-current='page'] {
   background: var(--white);
   color: var(--gray-900);
   font-weight: 500;
   box-shadow: 0 1px 2px rgba(10, 10, 11, 0.08);
+}
+.home__nav-item[aria-current='page'] .home__nav-icon {
+  background: var(--blue-light);
+  color: var(--blue-070);
+}
+/* Accent bar on the selected row. */
+.home__nav-item[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--shaper-blue);
 }
 .home__account-chip {
   margin-top: auto;
@@ -329,10 +393,42 @@
     flex-direction: row;
     gap: 4px;
     min-width: 0;
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+  .home__nav::-webkit-scrollbar {
+    display: none;
+  }
+  /* Groups dissolve into one row of tabs. */
+  .home__nav-group {
+    display: contents;
+  }
+  .home__nav-label {
+    display: none;
+  }
+  .home__nav-item:has(.home__nav-short) .home__nav-text {
+    display: none;
+  }
+  .home__nav-short {
+    display: block;
+  }
+  .home__nav-icon {
+    width: auto;
+    height: auto;
+    margin: 0;
+    background: transparent !important;
+  }
+  .home__nav-item[aria-current='page']::before {
+    display: none;
   }
   .home__nav-item {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 0 64px;
+    min-width: 64px;
+    scroll-snap-align: start;
     flex-direction: column;
     justify-content: center;
     gap: 3px;
@@ -352,6 +448,9 @@
   .home__nav-item[aria-current='page'] {
     color: var(--gray-900);
     background: var(--white);
+  }
+  .home__nav-item[aria-current='page'] .home__nav-icon {
+    color: var(--blue-070);
   }
   .home__nav-item:focus-visible {
     outline: 2px solid var(--focus-ring);

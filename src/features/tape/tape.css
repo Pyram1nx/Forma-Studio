@@ -1,0 +1,167 @@
+/* Tape generator page (src/features/tape). Controls come from components.css; the header from home.css.
+   The UI follows the theme tokens; the sheet itself is always black dominoes on white paper. */
+
+.tape-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+/* ---------- Settings ---------- */
+.tape-settings {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px 16px;
+  color: var(--panel-text);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.tape-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tape-group .ss-section-title {
+  margin: 0;
+}
+.tape-field {
+  min-width: 0;
+}
+.tape-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.tape-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.tape-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tape-seg {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+}
+.tape-seg button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 6px;
+}
+.tape-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gray-500);
+  padding-left: 12px;
+}
+.tape-hint--block {
+  margin: 0;
+  padding-left: 0;
+}
+.tape-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--gray-700);
+  background: var(--blue-lighter);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.tape-note strong {
+  color: var(--gray-900);
+  font-weight: 600;
+}
+
+/* ---------- Preview ---------- */
+.tape-preview {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tape-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.tape-actions .ss-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.tape-stage {
+  background: var(--gray-100);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+}
+.tape-sheet {
+  width: 100%;
+  background: #fff;
+  box-shadow: var(--shadow-pop);
+  line-height: 0;
+}
+.tape-sheet svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.tape-stats {
+  margin: 0;
+  font-size: 13px;
+  color: var(--gray-600);
+  text-align: center;
+}
+.tape-warn {
+  margin: 0;
+  font-size: 13px;
+  color: var(--warn-text);
+  text-align: center;
+}
+
+/* The hidden frame printSheet() prints from. Not display:none, which some browsers refuse to print. */
+.tape-print-frame {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- Phone ---------- */
+@media (max-width: 640px) {
+  .tape-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  /* Preview first, so the sheet is visible without scrolling past every setting. */
+  .tape-preview {
+    order: -1;
+  }
+  .tape-stage {
+    padding: 12px;
+  }
+  .tape-actions {
+    justify-content: stretch;
+  }
+  .tape-actions .ss-btn {
+    flex: 1 1 0;
+    min-height: 40px;
+  }
+  .tape-settings .ss-input input,
+  .tape-settings .ss-input select {
+    /* 16px stops iOS zooming into a focused field. */
+    font-size: 16px;
+  }
+}

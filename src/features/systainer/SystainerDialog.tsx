@@ -8,7 +8,7 @@ import { exportSVG } from '../../io/svgExport'
 import { offsetContours } from '../../geometry/offset'
 import { pointInContours } from '../../geometry/transform'
 import { readScoped, SYNCED_SETTINGS, writeScoped } from '../../storage/space'
-import { IconClose, IconDelete, IconDownload, IconDuplicate, IconRedo, IconUndo } from '../../ui/icons'
+import { IconClose, IconDelete, IconDownload, IconDuplicate, IconEye, IconRedo, IconShapes, IconUndo } from '../../ui/icons'
 import { NumField } from '../../editor/Panels'
 import { Field } from '../carve3d/fields'
 import { CATEGORIES, getItem, ITEMS, itemParams, type CategoryId, type ItemDef } from './catalog'
@@ -116,7 +116,7 @@ function SvgPreview({ layout, units }: { layout: Layout; units: Units }) {
   )
 }
 
-function Tile({ def, onPointerDown, onAdd }: { def: ItemDef; onPointerDown: (e: RPointerEvent, def: ItemDef) => void; onAdd: (def: ItemDef) => void }) {
+function Tile({ def, onPointerDown, onAdd, onWarm }: { def: ItemDef; onPointerDown: (e: RPointerEvent, def: ItemDef) => void; onAdd: (def: ItemDef) => void; onWarm: (def: ItemDef) => void }) {
   const [src, setSrc] = useState<string>('')
   useEffect(() => {
     // Render after paint so opening the dialog stays snappy.
@@ -128,6 +128,7 @@ function Tile({ def, onPointerDown, onAdd }: { def: ItemDef; onPointerDown: (e: 
       type="button"
       className="sys-tile"
       title={`${def.name} — drag into the Systainer, or click to add`}
+      onPointerEnter={() => onWarm(def)}
       onPointerDown={(e) => onPointerDown(e, def)}
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onAdd(def))}
     >
@@ -137,11 +138,18 @@ function Tile({ def, onPointerDown, onAdd }: { def: ItemDef; onPointerDown: (e: 
   )
 }
 
-export default function SystainerDialog({ units, onClose, onImport }: SystainerDialogProps) {
+export default function SystainerDialog({ units, onClose }: SystainerDialogProps) {
   const [layout, setLayout] = useState<Layout>(() => loadSaved() ?? defaultLayout())
   const [selected, setSelected] = useState<string | null>(null)
   const [view, setView] = useState<ViewMode | 'svg'>('3d')
   const [lidOpen, setLidOpen] = useState(true)
+  const [xray, setXray] = useState(false)
+  /** The placed gear shown; hidden, only the foam and its cutouts show. */
+  const [showItems, setShowItems] = useState(true)
+  /** The selection ring (turn it to rotate) shows only while Rotate is toggled on. */
+  const [ringOn, setRingOn] = useState(false)
+  /** The depth slider shows only while Depth is toggled on. */
+  const [depthOn, setDepthOn] = useState(false)
   const [cat, setCat] = useState<CategoryId>('origin')
   const past = useRef<Layout[]>([])
   const future = useRef<Layout[]>([])
@@ -219,21 +227,21 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
   )
   const setLayoutField = (patch: Partial<Layout>) => commit({ ...layoutRef.current, ...patch })
 
+  const makePlaced = (def: ItemDef, pos: { x: number; y: number }, id = uid('it'), spinSeed = def.randomSpin ? newSpinSeed() : undefined): Placed => ({
+    uid: id,
+    item: def.id,
+    x: pos.x,
+    y: pos.y,
+    rot: 0,
+    pose: 0,
+    depth: null,
+    ...(def.params && { params: itemParams(def) }),
+    ...(spinSeed !== undefined && { spinSeed }),
+  })
   const addItem = useCallback(
-    (def: ItemDef, at?: { x: number; y: number }) => {
+    (def: ItemDef, at?: { x: number; y: number }, from?: Placed) => {
       const cur = layoutRef.current
-      const pos = at ?? freeSpot(cur, def)
-      const item: Placed = {
-        uid: uid('it'),
-        item: def.id,
-        x: pos.x,
-        y: pos.y,
-        rot: 0,
-        pose: 0,
-        depth: null,
-        ...(def.params && { params: itemParams(def) }),
-        ...(def.randomSpin && { spinSeed: newSpinSeed() }),
-      }
+      const item = from ?? makePlaced(def, at ?? freeSpot(cur, def))
       commit({ ...cur, items: [...cur.items, item] })
       setSelected(item.uid)
     },
@@ -339,6 +347,30 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
 
   // Dragging a tile from the catalogue into the view (a plain click adds it in a free spot).
   const [dragging, setDragging] = useState<{ def: ItemDef; x: number; y: number } | null>(null)
+  /** The tile being dragged, placed provisionally under the pointer so its cutout shows in the foam live. */
+  const [preview, setPreview] = useState<Placed | null>(null)
+  const previewRef = useRef<Placed | null>(null)
+  const showPreview = (p: Placed | null) => {
+    const a = previewRef.current
+    if (a === p || (a && p && a.x === p.x && a.y === p.y)) return
+    previewRef.current = p
+    setPreview(p)
+  }
+  // While a tile is dragged over the view the viewer shows the layout with it already placed.
+  const viewLayout = useMemo(() => (preview ? { ...layout, items: [...layout.items, preview] } : layout), [layout, preview])
+  // Only the dragged item is evaluated per move; the rest of the layout's evaluation is reused.
+  const viewEv = useMemo(() => {
+    if (!preview) return ev
+    const pe = evaluate({ ...layout, items: [preview] })
+    return { ...ev, items: [...ev.items, ...pe.items], pockets: [...ev.pockets, ...pe.pockets] }
+  }, [layout, preview, ev])
+  /** Build an item's model and pocket shapes ahead of its first drag (a big one takes seconds). */
+  const warmed = useRef(new Set<string>())
+  const warm = (def: ItemDef) => {
+    if (warmed.current.has(def.id)) return
+    warmed.current.add(def.id)
+    setTimeout(() => evaluate({ ...layoutRef.current, items: [makePlaced(def, { x: 0, y: 0 })] }), 0)
+  }
   const dockRef = useRef<HTMLDivElement>(null)
   const onTileDown = (e: RPointerEvent, def: ItemDef) => {
     if (e.button !== 0) return
@@ -348,6 +380,8 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
     const dr = dockRef.current?.getBoundingClientRect()
     const column = !!dr && dr.height > dr.width
     let started = false
+    warm(def)
+    const trial = makePlaced(def, { x: 0, y: 0 })
     const move = (m: PointerEvent) => {
       // Touch: a swipe along the dock scrolls it; only a pull across it, toward the view, drags.
       const along = Math.abs(column ? m.clientY - sy : m.clientX - sx)
@@ -357,7 +391,9 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
       m.preventDefault()
       setDragging({ def, x: m.clientX, y: m.clientY })
       const at = viewer.current?.pick(m.clientX, m.clientY)
-      viewer.current?.ghost(at ? { item: def.id, ...at } : null)
+      // The provisional item stands in for the ghost, so the foam is cut as it travels.
+      viewer.current?.ghost(null)
+      showPreview(at ? { ...trial, x: at.x, y: at.y } : null)
     }
     const up = (u: PointerEvent) => {
       window.removeEventListener('pointermove', move)
@@ -365,33 +401,15 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
       window.removeEventListener('pointercancel', up)
       viewer.current?.ghost(null)
       setDragging(null)
+      showPreview(null)
       if (u.type === 'pointercancel') return
       if (!started) return addItem(def)
       const at = viewer.current?.pick(u.clientX, u.clientY)
-      if (at) addItem(def, at)
+      if (at) addItem(def, at, { ...trial, x: at.x, y: at.y })
     }
     window.addEventListener('pointermove', move, { passive: false })
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
-  }
-
-  function add() {
-    const shapes = insertShapes(ev, layout, units)
-    const spec = sysSpec(layout.size)
-    onImport({
-      group: {
-        name: `Systainer insert – ${spec.name}`,
-        info: {
-          systainer: `Festool ${spec.name} T-Loc`,
-          thickness: L(ev.thickness),
-          items: layout.items.length,
-          fit: `${layout.fit} (${L(ev.clearance)} per side)`,
-          cutter: ev.bit.name,
-        },
-      },
-      shapes,
-    })
-    onClose()
   }
 
   const sel = layout.items.find((i) => i.uid === selected)
@@ -417,18 +435,21 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
           <div className={'sys-stage' + (view === 'svg' ? ' is-hidden' : '')}>
             <SystainerViewer
               ref={viewer}
-              layout={layout}
-              ev={ev}
+              layout={viewLayout}
+              ev={viewEv}
               selected={selected}
               view={view === '2d' ? '2d' : '3d'}
               lidOpen={lidOpen}
+              xray={xray}
+              showItems={showItems}
+              ringOn={ringOn}
               toolbarRef={toolbarRef}
               onSelect={setSelected}
               onMove={(id, x, y, done) => patchItem(id, { x: clampX(x), y: clampY(y) }, done ? 'end' : 'live')}
               onRotate={(id, rot, done) => patchItem(id, { rot: norm(rot) }, done ? 'end' : 'live')}
               onResize={(id, params, done) => setParams(id, params, done ? 'end' : 'live')}
             />
-            {sel && selDef && view !== 'svg' && (
+            {sel && selDef && showItems && view !== 'svg' && (
               <div ref={toolbarRef} className="sys-toolbar" style={{ visibility: 'hidden' }} onPointerDown={(e) => e.stopPropagation()}>
                 <div className="sys-toolbar__inner">
                   <div className="sys-toolbar__row">
@@ -441,19 +462,34 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
                         <span>{selPose?.label}</span>
                       </button>
                     )}
-                    <button type="button" className="sys-tb-btn" title="Turn 90° left (⇧R)" aria-label="Turn 90° left" onClick={() => rotateBy(sel.uid, 90)}>
+                    <button
+                      type="button"
+                      className="sys-tb-btn"
+                      title="Rotate (drag the ring; ⇧R / R snap 90°)"
+                      aria-label="Rotate"
+                      aria-pressed={ringOn}
+                      onClick={() => setRingOn(!ringOn)}
+                    >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M4 12a8 8 0 1 0 2.3-5.7" />
                         <path d="M4 4v4h4" />
                       </svg>
                     </button>
-                    <button type="button" className="sys-tb-btn" title="Turn 90° right (R)" aria-label="Turn 90° right" onClick={() => rotateBy(sel.uid, -90)}>
+                    <span className="sys-toolbar__angle">{Math.round(sel.rot)}°</span>
+                    <button
+                      type="button"
+                      className="sys-tb-btn"
+                      title="Show the depth slider"
+                      aria-label="Depth"
+                      aria-pressed={depthOn}
+                      onClick={() => setDepthOn(!depthOn)}
+                    >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M20 12a8 8 0 1 1-2.3-5.7" />
-                        <path d="M20 4v4h-4" />
+                        <path d="M4 5h16" />
+                        <path d="M12 5v14" />
+                        <path d="M7.5 14.5 12 19l4.5-4.5" />
                       </svg>
                     </button>
-                    <span className="sys-toolbar__angle">{Math.round(sel.rot)}°</span>
                     <button type="button" className="sys-tb-btn" title="Duplicate (⌘D)" aria-label="Duplicate" onClick={() => duplicate(sel.uid)}>
                       <IconDuplicate size={16} />
                     </button>
@@ -461,7 +497,7 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
                       <IconDelete size={18} />
                     </button>
                   </div>
-                  {selEv && selRange && (
+                  {selEv && selRange && depthOn && (
                     <label className="sys-toolbar__depth" title={selDef.notch ? 'How deep it cuts' : 'How deep it sits in the foam'}>
                       <span className="sys-toolbar__label">Depth</span>
                       <input
@@ -524,6 +560,18 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
               {spec.name} · {layout.items.length} item{layout.items.length === 1 ? '' : 's'}
               {problems > 0 && <span className="sys-badge-warn"> · {problems} to fix</span>}
             </span>
+            {view === '3d' && (
+              <button type="button" className="ss-btn sys-xray" aria-pressed={xray} onClick={() => setXray((x) => !x)} title="Ghost the walls: see the pockets from the side, and the gear through the shut lid">
+                <IconEye size={16} />
+                X-ray
+              </button>
+            )}
+            {view !== 'svg' && (
+              <button type="button" className="ss-btn sys-gear" aria-pressed={!showItems} onClick={() => setShowItems((s) => !s)} title="Hide the gear to see the cutouts alone">
+                <IconShapes size={16} />
+                {showItems ? 'Hide gear' : 'Show gear'}
+              </button>
+            )}
           </div>
 
           {layout.items.length === 0 && view !== 'svg' && (
@@ -546,7 +594,7 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
               <span className="sys-dock__hint ss-muted">Drag into the Systainer, or click to add</span>
               <div className="sys-dock__strip">
                 {tiles.map((d) => (
-                  <Tile key={d.id} def={d} onPointerDown={onTileDown} onAdd={addItem} />
+                  <Tile key={d.id} def={d} onPointerDown={onTileDown} onAdd={addItem} onWarm={warm} />
                 ))}
               </div>
             </div>
@@ -720,15 +768,6 @@ export default function SystainerDialog({ units, onClose, onImport }: SystainerD
             models (Printables, CC BY-NC-SA).
           </div>
         </aside>
-      </div>
-
-      <div className="ss-dialog__footer">
-        <button type="button" className="ss-btn ss-btn--primary" onClick={add} title={problems ? `${problems} item${problems === 1 ? '' : 's'} need attention` : undefined}>
-          Add to Design
-        </button>
-        <button type="button" className="ss-btn-round" onClick={onClose} aria-label="Cancel">
-          <IconClose />
-        </button>
       </div>
 
       {dragging && (

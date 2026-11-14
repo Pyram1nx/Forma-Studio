@@ -6,12 +6,15 @@
 // below its lever, a wrench's shaft beside its handle) the pocket steps: each level is its own
 // pocket, cut to the depth that level needs.
 import * as THREE from 'three'
-import type { Contour, Pt, Shape, Units } from '../../model/types'
+import type { Contour, Shape, Units } from '../../model/types'
 import { shapeFromWorld, fmtLen } from '../../model/factory'
-import { boolean, offsetContours, signedArea, simplify, unionNonZero } from '../../geometry/offset'
+import { boolean, offsetContours, signedArea } from '../../geometry/offset'
 import { BITS, type Bit } from '../carve3d/bits'
-import { getItem, itemParams, type ItemDef } from './catalog'
+import { getItem, itemParams, type ItemDef, type PoseStep } from './catalog'
 import { baseDepth, insertOutline, lidZ, SYS_FLOOR, sysSpec, type SysSize } from './systainerModel'
+import { silhouette } from './silhouette'
+
+export { silhouette }
 
 export interface Placed {
   uid: string
@@ -88,6 +91,8 @@ export interface Posed {
   tris: Float32Array
   /** Heights of the faces it rests on (downward faces), lowest first. */
   rests: number[]
+  /** Slits narrower than twice this are closed in its pocket outlines (ItemDef.closeGaps). */
+  closeGaps?: number
 }
 
 const posedCache = new Map<string, Posed>()
@@ -160,48 +165,13 @@ export function posed(def: ItemDef, poseIdx: number, params: Record<string, numb
     d: box.max.y - box.min.y,
     tris,
     rests: [...rests].sort((a, b) => a - b),
+    closeGaps: def.closeGaps,
   }
   posedCache.set(key, p)
   return p
 }
 
 // ---------- Silhouettes ----------
-
-/** Outline, seen from above, of the part of the posed model below height `zMax`. */
-export function silhouette(tris: Float32Array, zMax: number): Contour[] {
-  const polys: Contour[] = []
-  const P: [number, number, number][] = [
-    [0, 0, 0],
-    [0, 0, 0],
-    [0, 0, 0],
-  ]
-  for (let i = 0; i < tris.length; i += 9) {
-    for (let k = 0; k < 3; k++) P[k] = [tris[i + k * 3], tris[i + k * 3 + 1], tris[i + k * 3 + 2]]
-    if (P[0][2] >= zMax && P[1][2] >= zMax && P[2][2] >= zMax) continue
-    // Clip to z <= zMax (Sutherland–Hodgman against one plane).
-    let pts: Pt[]
-    if (P[0][2] <= zMax && P[1][2] <= zMax && P[2][2] <= zMax) pts = P.map(([x, y]) => ({ x, y }))
-    else {
-      pts = []
-      for (let k = 0; k < 3; k++) {
-        const a = P[k]
-        const b = P[(k + 1) % 3]
-        const ain = a[2] <= zMax
-        const bin = b[2] <= zMax
-        if (ain) pts.push({ x: a[0], y: a[1] })
-        if (ain !== bin) {
-          const t = (zMax - a[2]) / (b[2] - a[2])
-          pts.push({ x: a[0] + t * (b[0] - a[0]), y: a[1] + t * (b[1] - a[1]) })
-        }
-      }
-    }
-    if (pts.length < 3) continue
-    const area = signedArea(pts)
-    if (Math.abs(area) < 1e-4) continue
-    polys.push({ closed: true, pts: area < 0 ? pts.reverse() : pts })
-  }
-  return unionNonZero(polys).map((c) => ({ closed: true, pts: simplify(c.pts, 0.05, true) }))
-}
 
 export interface Step {
   /** Footprint in the posed frame (before turning and clearance). */
@@ -235,7 +205,9 @@ export function pocketSteps(p: Posed, key: string, sink: number, keepIslands = f
   let prevArea = 0
   for (let i = 0; i < capped.length; i++) {
     const top = i + 1 < capped.length ? capped[i + 1] - 0.05 : sink
-    const contours = shapeHoles(silhouette(p.tris, top), keepIslands)
+    const sil = silhouette(p.tris, top)
+    const g = p.closeGaps
+    const contours = shapeHoles(g ? offsetContours(offsetContours(sil, g), -g) : sil, keepIslands)
     const a = Math.abs(area(contours))
     if (!contours.length || a < 0.5) continue
     // Same footprint as the deeper step: nothing new at this level.
@@ -245,6 +217,17 @@ export function pocketSteps(p: Posed, key: string, sink: number, keepIslands = f
   }
   stepCache.set(k, steps)
   return steps
+}
+
+/**
+ * A pose's traced Hub pockets (`Pose.pockets`) as steps for an item sunk `sink` mm, deepest first.
+ * The shapes stay as the Hub draws them (a shallower one need not contain a deeper one).
+ */
+function tracedSteps(steps: PoseStep[], sink: number): Step[] {
+  return steps
+    .map((s) => ({ contours: s.contours, depth: sink - s.level }))
+    .filter((s) => s.depth > 0.05)
+    .sort((a, b) => b.depth - a.depth)
 }
 
 // ---------- Evaluation ----------
@@ -269,6 +252,10 @@ export interface PlacedEval {
   sinkRange: { min: number; max: number }
   /** How far it stands above the foam (negative: sunk below it, in an insert thicker than the reference). */
   above: number
+  /** The most it should stand above the foam (the pose's maxAbove), if the pose sets one. */
+  maxAbove?: number
+  /** Its pocket may cut right through the insert (the pose's throughCut). */
+  throughCut?: boolean
   pockets: Pocket[]
   problems: string[]
 }
@@ -352,7 +339,11 @@ export function evaluate(layout: Layout): Evaluation {
     const base = pose.sink ? pose.sink(h) : h
     // Deepest that makes sense: fully sunk, or the standard depth if that is deeper. At least 1 mm
     // in, so it never ends up wholly above the foam.
-    const sinkRange = { min: 1, max: Math.max(1, Math.min(maxDepth, Math.max(h, base))) }
+    // A through-cut pose may go all the way down to the Systainer floor.
+    // A traced Hub pocket may reach below the item (the support arm's post rectangle): keep that within the floor too.
+    const below = pose.pockets ? Math.max(0, ...pose.pockets.map((s) => -s.level)) : 0
+    const itemMax = (pose.throughCut ? thickness : maxDepth) - below
+    const sinkRange = { min: 1, max: Math.max(1, Math.min(itemMax, Math.max(h, base))) }
     const clampSink = (s: number) => Math.min(sinkRange.max, Math.max(sinkRange.min, s))
     // Depths are always measured down from the foam's top face. Changing the insert thickness moves
     // the item and its cutout with that face; it must not silently alter the requested depth.
@@ -360,13 +351,13 @@ export function evaluate(layout: Layout): Evaluation {
     const sink = def.notch ? 0 : pl.depth != null ? clampSink(pl.depth) : autoSink
     const pockets: Pocket[] = def.notch
       ? []
-      : pocketSteps(p, posedKey(def, poseIdx, params), sink, !!def.islands).map((s, i) => ({
+      : (pose.pockets ? tracedSteps(pose.pockets, sink) : pocketSteps(p, posedKey(def, poseIdx, params), sink, !!def.islands)).map((s, i) => ({
           uid: pl.uid,
           step: i,
           depth: s.depth,
           contours: shapeHoles(offsetContours(transform(s.contours, pl.x, pl.y, pl.rot), clearance), !!def.islands),
         }))
-    items.push({ uid: pl.uid, def, posed: p, sink, autoSink, sinkRange, above: h - sink, pockets, problems: [] })
+    items.push({ uid: pl.uid, def, posed: p, sink, autoSink, sinkRange, above: h - sink, maxAbove: pose.maxAbove, throughCut: pose.throughCut, pockets, problems: [] })
   }
 
   // Notches take the depth of the deepest pocket they overlap.
@@ -400,6 +391,15 @@ export function evaluate(layout: Layout): Evaluation {
     }
     if (Math.abs(area(boolean('difference', outer.contours, inner))) > 1) e.problems.push('Runs into the Systainer wall.')
     if (e.above > lidRoom + 0.01) e.problems.push(`Stands ${+(e.above - lidRoom).toFixed(1)} mm too tall: the lid won’t close.`)
+    const maxAbove = e.maxAbove
+    if (maxAbove != null && e.above > maxAbove + 0.5) {
+      const want = e.posed.height - maxAbove
+      e.problems.push(
+        want <= e.sinkRange.max + 0.01
+          ? `Stands ${+e.above.toFixed(1)} mm up, more than ${maxAbove} mm: sink it ${+want.toFixed(1)} mm.`
+          : `Stands ${+e.above.toFixed(1)} mm up, more than ${maxAbove} mm: it needs a ${+(want + (e.throughCut ? 0 : MIN_FLOOR)).toFixed(1)} mm insert.`,
+      )
+    }
     if (!e.def.notch && e.pockets.every((pk) => !offsetContours(pk.contours, -bitR + 0.05).length)) e.problems.push(`Too narrow for the ${+bit.diameter.toFixed(2)} mm cutter.`)
   }
   for (let i = 0; i < items.length; i++)

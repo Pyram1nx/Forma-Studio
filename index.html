@@ -15,7 +15,7 @@
       try {
         var p = location.pathname.replace(/\/+$/, '') || '/'
         var t = localStorage.getItem('forma.theme.v1')
-        var on = ['/studio', '/account', '/bits'].indexOf(p) >= 0 && new URLSearchParams(location.search).get('view') !== 'tracecard'
+        var on = ['/studio', '/account', '/bits', '/3d-carve', '/joinery', '/systainer'].indexOf(p) >= 0 && new URLSearchParams(location.search).get('view') !== 'tracecard'
         if (on && (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches))) {
           document.documentElement.dataset.theme = 'dark'
           document.querySelector('meta[name="theme-color"]').setAttribute('content', '#18191b')

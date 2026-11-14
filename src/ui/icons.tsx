@@ -177,6 +177,8 @@ export const IconCube = I(<><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z" /><path d=
 export const IconDovetail = I(<path d="M3 20v-8h2L4 5h6l-1 7h6l-1-7h6l-1 7h2v8Z" />)
 /** A Systainer: case with a lid line, latch and handle. */
 export const IconSystainer = I(<><path d="M3.5 8.5h17v11h-17Z" /><path d="M3.5 12h17" /><path d="M10.5 12v2.5h3V12" /><path d="M8 8.5V6.2c0-.7.5-1.2 1.2-1.2h5.6c.7 0 1.2.5 1.2 1.2v2.3" /></>)
+/** A strip of ShaperTape: a roll's end with domino markers. */
+export const IconTape = I(<><path d="M3 8.5h18v7H3Z" /><path d="M6 11h3M6 13h3M11 11h2M11 13h2M15 11h3M15 13h3" /></>)
 export const IconPaper = I(<><path d="M6 3.5h8.5L18 7v13.5H6Z" /><path d="M14 3.5V7.5h4" /><path d="M8.5 14c1.5-3 3-3 4 0s2.5 2.5 3-1" /></>)
 export const IconHelp = F(<path fillRule="evenodd" clipRule="evenodd" d="M2.5 12C2.5 6.48 6.98 2 12.5 2C18.02 2 22.5 6.48 22.5 12C22.5 17.52 18.02 22 12.5 22C6.98 22 2.5 17.52 2.5 12ZM13.5 16V18H11.5V16H13.5ZM12.5 20C8.09 20 4.5 16.41 4.5 12C4.5 7.59 8.09 4 12.5 4C16.91 4 20.5 7.59 20.5 12C20.5 16.41 16.91 20 12.5 20ZM8.5 10C8.5 7.79 10.29 6 12.5 6C14.71 6 16.5 7.79 16.5 10C16.5 11.2829 15.71 11.9733 14.9408 12.6455C14.211 13.2833 13.5 13.9046 13.5 15H11.5C11.5 13.1787 12.4421 12.4566 13.2704 11.8217C13.9202 11.3236 14.5 10.8792 14.5 10C14.5 8.9 13.6 8 12.5 8C11.4 8 10.5 8.9 10.5 10H8.5Z" />, '0 0 25 24')
 export const IconKeyboard = I(<><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8" /></>)

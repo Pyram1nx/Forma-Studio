@@ -86,6 +86,8 @@ export function NumField({ adorn, suffix, value, kind = 'length', units, placeho
       <input
         aria-label={label}
         inputMode={kind === 'count' ? 'numeric' : 'decimal'}
+        data-pad-unit={kind === 'length' ? units : kind === 'angle' ? 'º' : ''}
+        data-pad-int={kind === 'count' ? '' : undefined}
         value={text}
         placeholder={placeholder}
         onFocus={(e) => {
@@ -157,6 +159,7 @@ export function StepperParam({ label, value, min = 1, max = 99, suffix, onCommit
         aria-label={label}
         value={text ?? String(value)}
         inputMode="numeric"
+        data-pad-int=""
         className="ss-stepper__value"
         onFocus={(e) => e.target.select()}
         onChange={(e) => setText(e.target.value)}

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import AccountPanel from '../account/AccountPanel'
 import { useSession } from '../account/useSession'
 import { accountsEnabled } from '../account/api'
@@ -13,17 +13,63 @@ import SettingsPage from './SettingsPage'
 
 // Code-split like the other feature surfaces.
 const BitLibrary = lazy(() => import('../features/bitlibrary/BitLibrary'))
+const SystainersPage = lazy(() => import('./SystainersPage'))
+const JointsPage = lazy(() => import('./JointsPage'))
+const TapeGenerator = lazy(() => import('../features/tape/TapeGenerator'))
 import { openDesignInStudio } from '../desktop/windows'
 import * as Ic from '../ui/icons'
 import DesignPreview from '../ui/DesignPreview'
 import UpdatePrompt from '../desktop/UpdatePrompt'
 import '../styles/home.css'
 
-type Page = 'designs' | 'bits' | 'settings' | 'account'
+export type Page = 'designs' | 'systainers' | 'joints' | 'tape' | 'bits' | 'settings' | 'account'
 
-/** The home window: saved designs, the bit gallery, presets and the account. Opens designs in the studio window. */
+interface NavItem {
+  page: Page
+  label: string
+  /** Shorter label for the phone tab bar. */
+  short?: string
+  icon: ReactNode
+}
+
+// The sidebar, in groups. On phones it becomes a scrolling bottom tab bar (home.css).
+const NAV: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Studio',
+    items: [
+      { page: 'designs', label: 'Studio designs', short: 'Designs', icon: <Ic.IconFolderOpen size={18} /> },
+      { page: 'systainers', label: 'Systainers', icon: <Ic.IconSystainer size={18} /> },
+      { page: 'joints', label: 'Joints', icon: <Ic.IconDovetail size={18} /> },
+      { page: 'tape', label: 'Tape generator', short: 'Tape', icon: <Ic.IconTape size={18} /> },
+    ],
+  },
+  { label: 'Library', items: [{ page: 'bits', label: 'Bits', icon: <Ic.IconBitLibrary size={18} /> }] },
+  {
+    label: 'You',
+    items: [
+      { page: 'settings', label: 'Settings', icon: <Ic.IconSliders size={18} /> },
+      { page: 'account', label: 'Account', icon: <Ic.IconUser size={18} /> },
+    ],
+  },
+]
+const PAGES = NAV.flatMap((g) => g.items.map((i) => i.page))
+
+/** /account?page=systainers opens that page (tools opened from here come back that way). */
+function pageFromUrl(): Page | null {
+  const p = new URLSearchParams(window.location.search).get('page')
+  return PAGES.includes(p as Page) ? (p as Page) : null
+}
+
+/** The home window: saved designs, the tools, the bit gallery, presets and the account. Opens designs in the studio window. */
 export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Page }) {
-  const [page, setPage] = useState<Page>(initialPage)
+  const [page, setPageState] = useState<Page>(() => pageFromUrl() ?? initialPage)
+  const setPage = (next: Page) => {
+    setPageState(next)
+    // Keep the page in the address so a reload (or Close in a tool) lands back on it.
+    const url = new URL(window.location.href)
+    url.searchParams.set('page', next)
+    window.history.replaceState(window.history.state, '', url)
+  }
   const session = useSession()
   const [designs, setDesigns] = useState<RecentEntry[]>(() => listRecent())
   const [error, setError] = useState('')
@@ -87,18 +133,29 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
           <span className="forma-wordmark">Forma Studio</span>
         </div>
         <nav className="home__nav" aria-label="Home">
-          <button className="home__nav-item" aria-current={page === 'designs' ? 'page' : undefined} onClick={() => setPage('designs')}>
-            <Ic.IconFolderOpen size={18} /> Designs
-          </button>
-          <button className="home__nav-item" aria-current={page === 'bits' ? 'page' : undefined} onClick={() => setPage('bits')}>
-            <Ic.IconBitLibrary size={18} /> Bits
-          </button>
-          <button className="home__nav-item" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}>
-            <Ic.IconSliders size={18} /> Settings
-          </button>
-          <button className="home__nav-item" aria-current={page === 'account' ? 'page' : undefined} onClick={() => setPage('account')}>
-            <Ic.IconUser size={18} /> Account
-          </button>
+          {NAV.map((group) => (
+            <div className="home__nav-group" key={group.label} role="group" aria-labelledby={`home-nav-${group.label}`}>
+              <span className="home__nav-label" id={`home-nav-${group.label}`}>
+                {group.label}
+              </span>
+              {group.items.map((item) => (
+                <button
+                  key={item.page}
+                  className="home__nav-item"
+                  aria-current={page === item.page ? 'page' : undefined}
+                  onClick={() => setPage(item.page)}
+                >
+                  <span className="home__nav-icon">{item.icon}</span>
+                  <span className="home__nav-text">{item.label}</span>
+                  {item.short && (
+                    <span className="home__nav-short" aria-hidden="true">
+                      {item.short}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          ))}
         </nav>
         <button className="home__account-chip" onClick={() => setPage('account')}>
           <span className="home__avatar" aria-hidden="true">
@@ -113,7 +170,7 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
           <>
             <header className="home__head">
               <div>
-                <h1>Designs</h1>
+                <h1>Studio designs</h1>
                 {session && !session.needsSignIn ? (
                   <p className="ss-muted">
                     Saved on this device and in your account. <SyncStatus />
@@ -161,6 +218,10 @@ export default function HomeApp({ initialPage = 'designs' }: { initialPage?: Pag
               </div>
             )}
           </>
+        ) : page === 'systainers' || page === 'joints' || page === 'tape' ? (
+          <Suspense fallback={<LoadingDomino />}>
+            {page === 'systainers' ? <SystainersPage units={units} /> : page === 'joints' ? <JointsPage units={units} /> : <TapeGenerator units={units} />}
+          </Suspense>
         ) : page === 'bits' ? (
           <Suspense fallback={<LoadingDomino />}>
             <BitLibrary units={units} onUnitsChange={setUnits} />
