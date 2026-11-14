@@ -187,7 +187,7 @@ export function filletConvex(pts: Pt[], r: number): Pt[] {
  * pin), the floor between them sits r below the board, and a channel 1.2·bit deep (bit + 20%) runs under the
  * whole span. Convex corners are filleted with r = bit/2, concave ones stay sharp.
  */
-export function boxJointPocket(kind: BoxJointKind, p: BoxJointParams): Contour[] {
+export function boxJointPocket(kind: BoxJointKind, p: BoxJointParams, channelDepth = CHANNEL_DEPTH): Contour[] {
   const v = read(p)
   const r = v.bit / 2
   const { widths, bounds } = pinSegments(kind, p)
@@ -205,7 +205,7 @@ export function boxJointPocket(kind: BoxJointKind, p: BoxJointParams): Contour[]
     pts.push({ x: x0, y: -r }, { x: x0, y: v.T + r }, { x: x1, y: v.T + r }, { x: x1, y: -r })
   }
   if (!pts.length) return []
-  const bottom = -r - CHANNEL_DEPTH * v.bit
+  const bottom = -r - channelDepth * v.bit
   pts.push({ x: last, y: bottom }, { x: first, y: bottom })
   // The start point (first, -r) sits on the straight run from the channel up to the first pin, so it stays a plain point.
   const loop = filletConvex(pts, r)

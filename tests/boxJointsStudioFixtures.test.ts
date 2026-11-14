@@ -151,7 +151,8 @@ describe('box joints match the live Studio capture', () => {
       const tol = u === 1 ? 0.0254 : 1e-3
       const toUnits = (pts: Pt[]) => pts.map((p) => ({ x: p.x / u, y: p.y / u }))
 
-      const pocket = boxJointPocket(kind, v).map((c) => toUnits(c.pts))
+      // Studio's own channel is 2 bit diameters deep; ours is shallower on purpose (CHANNEL_DEPTH), so compare at Studio's depth.
+      const pocket = boxJointPocket(kind, v, 2).map((c) => toUnits(c.pts))
       const guides = boxJointGuides(kind, v)
       const ourGuidePolys = guides.flatMap((g) => [toUnits(g.rect.pts), dropClosing(toUnits(g.letter.pts))])
 
